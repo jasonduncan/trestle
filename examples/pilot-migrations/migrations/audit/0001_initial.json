@@ -1,0 +1,87 @@
+{
+  "format": 1,
+  "app": "audit",
+  "id": "0001_initial",
+  "depends_on": [],
+  "operations": [
+    {
+      "op": "create_model",
+      "model": {
+        "id": "audit.event",
+        "table": "audit_events",
+        "fields": [
+          {
+            "id": "audit.event.id",
+            "column": "id",
+            "type": "uuid",
+            "nullable": false,
+            "primary_key": true
+          },
+          {
+            "id": "audit.event.occurred_at",
+            "column": "occurred_at",
+            "type": "timestamptz",
+            "nullable": false,
+            "default": {
+              "kind": "now"
+            }
+          },
+          {
+            "id": "audit.event.actor_id",
+            "column": "actor_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "id": "audit.event.tenant_id",
+            "column": "tenant_id",
+            "type": "uuid",
+            "nullable": true
+          },
+          {
+            "id": "audit.event.operation",
+            "column": "operation",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "id": "audit.event.operation_version",
+            "column": "operation_version",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "id": "audit.event.target_type",
+            "column": "target_type",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "id": "audit.event.target_id",
+            "column": "target_id",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "id": "audit.event.request_id",
+            "column": "request_id",
+            "type": "text",
+            "nullable": true
+          }
+        ],
+        "indexes": [
+          {
+            "name": "audit_events_tenant_idx",
+            "fields": [
+              "audit.event.tenant_id",
+              "audit.event.occurred_at"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "notes": [
+    "Hand-written before the planner existed; this manifest declares its state delta."
+  ]
+}

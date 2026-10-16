@@ -1,0 +1,56 @@
+[package]
+name = "trestle-framework"
+description = "Trestle: an API-first Rust application framework. The one crate projects depend on."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["web","framework","api","axum","postgres"]
+categories = ["web-programming::http-server","database"]
+include = ["src/**","examples/**","tests/fixtures/**","Cargo.toml","README.md"]
+
+[lib]
+name = "trestle"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+# `trestle::testing`: boot a project against a throwaway database in tests.
+testing = ["trestle-historical/testing", "dep:tower", "dep:http-body-util"]
+
+[dependencies]
+http-body-util = { workspace = true, optional = true }
+tower = { workspace = true, optional = true }
+axum.workspace = true
+clap.workspace = true
+dotenvy = "0.15"
+http.workspace = true
+include_dir = "0.7"
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+toml = "0.9"
+tracing.workspace = true
+tracing-subscriber.workspace = true
+trestle-core.workspace = true
+trestle-historical.workspace = true
+trestle-identity.workspace = true
+trestle-mail.workspace = true
+trestle-protocol.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+http-body-util.workspace = true
+tower.workspace = true
+trestle = { package = "trestle-framework", path = ".", features = ["testing"] }
+
+[[example]]
+name = "notes_intent"
+path = "examples/notes_intent/main.rs"

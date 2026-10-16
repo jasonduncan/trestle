@@ -1,0 +1,28 @@
+# The pilot's `units` app, written as an intent file (F8). It is not served:
+# tests/intent_parity.rs proves it matches the hand-written Rust app's
+# database schema and core behavior on pilot's own database.
+
+[project]
+name = "pilot-units"
+
+[tenancy]
+model = "school"
+
+[roles]
+owner = ["units.read", "units.write"]
+teacher = ["units.read", "units.write"]
+viewer = ["units.read"]
+
+[[models]]
+id = "units.unit"
+fields = [
+  { id = "name", type = "text", min = 1, max = 120 },
+]
+unique = [["name"]]
+
+[[endpoints]]
+model = "units.unit"
+crud = ["list", "get", "create"]
+read = "units.read"
+write = "units.write"
+order = "name"

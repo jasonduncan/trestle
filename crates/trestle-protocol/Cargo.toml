@@ -1,0 +1,20 @@
+[package]
+name = "trestle-protocol"
+description = "Trestle portable formats: Contract IR, JSON Schema, form presentation and interaction descriptors"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["api","json-schema","openapi","forms"]
+categories = ["web-programming","encoding"]
+include = ["src/**","Cargo.toml","README.md"]
+
+# Portable and pure: no HTTP, database or async dependencies.
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true

@@ -1,0 +1,47 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "examples/*"]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jasonduncan/trestle"
+homepage = "https://github.com/jasonduncan/trestle"
+authors = ["Jason Duncan"]
+
+# Majors pinned deliberately (design doc §3.3: pin, then verify). Upgrading
+# sqlx to 0.9 / tower-http to 0.7 is a separate, tested change.
+[workspace.dependencies]
+axum = "0.8"
+base64 = "0.22"
+bytes = "1"
+clap = { version = "4", features = ["derive", "env"] }
+hmac = "0.12"
+http = "1"
+http-body-util = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "uuid", "derive", "tls-rustls-aws-lc-rs"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["catch-panic", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "v5", "v7", "serde"] }
+
+# Test-only independent JSON Schema validator; no network reference resolution.
+jsonschema = { version = "0.58", default-features = false }
+
+# Internal crates carry no stability promise, so they are pinned exactly.
+# Publish order: protocol, historical, core, identity + mail, framework, cli.
+trestle = { package = "trestle-framework", path = "crates/trestle", version = "=0.2.0" }
+trestle-core = { path = "crates/trestle-core", version = "=0.2.0" }
+trestle-protocol = { path = "crates/trestle-protocol", version = "=0.2.0" }
+trestle-historical = { path = "crates/trestle-historical", version = "=0.2.0" }
+trestle-identity = { path = "crates/trestle-identity", version = "=0.2.0" }
+trestle-mail = { path = "crates/trestle-mail", version = "=0.2.0" }
+pilot-migrations = { path = "examples/pilot-migrations" }

@@ -1,0 +1,22 @@
+{
+  "format": 2,
+  "app": "lessons",
+  "id": "0003_unit",
+  "depends_on": [
+    "lessons.0002_subtitle",
+    "units.0001_initial"
+  ],
+  "operations": [
+    {
+      "op": "add_field",
+      "model": "lessons.lesson",
+      "field": {
+        "id": "lessons.lesson.unit_id",
+        "column": "unit_id",
+        "type": "uuid",
+        "nullable": true,
+        "references": "units.unit"
+      }
+    }
+  ]
+}

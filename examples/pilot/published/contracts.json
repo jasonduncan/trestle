@@ -1,0 +1,1046 @@
+{
+  "audience": "product",
+  "contracts": {
+    "lessons.create.input": {
+      "digest": "sha256:95f466cf5117ec2f00638dbe51c2d4a1916123d13427ef39946813e4792e2c1b",
+      "ir": {
+        "fields": {
+          "duration_minutes": {
+            "maximum": 600,
+            "minimum": 1,
+            "nullable": false,
+            "required": false,
+            "type": "integer"
+          },
+          "grade_level": {
+            "maximum": 12,
+            "minimum": 1,
+            "nullable": false,
+            "required": true,
+            "type": "integer"
+          },
+          "subtitle": {
+            "maxChars": 200,
+            "minChars": 1,
+            "nullable": false,
+            "required": false,
+            "type": "text"
+          },
+          "title": {
+            "maxChars": 200,
+            "minChars": 1,
+            "nullable": false,
+            "required": true,
+            "type": "text"
+          },
+          "unit_id": {
+            "nullable": false,
+            "required": false,
+            "type": "uuid"
+          }
+        },
+        "id": "lessons.create.input",
+        "kind": "input",
+        "profile": "trestle.portable@1",
+        "version": "1.3.0"
+      },
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "duration_minutes": {
+            "maximum": 600,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "grade_level": {
+            "maximum": 12,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "subtitle": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "unit_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "grade_level",
+          "title"
+        ],
+        "type": "object"
+      }
+    },
+    "lessons.delete.input": {
+      "digest": "sha256:5cef0c7a0a40e1ab0f7dfadd3a3481542979e0cc93dc9cf7ad6e9a1b887cecf2",
+      "ir": {
+        "fields": {
+          "expected_version": {
+            "nullable": false,
+            "required": true,
+            "type": "digits"
+          },
+          "id": {
+            "nullable": false,
+            "required": true,
+            "type": "uuid"
+          }
+        },
+        "id": "lessons.delete.input",
+        "kind": "input",
+        "profile": "trestle.portable@1",
+        "version": "1.0.0"
+      },
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "pattern": "^[0-9]+$",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_version",
+          "id"
+        ],
+        "type": "object"
+      }
+    },
+    "lessons.get.input": {
+      "digest": "sha256:398cd826d5daccd0265f650c621182e1258aa7276ecf1605efde1cb117b53a04",
+      "ir": {
+        "fields": {
+          "id": {
+            "nullable": false,
+            "required": true,
+            "type": "uuid"
+          }
+        },
+        "id": "lessons.get.input",
+        "kind": "input",
+        "profile": "trestle.portable@1",
+        "version": "1.0.0"
+      },
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      }
+    },
+    "lessons.list.input": {
+      "digest": "sha256:0b993da3a30a3565f8d648e17d66a4cb1920c79d37ef830d3a3f94d6c3a61ebd",
+      "ir": {
+        "fields": {
+          "cursor": {
+            "maxChars": 1024,
+            "minChars": 1,
+            "nullable": false,
+            "required": false,
+            "type": "text"
+          },
+          "grade_level": {
+            "maximum": 12,
+            "minimum": 1,
+            "nullable": false,
+            "required": false,
+            "type": "integer"
+          },
+          "limit": {
+            "maximum": 100,
+            "minimum": 1,
+            "nullable": false,
+            "required": false,
+            "type": "integer"
+          },
+          "status": {
+            "nullable": false,
+            "required": false,
+            "type": "enum",
+            "values": [
+              "draft",
+              "published"
+            ]
+          },
+          "unit_id": {
+            "nullable": false,
+            "required": false,
+            "type": "uuid"
+          }
+        },
+        "id": "lessons.list.input",
+        "kind": "input",
+        "profile": "trestle.portable@1",
+        "version": "1.0.0"
+      },
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          },
+          "grade_level": {
+            "maximum": 12,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "limit": {
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "draft",
+              "published"
+            ],
+            "type": "string"
+          },
+          "unit_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "lessons.publish.input": {
+      "digest": "sha256:91b9121d31d9e2c13d26dd7b03cf1fae5f40cba6bb3c0a0d03cafbe55b83700d",
+      "ir": {
+        "fields": {
+          "expected_version": {
+            "nullable": false,
+            "required": true,
+            "type": "digits"
+          },
+          "id": {
+            "nullable": false,
+            "required": true,
+            "type": "uuid"
+          }
+        },
+        "id": "lessons.publish.input",
+        "kind": "input",
+        "profile": "trestle.portable@1",
+        "version": "1.0.0"
+      },
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "pattern": "^[0-9]+$",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_version",
+          "id"
+        ],
+        "type": "object"
+      }
+    },
+    "lessons.update.input": {
+      "digest": "sha256:f0881fc1f2aeb3dde3e1c9bd9eb91e192a9ebebb1c23ad75acb73a6be4d26f47",
+      "ir": {
+        "fields": {
+          "duration_minutes": {
+            "maximum": 600,
+            "minimum": 1,
+            "nullable": true,
+            "required": false,
+            "type": "integer"
+          },
+          "expected_version": {
+            "nullable": false,
+            "required": true,
+            "type": "digits"
+          },
+          "grade_level": {
+            "maximum": 12,
+            "minimum": 1,
+            "nullable": false,
+            "required": false,
+            "type": "integer"
+          },
+          "id": {
+            "nullable": false,
+            "required": true,
+            "type": "uuid"
+          },
+          "subtitle": {
+            "maxChars": 200,
+            "minChars": 1,
+            "nullable": true,
+            "required": false,
+            "type": "text"
+          },
+          "title": {
+            "maxChars": 200,
+            "minChars": 1,
+            "nullable": false,
+            "required": false,
+            "type": "text"
+          },
+          "unit_id": {
+            "nullable": true,
+            "required": false,
+            "type": "uuid"
+          }
+        },
+        "id": "lessons.update.input",
+        "kind": "input",
+        "profile": "trestle.portable@1",
+        "version": "1.1.0"
+      },
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "duration_minutes": {
+            "maximum": 600,
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "expected_version": {
+            "pattern": "^[0-9]+$",
+            "type": "string"
+          },
+          "grade_level": {
+            "maximum": 12,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "subtitle": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "unit_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "expected_version",
+          "id"
+        ],
+        "type": "object"
+      }
+    },
+    "lessons.view": {
+      "digest": "sha256:611f52f118276c61d3ef47dc68c68f19bad866b8d982aad0030a9d5c40c0f14d",
+      "ir": {
+        "fields": {
+          "duration_minutes": {
+            "maximum": 600,
+            "minimum": 1,
+            "nullable": true,
+            "required": true,
+            "type": "integer"
+          },
+          "grade_level": {
+            "maximum": 12,
+            "minimum": 1,
+            "nullable": false,
+            "required": true,
+            "type": "integer"
+          },
+          "id": {
+            "nullable": false,
+            "required": true,
+            "type": "uuid"
+          },
+          "status": {
+            "nullable": false,
+            "required": true,
+            "type": "enum",
+            "values": [
+              "draft",
+              "published"
+            ]
+          },
+          "subtitle": {
+            "maxChars": 200,
+            "minChars": 1,
+            "nullable": true,
+            "required": true,
+            "type": "text"
+          },
+          "title": {
+            "maxChars": 200,
+            "minChars": 1,
+            "nullable": false,
+            "required": true,
+            "type": "text"
+          },
+          "unit_id": {
+            "nullable": true,
+            "required": true,
+            "type": "uuid"
+          },
+          "version": {
+            "nullable": false,
+            "required": true,
+            "type": "digits"
+          }
+        },
+        "id": "lessons.view",
+        "kind": "output",
+        "profile": "trestle.portable@1",
+        "version": "1.3.0"
+      },
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "duration_minutes": {
+            "maximum": 600,
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "grade_level": {
+            "maximum": 12,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "draft",
+              "published"
+            ],
+            "type": "string"
+          },
+          "subtitle": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "unit_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "pattern": "^[0-9]+$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "duration_minutes",
+          "grade_level",
+          "id",
+          "status",
+          "subtitle",
+          "title",
+          "unit_id",
+          "version"
+        ],
+        "type": "object"
+      }
+    },
+    "lessons.view.page": {
+      "digest": "sha256:a495dd4f107dc3bd35166b207eb43b8569d1e3cdb313ca81712e6c2280b44eda",
+      "ir": {
+        "fields": {
+          "items": {
+            "item": {
+              "fields": {
+                "duration_minutes": {
+                  "maximum": 600,
+                  "minimum": 1,
+                  "nullable": true,
+                  "required": true,
+                  "type": "integer"
+                },
+                "grade_level": {
+                  "maximum": 12,
+                  "minimum": 1,
+                  "nullable": false,
+                  "required": true,
+                  "type": "integer"
+                },
+                "id": {
+                  "nullable": false,
+                  "required": true,
+                  "type": "uuid"
+                },
+                "status": {
+                  "nullable": false,
+                  "required": true,
+                  "type": "enum",
+                  "values": [
+                    "draft",
+                    "published"
+                  ]
+                },
+                "subtitle": {
+                  "maxChars": 200,
+                  "minChars": 1,
+                  "nullable": true,
+                  "required": true,
+                  "type": "text"
+                },
+                "title": {
+                  "maxChars": 200,
+                  "minChars": 1,
+                  "nullable": false,
+                  "required": true,
+                  "type": "text"
+                },
+                "unit_id": {
+                  "nullable": true,
+                  "required": true,
+                  "type": "uuid"
+                },
+                "version": {
+                  "nullable": false,
+                  "required": true,
+                  "type": "digits"
+                }
+              },
+              "id": "lessons.view",
+              "kind": "output",
+              "profile": "trestle.portable@1",
+              "version": "1.3.0"
+            },
+            "maxItems": 100,
+            "nullable": false,
+            "required": true,
+            "type": "items"
+          },
+          "next_cursor": {
+            "nullable": true,
+            "required": true,
+            "type": "text"
+          }
+        },
+        "id": "lessons.view.page",
+        "kind": "output",
+        "profile": "trestle.portable@1",
+        "version": "1.3.0"
+      },
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "duration_minutes": {
+                  "maximum": 600,
+                  "minimum": 1,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "grade_level": {
+                  "maximum": 12,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "status": {
+                  "enum": [
+                    "draft",
+                    "published"
+                  ],
+                  "type": "string"
+                },
+                "subtitle": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "title": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "unit_id": {
+                  "format": "uuid",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "version": {
+                  "pattern": "^[0-9]+$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "duration_minutes",
+                "grade_level",
+                "id",
+                "status",
+                "subtitle",
+                "title",
+                "unit_id",
+                "version"
+              ],
+              "type": "object"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      }
+    },
+    "schools.membership.page": {
+      "digest": "sha256:23265d53d84a501ba552b9360120ea422927f10a0adb03f9be76ca4adf339b10",
+      "ir": {
+        "fields": {
+          "items": {
+            "item": {
+              "fields": {
+                "name": {
+                  "maxChars": 200,
+                  "minChars": 1,
+                  "nullable": false,
+                  "required": true,
+                  "type": "text"
+                },
+                "role": {
+                  "nullable": false,
+                  "required": true,
+                  "type": "enum",
+                  "values": [
+                    "owner",
+                    "teacher",
+                    "viewer"
+                  ]
+                },
+                "school": {
+                  "nullable": false,
+                  "required": true,
+                  "type": "uuid"
+                }
+              },
+              "id": "schools.membership",
+              "kind": "output",
+              "profile": "trestle.portable@1",
+              "version": "1.0.0"
+            },
+            "maxItems": 100,
+            "nullable": false,
+            "required": true,
+            "type": "items"
+          },
+          "next_cursor": {
+            "nullable": true,
+            "required": true,
+            "type": "text"
+          }
+        },
+        "id": "schools.membership.page",
+        "kind": "output",
+        "profile": "trestle.portable@1",
+        "version": "1.0.0"
+      },
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "role": {
+                  "enum": [
+                    "owner",
+                    "teacher",
+                    "viewer"
+                  ],
+                  "type": "string"
+                },
+                "school": {
+                  "format": "uuid",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "role",
+                "school"
+              ],
+              "type": "object"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      }
+    },
+    "schools.mine.input": {
+      "digest": "sha256:55110dc048e93d96534d38c6f316a62d4a417ca5ebb5b125c8d813a01c9a6ad9",
+      "ir": {
+        "fields": {},
+        "id": "schools.mine.input",
+        "kind": "input",
+        "profile": "trestle.portable@1",
+        "version": "1.0.0"
+      },
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      }
+    },
+    "units.create.input": {
+      "digest": "sha256:e91f209895f0151378b0a2fbdd54a104d4deab93652cc5cc4fa16ac7cee5c3c5",
+      "ir": {
+        "fields": {
+          "name": {
+            "maxChars": 120,
+            "minChars": 1,
+            "nullable": false,
+            "required": true,
+            "type": "text"
+          }
+        },
+        "id": "units.create.input",
+        "kind": "input",
+        "profile": "trestle.portable@1",
+        "version": "1.0.0"
+      },
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "units.get.input": {
+      "digest": "sha256:51eeea352c8f4ca6d4f1e48576edf2a068bb3d6f69a28378598e4ddebb9b69d9",
+      "ir": {
+        "fields": {
+          "id": {
+            "nullable": false,
+            "required": true,
+            "type": "uuid"
+          }
+        },
+        "id": "units.get.input",
+        "kind": "input",
+        "profile": "trestle.portable@1",
+        "version": "1.0.0"
+      },
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      }
+    },
+    "units.list.input": {
+      "digest": "sha256:01fc94dcb351f932386177ff4b8da428120489d1f6868dcf23b7e097f59ddd12",
+      "ir": {
+        "fields": {
+          "cursor": {
+            "maxChars": 1024,
+            "minChars": 1,
+            "nullable": false,
+            "required": false,
+            "type": "text"
+          },
+          "limit": {
+            "maximum": 100,
+            "minimum": 1,
+            "nullable": false,
+            "required": false,
+            "type": "integer"
+          }
+        },
+        "id": "units.list.input",
+        "kind": "input",
+        "profile": "trestle.portable@1",
+        "version": "1.0.0"
+      },
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          },
+          "limit": {
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "units.view": {
+      "digest": "sha256:6c6b51b1a072003dfa8039ea7af4a98f6c0311edfdf545dbaa6886436e4ffd9c",
+      "ir": {
+        "fields": {
+          "id": {
+            "nullable": false,
+            "required": true,
+            "type": "uuid"
+          },
+          "name": {
+            "maxChars": 120,
+            "minChars": 1,
+            "nullable": false,
+            "required": true,
+            "type": "text"
+          },
+          "version": {
+            "nullable": false,
+            "required": true,
+            "type": "digits"
+          }
+        },
+        "id": "units.view",
+        "kind": "output",
+        "profile": "trestle.portable@1",
+        "version": "1.0.0"
+      },
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "version": {
+            "pattern": "^[0-9]+$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "version"
+        ],
+        "type": "object"
+      }
+    },
+    "units.view.page": {
+      "digest": "sha256:48369baef23ef29af5b5b13735d89fffa9f4c4d6eacf86a2832b90380a864f79",
+      "ir": {
+        "fields": {
+          "items": {
+            "item": {
+              "fields": {
+                "id": {
+                  "nullable": false,
+                  "required": true,
+                  "type": "uuid"
+                },
+                "name": {
+                  "maxChars": 120,
+                  "minChars": 1,
+                  "nullable": false,
+                  "required": true,
+                  "type": "text"
+                },
+                "version": {
+                  "nullable": false,
+                  "required": true,
+                  "type": "digits"
+                }
+              },
+              "id": "units.view",
+              "kind": "output",
+              "profile": "trestle.portable@1",
+              "version": "1.0.0"
+            },
+            "maxItems": 100,
+            "nullable": false,
+            "required": true,
+            "type": "items"
+          },
+          "next_cursor": {
+            "nullable": true,
+            "required": true,
+            "type": "text"
+          }
+        },
+        "id": "units.view.page",
+        "kind": "output",
+        "profile": "trestle.portable@1",
+        "version": "1.0.0"
+      },
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "name": {
+                  "maxLength": 120,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "version": {
+                  "pattern": "^[0-9]+$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "version"
+              ],
+              "type": "object"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "digest": "sha256:e14f22ddc3233e1f12ff1a6eed54be1814d974fea436aab87c2ad36b9ae4a3aa",
+  "format": "trestle.contracts/1"
+}

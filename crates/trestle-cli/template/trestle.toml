@@ -1,0 +1,33 @@
+# The intent: what this server is. No secrets and nothing target-specific
+# here; those come from the environment (see .env.example).
+
+[project]
+name = "{{name}}"
+trestle = "{{trestle_version}}"
+
+[auth]
+passwords = true           # default; invite people with `trestle account invite`
+# oidc = "google"          # opt-in; reads GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET
+
+[tenancy]
+model = "workspace"        # every model below is scoped to a workspace
+
+[roles]
+member = ["notes.read", "notes.write"]
+viewer = ["notes.read"]
+
+[[models]]
+id = "notes.note"          # stable ID: never change it
+fields = [
+  { id = "title",  type = "text", max = 200 },
+  { id = "body",   type = "text", optional = true },
+  { id = "pinned", type = "bool", default = false },
+]
+
+[[endpoints]]
+model = "notes.note"
+crud = ["list", "get", "create", "update", "delete"]
+read = "notes.read"
+write = "notes.write"
+filter = ["pinned"]
+order = "-created_at"

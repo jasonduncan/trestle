@@ -1,0 +1,16 @@
+{
+  "name": "trestle-product",
+  "version": "0.0.1",
+  "private": true,
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@trestle/interaction-react": "0.0.1"
+  }
+}

@@ -1,0 +1,211 @@
+{
+  "audience": "product",
+  "digest": "sha256:12a7ccbf43bba723a2cc7c97048dbe64e14fc070c0ec0ca0600523119b02a7eb",
+  "format": "trestle.interactions-export/1",
+  "interactions": [
+    {
+      "audience": "product",
+      "input": {
+        "id": "lessons.create.input",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "duration_minutes": {
+              "maximum": 600,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "grade_level": {
+              "maximum": 12,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "subtitle": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "title": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "unit_id": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "grade_level",
+            "title"
+          ],
+          "type": "object"
+        },
+        "validationProfile": "trestle.portable@1",
+        "version": "1.3.0"
+      },
+      "interactionId": "lessons.create.form",
+      "operation": {
+        "binding": {
+          "body": "input",
+          "contentType": "application/json",
+          "interactionRevisionHeader": "Trestle-Interaction-Revision",
+          "method": "POST",
+          "path": "/api/v1/lessons"
+        },
+        "concurrency": {
+          "mode": "not_applicable"
+        },
+        "errors": [
+          400,
+          401,
+          403,
+          409,
+          413,
+          415,
+          422,
+          500,
+          503
+        ],
+        "id": "lessons.create",
+        "idempotency": {
+          "mode": "none"
+        },
+        "success": {
+          "body": "output",
+          "location": "/api/v1/lessons/{id}",
+          "status": 201
+        },
+        "version": "1.0.0"
+      },
+      "output": {
+        "id": "lessons.view",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "duration_minutes": {
+              "maximum": 600,
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "grade_level": {
+              "maximum": 12,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "id": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "draft",
+                "published"
+              ],
+              "type": "string"
+            },
+            "subtitle": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "title": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "unit_id": {
+              "format": "uuid",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "version": {
+              "pattern": "^[0-9]+$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "duration_minutes",
+            "grade_level",
+            "id",
+            "status",
+            "subtitle",
+            "title",
+            "unit_id",
+            "version"
+          ],
+          "type": "object"
+        },
+        "version": "1.3.0"
+      },
+      "presentation": {
+        "kind": "form",
+        "layout": {
+          "children": [
+            {
+              "kind": "field",
+              "label": "Title",
+              "pointer": "/title",
+              "widget": "text"
+            },
+            {
+              "help": "1 to 12.",
+              "kind": "field",
+              "label": "Grade level",
+              "pointer": "/grade_level",
+              "widget": "integer"
+            },
+            {
+              "kind": "field",
+              "label": "Subtitle",
+              "pointer": "/subtitle",
+              "widget": "text"
+            },
+            {
+              "kind": "field",
+              "label": "Unit",
+              "options": {
+                "label": "name",
+                "operation": "units.list",
+                "path": "/api/v1/units",
+                "value": "id"
+              },
+              "pointer": "/unit_id",
+              "widget": "relation"
+            },
+            {
+              "help": "1 to 600.",
+              "kind": "field",
+              "label": "Duration (minutes)",
+              "pointer": "/duration_minutes",
+              "widget": "integer"
+            }
+          ],
+          "kind": "vertical"
+        },
+        "submit": {
+          "label": "Create lesson"
+        },
+        "title": "Create lesson"
+      },
+      "protocol": "trestle.interactions",
+      "protocolVersion": "1.0",
+      "requiredFeatures": [
+        "forms.core@1",
+        "http.json@1",
+        "forms.relation@1"
+      ],
+      "revision": "r-1ebb15cb88c28c05"
+    }
+  ]
+}

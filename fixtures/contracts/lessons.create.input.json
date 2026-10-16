@@ -1,0 +1,538 @@
+{
+  "contract": "lessons.create.input",
+  "version": "1.3.0",
+  "profile": "trestle.portable@1",
+  "about": "Accept/reject fixtures for lessons.create. Every case must agree across the published JSON Schema, the managed route and a hand-written Axum handler. Status 201 means accepted; `errors` lists [pointer, code] in response order.",
+  "cases": [
+    {
+      "name": "minimal valid",
+      "input": {
+        "title": "Fractions",
+        "grade_level": 4
+      },
+      "expect": {
+        "status": 201
+      }
+    },
+    {
+      "name": "bounds inclusive",
+      "input": {
+        "title": "A",
+        "grade_level": 12
+      },
+      "expect": {
+        "status": 201
+      }
+    },
+    {
+      "name": "integral float is an integer",
+      "input": {
+        "title": "Decimals",
+        "grade_level": 5.0
+      },
+      "expect": {
+        "status": 201
+      }
+    },
+    {
+      "name": "200 astral code points (800 bytes)",
+      "input": {
+        "title": "📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐",
+        "grade_level": 1
+      },
+      "expect": {
+        "status": 201
+      }
+    },
+    {
+      "name": "200 combining sequences count per code point",
+      "input": {
+        "title": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
+        "grade_level": 2
+      },
+      "expect": {
+        "status": 201
+      }
+    },
+    {
+      "name": "201 code points",
+      "input": {
+        "title": "📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐",
+        "grade_level": 1
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/title",
+            "max_length"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "empty title",
+      "input": {
+        "title": "",
+        "grade_level": 4
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/title",
+            "min_length"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "missing everything",
+      "input": {},
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/title",
+            "required"
+          ],
+          [
+            "/grade_level",
+            "required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "null title",
+      "input": {
+        "title": null,
+        "grade_level": 4
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/title",
+            "not_nullable"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "grade below range",
+      "input": {
+        "title": "Zero",
+        "grade_level": 0
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/grade_level",
+            "minimum"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "grade above range",
+      "input": {
+        "title": "Thirteen",
+        "grade_level": 13
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/grade_level",
+            "maximum"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "grade beyond 64 bits",
+      "input": {
+        "title": "Huge",
+        "grade_level": 18446744073709551615
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/grade_level",
+            "maximum"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "ownership fields are unknown",
+      "input": {
+        "title": "Owned",
+        "grade_level": 4,
+        "school_id": "22222222-2222-4222-8222-222222222222",
+        "created_by": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/created_by",
+            "unknown_field"
+          ],
+          [
+            "/school_id",
+            "unknown_field"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "server-managed fields are unknown",
+      "input": {
+        "title": "Sneaky",
+        "grade_level": 4,
+        "status": "published",
+        "version": "9"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/status",
+            "unknown_field"
+          ],
+          [
+            "/version",
+            "unknown_field"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "prototype pollution key is just unknown",
+      "input": {
+        "title": "Proto",
+        "grade_level": 4,
+        "__proto__": {
+          "admin": true
+        }
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/__proto__",
+            "unknown_field"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "grade as string",
+      "input": {
+        "title": "Str",
+        "grade_level": "4"
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_body_shape",
+        "errors": [
+          [
+            "/grade_level",
+            "type"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "fractional grade",
+      "input": {
+        "title": "Frac",
+        "grade_level": 4.5
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_body_shape",
+        "errors": [
+          [
+            "/grade_level",
+            "type"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "title as number",
+      "input": {
+        "title": 42,
+        "grade_level": 4
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_body_shape",
+        "errors": [
+          [
+            "/title",
+            "type"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "body is an array",
+      "input": [
+        "Fractions",
+        4
+      ],
+      "expect": {
+        "status": 400,
+        "code": "body_not_object"
+      }
+    },
+    {
+      "name": "body is a string",
+      "input": "Fractions",
+      "expect": {
+        "status": 400,
+        "code": "body_not_object"
+      }
+    },
+    {
+      "name": "optional subtitle present",
+      "input": {
+        "title": "With subtitle",
+        "grade_level": 7,
+        "subtitle": "Part-to-part ratios"
+      },
+      "expect": {
+        "status": 201
+      }
+    },
+    {
+      "name": "subtitle at 200 code points",
+      "input": {
+        "title": "Long subtitle",
+        "grade_level": 7,
+        "subtitle": "📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐📐"
+      },
+      "expect": {
+        "status": 201
+      }
+    },
+    {
+      "name": "empty subtitle is not absence",
+      "input": {
+        "title": "Empty subtitle",
+        "grade_level": 7,
+        "subtitle": ""
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/subtitle",
+            "min_length"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "null subtitle is not accepted on create",
+      "input": {
+        "title": "Null subtitle",
+        "grade_level": 7,
+        "subtitle": null
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/subtitle",
+            "not_nullable"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "subtitle over 200 code points",
+      "input": {
+        "title": "Too long",
+        "grade_level": 7,
+        "subtitle": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/subtitle",
+            "max_length"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "subtitle as number",
+      "input": {
+        "title": "Numeric",
+        "grade_level": 7,
+        "subtitle": 3
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_body_shape",
+        "errors": [
+          [
+            "/subtitle",
+            "type"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "unit_id must be a UUID",
+      "input": {
+        "title": "Bad unit",
+        "grade_level": 3,
+        "unit_id": "unit-1"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/unit_id",
+            "format"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "unit_id is not nullable on create",
+      "input": {
+        "title": "Null unit",
+        "grade_level": 3,
+        "unit_id": null
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/unit_id",
+            "not_nullable"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "unit_id as number",
+      "input": {
+        "title": "Numeric unit",
+        "grade_level": 3,
+        "unit_id": 7
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_body_shape",
+        "errors": [
+          [
+            "/unit_id",
+            "type"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "optional duration",
+      "input": {
+        "title": "Timed lesson",
+        "grade_level": 3,
+        "duration_minutes": 45
+      },
+      "expect": {
+        "status": 201
+      }
+    },
+    {
+      "name": "duration bounds inclusive",
+      "input": {
+        "title": "Marathon lesson",
+        "grade_level": 3,
+        "duration_minutes": 600
+      },
+      "expect": {
+        "status": 201
+      }
+    },
+    {
+      "name": "duration below minimum",
+      "input": {
+        "title": "Too short",
+        "grade_level": 3,
+        "duration_minutes": 0
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/duration_minutes",
+            "minimum"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "duration above maximum",
+      "input": {
+        "title": "Too long",
+        "grade_level": 3,
+        "duration_minutes": 601
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/duration_minutes",
+            "maximum"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "duration is not nullable on create",
+      "input": {
+        "title": "Null duration",
+        "grade_level": 3,
+        "duration_minutes": null
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/duration_minutes",
+            "not_nullable"
+          ]
+        ]
+      }
+    }
+  ]
+}

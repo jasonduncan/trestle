@@ -1,0 +1,25 @@
+[package]
+name = "loadtest"
+description = "Load comparison: the pilot API on Trestle versus a hand-written Axum baseline doing the same work"
+# The application's own version, independent of Trestle releases (it is
+# part of published OpenAPI documents).
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+license.workspace = true
+
+# Deliberately independent of trestle-* : the baseline is hand-written Axum.
+[dependencies]
+axum.workspace = true
+base64.workspace = true
+clap.workspace = true
+hmac.workspace = true
+http.workspace = true
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+uuid.workspace = true

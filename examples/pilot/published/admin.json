@@ -1,0 +1,1675 @@
+{
+  "interactions": {
+    "audience": "admin",
+    "digest": "sha256:47e912cc0ac3bdeab898b4a1f137253e00c1ca6f1f57abb1b0701c66d195b75f",
+    "format": "trestle.interactions-export/1",
+    "interactions": [
+      {
+        "audience": "admin",
+        "input": {
+          "id": "lessons.update.input",
+          "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "additionalProperties": false,
+            "properties": {
+              "duration_minutes": {
+                "maximum": 600,
+                "minimum": 1,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "expected_version": {
+                "pattern": "^[0-9]+$",
+                "type": "string"
+              },
+              "grade_level": {
+                "maximum": 12,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "subtitle": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "title": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              "unit_id": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "expected_version",
+              "id"
+            ],
+            "type": "object"
+          },
+          "validationProfile": "trestle.portable@1",
+          "version": "1.1.0"
+        },
+        "interactionId": "lessons.admin_edit.form",
+        "operation": {
+          "binding": {
+            "body": "input",
+            "contentType": "application/json",
+            "interactionRevisionHeader": "Trestle-Interaction-Revision",
+            "method": "PATCH",
+            "path": "/api/v1/lessons/{id}",
+            "pathParams": [
+              "id"
+            ],
+            "precondition": {
+              "etagOf": "lessons.view",
+              "field": "expected_version",
+              "header": "If-Match"
+            }
+          },
+          "concurrency": {
+            "mode": "not_applicable"
+          },
+          "errors": [
+            400,
+            401,
+            403,
+            404,
+            409,
+            412,
+            413,
+            415,
+            422,
+            428,
+            500,
+            503
+          ],
+          "id": "lessons.update",
+          "idempotency": {
+            "mode": "none"
+          },
+          "success": {
+            "body": "output",
+            "status": 200
+          },
+          "version": "1.0.0"
+        },
+        "output": {
+          "id": "lessons.view",
+          "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "additionalProperties": false,
+            "properties": {
+              "duration_minutes": {
+                "maximum": 600,
+                "minimum": 1,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "grade_level": {
+                "maximum": 12,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "draft",
+                  "published"
+                ],
+                "type": "string"
+              },
+              "subtitle": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "title": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              "unit_id": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "version": {
+                "pattern": "^[0-9]+$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "duration_minutes",
+              "grade_level",
+              "id",
+              "status",
+              "subtitle",
+              "title",
+              "unit_id",
+              "version"
+            ],
+            "type": "object"
+          },
+          "version": "1.3.0"
+        },
+        "presentation": {
+          "kind": "form",
+          "layout": {
+            "children": [
+              {
+                "kind": "field",
+                "label": "Title",
+                "pointer": "/title",
+                "widget": "text"
+              },
+              {
+                "kind": "field",
+                "label": "Grade level",
+                "pointer": "/grade_level",
+                "widget": "integer"
+              },
+              {
+                "kind": "field",
+                "label": "Subtitle",
+                "pointer": "/subtitle",
+                "widget": "text"
+              },
+              {
+                "kind": "field",
+                "label": "Unit",
+                "options": {
+                  "label": "name",
+                  "operation": "units.list",
+                  "path": "/api/v1/units",
+                  "value": "id"
+                },
+                "pointer": "/unit_id",
+                "widget": "relation"
+              },
+              {
+                "kind": "field",
+                "label": "Duration (minutes)",
+                "pointer": "/duration_minutes",
+                "widget": "integer"
+              }
+            ],
+            "kind": "vertical"
+          },
+          "submit": {
+            "label": "Save changes"
+          },
+          "title": "Edit lesson"
+        },
+        "protocol": "trestle.interactions",
+        "protocolVersion": "1.0",
+        "requiredFeatures": [
+          "forms.core@1",
+          "http.json@1",
+          "forms.relation@1",
+          "http.precondition@1"
+        ],
+        "revision": "r-271a27d449f770e0"
+      }
+    ]
+  },
+  "openapi": {
+    "components": {
+      "responses": {
+        "Problem": {
+          "content": {
+            "application/problem+json": {
+              "schema": {
+                "$ref": "#/components/schemas/Problem"
+              }
+            }
+          },
+          "description": "Problem details (RFC 9457) with Trestle's code, request_id and field errors."
+        }
+      },
+      "schemas": {
+        "Problem": {
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "detail": {
+              "type": "string"
+            },
+            "errors": {
+              "items": {
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "params": {
+                    "type": "object"
+                  },
+                  "pointer": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "pointer",
+                  "code",
+                  "message"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "request_id": {
+              "type": "string"
+            },
+            "status": {
+              "type": "integer"
+            },
+            "title": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "title",
+            "status",
+            "code"
+          ],
+          "type": "object"
+        },
+        "lessons.create.input": {
+          "additionalProperties": false,
+          "properties": {
+            "duration_minutes": {
+              "maximum": 600,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "grade_level": {
+              "maximum": 12,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "subtitle": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "title": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "unit_id": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "grade_level",
+            "title"
+          ],
+          "type": "object"
+        },
+        "lessons.publish.input.body": {
+          "additionalProperties": false,
+          "properties": {
+            "expected_version": {
+              "pattern": "^[0-9]+$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "expected_version"
+          ],
+          "type": "object"
+        },
+        "lessons.update.input.body": {
+          "additionalProperties": false,
+          "properties": {
+            "duration_minutes": {
+              "maximum": 600,
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "grade_level": {
+              "maximum": 12,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "subtitle": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "title": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "unit_id": {
+              "format": "uuid",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "lessons.view": {
+          "additionalProperties": false,
+          "properties": {
+            "duration_minutes": {
+              "maximum": 600,
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "grade_level": {
+              "maximum": 12,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "id": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "draft",
+                "published"
+              ],
+              "type": "string"
+            },
+            "subtitle": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "title": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "unit_id": {
+              "format": "uuid",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "version": {
+              "pattern": "^[0-9]+$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "duration_minutes",
+            "grade_level",
+            "id",
+            "status",
+            "subtitle",
+            "title",
+            "unit_id",
+            "version"
+          ],
+          "type": "object"
+        },
+        "lessons.view.page": {
+          "additionalProperties": false,
+          "properties": {
+            "items": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "duration_minutes": {
+                    "maximum": 600,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "grade_level": {
+                    "maximum": 12,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "id": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "status": {
+                    "enum": [
+                      "draft",
+                      "published"
+                    ],
+                    "type": "string"
+                  },
+                  "subtitle": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "title": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "unit_id": {
+                    "format": "uuid",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "version": {
+                    "pattern": "^[0-9]+$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "duration_minutes",
+                  "grade_level",
+                  "id",
+                  "status",
+                  "subtitle",
+                  "title",
+                  "unit_id",
+                  "version"
+                ],
+                "type": "object"
+              },
+              "maxItems": 100,
+              "type": "array"
+            },
+            "next_cursor": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "items",
+            "next_cursor"
+          ],
+          "type": "object"
+        },
+        "schools.membership.page": {
+          "additionalProperties": false,
+          "properties": {
+            "items": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "role": {
+                    "enum": [
+                      "owner",
+                      "teacher",
+                      "viewer"
+                    ],
+                    "type": "string"
+                  },
+                  "school": {
+                    "format": "uuid",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "role",
+                  "school"
+                ],
+                "type": "object"
+              },
+              "maxItems": 100,
+              "type": "array"
+            },
+            "next_cursor": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "items",
+            "next_cursor"
+          ],
+          "type": "object"
+        },
+        "units.create.input": {
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "maxLength": 120,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "type": "object"
+        },
+        "units.view": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "name": {
+              "maxLength": 120,
+              "minLength": 1,
+              "type": "string"
+            },
+            "version": {
+              "pattern": "^[0-9]+$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "version"
+          ],
+          "type": "object"
+        },
+        "units.view.page": {
+          "additionalProperties": false,
+          "properties": {
+            "items": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "name": {
+                    "maxLength": 120,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "version": {
+                    "pattern": "^[0-9]+$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "version"
+                ],
+                "type": "object"
+              },
+              "maxItems": 100,
+              "type": "array"
+            },
+            "next_cursor": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "items",
+            "next_cursor"
+          ],
+          "type": "object"
+        }
+      },
+      "securitySchemes": {
+        "bearer": {
+          "scheme": "bearer",
+          "type": "http"
+        }
+      }
+    },
+    "info": {
+      "title": "Pilot API",
+      "version": "0.0.1"
+    },
+    "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+    "openapi": "3.1.1",
+    "paths": {
+      "/api/v1/lessons": {
+        "get": {
+          "operationId": "lessons.list",
+          "parameters": [
+            {
+              "description": "School to act in. Must be one of the caller's memberships; grants nothing by itself.",
+              "in": "header",
+              "name": "Trestle-Tenant",
+              "required": true,
+              "schema": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            {
+              "in": "query",
+              "name": "cursor",
+              "required": false,
+              "schema": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            {
+              "in": "query",
+              "name": "limit",
+              "required": false,
+              "schema": {
+                "maximum": 100,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            {
+              "in": "query",
+              "name": "grade_level",
+              "required": false,
+              "schema": {
+                "maximum": 12,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            {
+              "in": "query",
+              "name": "status",
+              "required": false,
+              "schema": {
+                "enum": [
+                  "draft",
+                  "published"
+                ],
+                "type": "string"
+              }
+            },
+            {
+              "in": "query",
+              "name": "unit_id",
+              "required": false,
+              "schema": {
+                "format": "uuid",
+                "type": "string"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/lessons.view.page"
+                  }
+                }
+              },
+              "description": "List lessons in the selected school by title."
+            },
+            "400": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "401": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "403": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "404": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "422": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "500": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "503": {
+              "$ref": "#/components/responses/Problem"
+            }
+          },
+          "security": [
+            {
+              "bearer": []
+            }
+          ],
+          "summary": "List lessons in the selected school by title.",
+          "tags": [
+            "lessons"
+          ],
+          "x-trestle-operation-version": "1.0.0"
+        },
+        "post": {
+          "operationId": "lessons.create",
+          "parameters": [
+            {
+              "description": "School to act in. Must be one of the caller's memberships; grants nothing by itself.",
+              "in": "header",
+              "name": "Trestle-Tenant",
+              "required": true,
+              "schema": {
+                "format": "uuid",
+                "type": "string"
+              }
+            }
+          ],
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/lessons.create.input"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "201": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/lessons.view"
+                  }
+                }
+              },
+              "description": "Create a draft lesson in the selected school.",
+              "headers": {
+                "ETag": {
+                  "description": "Send as If-Match to change this version.",
+                  "schema": {
+                    "type": "string"
+                  }
+                },
+                "Location": {
+                  "description": "URL of the created resource.",
+                  "schema": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "401": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "403": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "409": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "413": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "415": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "422": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "500": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "503": {
+              "$ref": "#/components/responses/Problem"
+            }
+          },
+          "security": [
+            {
+              "bearer": []
+            }
+          ],
+          "summary": "Create a draft lesson in the selected school.",
+          "tags": [
+            "lessons"
+          ],
+          "x-trestle-operation-version": "1.0.0"
+        }
+      },
+      "/api/v1/lessons/{id}": {
+        "delete": {
+          "operationId": "lessons.delete",
+          "parameters": [
+            {
+              "description": "School to act in. Must be one of the caller's memberships; grants nothing by itself.",
+              "in": "header",
+              "name": "Trestle-Tenant",
+              "required": true,
+              "schema": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            {
+              "in": "path",
+              "name": "id",
+              "required": true,
+              "schema": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            {
+              "description": "ETag of the lessons.view being changed.",
+              "in": "header",
+              "name": "If-Match",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "responses": {
+            "204": {
+              "description": "Delete a lesson."
+            },
+            "400": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "401": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "403": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "404": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "412": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "422": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "428": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "500": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "503": {
+              "$ref": "#/components/responses/Problem"
+            }
+          },
+          "security": [
+            {
+              "bearer": []
+            }
+          ],
+          "summary": "Delete a lesson.",
+          "tags": [
+            "lessons"
+          ],
+          "x-trestle-operation-version": "1.0.0"
+        },
+        "get": {
+          "operationId": "lessons.get",
+          "parameters": [
+            {
+              "description": "School to act in. Must be one of the caller's memberships; grants nothing by itself.",
+              "in": "header",
+              "name": "Trestle-Tenant",
+              "required": true,
+              "schema": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            {
+              "in": "path",
+              "name": "id",
+              "required": true,
+              "schema": {
+                "format": "uuid",
+                "type": "string"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/lessons.view"
+                  }
+                }
+              },
+              "description": "Read one lesson in the selected school.",
+              "headers": {
+                "ETag": {
+                  "description": "Send as If-Match to change this version.",
+                  "schema": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "401": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "403": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "404": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "500": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "503": {
+              "$ref": "#/components/responses/Problem"
+            }
+          },
+          "security": [
+            {
+              "bearer": []
+            }
+          ],
+          "summary": "Read one lesson in the selected school.",
+          "tags": [
+            "lessons"
+          ],
+          "x-trestle-operation-version": "1.0.0"
+        },
+        "patch": {
+          "operationId": "lessons.update",
+          "parameters": [
+            {
+              "description": "School to act in. Must be one of the caller's memberships; grants nothing by itself.",
+              "in": "header",
+              "name": "Trestle-Tenant",
+              "required": true,
+              "schema": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            {
+              "in": "path",
+              "name": "id",
+              "required": true,
+              "schema": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            {
+              "description": "ETag of the lessons.view being changed.",
+              "in": "header",
+              "name": "If-Match",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/lessons.update.input.body"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/lessons.view"
+                  }
+                }
+              },
+              "description": "Change a lesson's title, grade, subtitle, unit or duration.",
+              "headers": {
+                "ETag": {
+                  "description": "Send as If-Match to change this version.",
+                  "schema": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "401": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "403": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "404": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "409": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "412": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "413": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "415": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "422": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "428": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "500": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "503": {
+              "$ref": "#/components/responses/Problem"
+            }
+          },
+          "security": [
+            {
+              "bearer": []
+            }
+          ],
+          "summary": "Change a lesson's title, grade, subtitle, unit or duration.",
+          "tags": [
+            "lessons"
+          ],
+          "x-trestle-operation-version": "1.0.0"
+        }
+      },
+      "/api/v1/lessons/{id}/actions/publish": {
+        "post": {
+          "operationId": "lessons.publish",
+          "parameters": [
+            {
+              "description": "School to act in. Must be one of the caller's memberships; grants nothing by itself.",
+              "in": "header",
+              "name": "Trestle-Tenant",
+              "required": true,
+              "schema": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            {
+              "in": "path",
+              "name": "id",
+              "required": true,
+              "schema": {
+                "format": "uuid",
+                "type": "string"
+              }
+            }
+          ],
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/lessons.publish.input.body"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/lessons.view"
+                  }
+                }
+              },
+              "description": "Publish a draft lesson.",
+              "headers": {
+                "ETag": {
+                  "description": "Send as If-Match to change this version.",
+                  "schema": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "401": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "403": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "404": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "409": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "413": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "415": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "422": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "500": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "503": {
+              "$ref": "#/components/responses/Problem"
+            }
+          },
+          "security": [
+            {
+              "bearer": []
+            }
+          ],
+          "summary": "Publish a draft lesson.",
+          "tags": [
+            "lessons"
+          ],
+          "x-trestle-operation-version": "1.0.0"
+        }
+      },
+      "/api/v1/me/schools": {
+        "get": {
+          "operationId": "schools.mine",
+          "parameters": [],
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/schools.membership.page"
+                  }
+                }
+              },
+              "description": "The caller's schools and roles, by name; at most 100."
+            },
+            "400": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "401": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "403": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "404": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "500": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "503": {
+              "$ref": "#/components/responses/Problem"
+            }
+          },
+          "security": [
+            {
+              "bearer": []
+            }
+          ],
+          "summary": "The caller's schools and roles, by name; at most 100.",
+          "tags": [
+            "schools"
+          ],
+          "x-trestle-operation-version": "1.0.0"
+        }
+      },
+      "/api/v1/units": {
+        "get": {
+          "operationId": "units.list",
+          "parameters": [
+            {
+              "description": "School to act in. Must be one of the caller's memberships; grants nothing by itself.",
+              "in": "header",
+              "name": "Trestle-Tenant",
+              "required": true,
+              "schema": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            {
+              "in": "query",
+              "name": "cursor",
+              "required": false,
+              "schema": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            {
+              "in": "query",
+              "name": "limit",
+              "required": false,
+              "schema": {
+                "maximum": 100,
+                "minimum": 1,
+                "type": "integer"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/units.view.page"
+                  }
+                }
+              },
+              "description": "List the selected school's units by name."
+            },
+            "400": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "401": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "403": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "404": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "422": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "500": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "503": {
+              "$ref": "#/components/responses/Problem"
+            }
+          },
+          "security": [
+            {
+              "bearer": []
+            }
+          ],
+          "summary": "List the selected school's units by name.",
+          "tags": [
+            "units"
+          ],
+          "x-trestle-operation-version": "1.0.0"
+        },
+        "post": {
+          "operationId": "units.create",
+          "parameters": [
+            {
+              "description": "School to act in. Must be one of the caller's memberships; grants nothing by itself.",
+              "in": "header",
+              "name": "Trestle-Tenant",
+              "required": true,
+              "schema": {
+                "format": "uuid",
+                "type": "string"
+              }
+            }
+          ],
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/units.create.input"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "201": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/units.view"
+                  }
+                }
+              },
+              "description": "Create a unit in the selected school.",
+              "headers": {
+                "ETag": {
+                  "description": "Send as If-Match to change this version.",
+                  "schema": {
+                    "type": "string"
+                  }
+                },
+                "Location": {
+                  "description": "URL of the created resource.",
+                  "schema": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "401": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "403": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "409": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "413": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "415": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "422": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "500": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "503": {
+              "$ref": "#/components/responses/Problem"
+            }
+          },
+          "security": [
+            {
+              "bearer": []
+            }
+          ],
+          "summary": "Create a unit in the selected school.",
+          "tags": [
+            "units"
+          ],
+          "x-trestle-operation-version": "1.0.0"
+        }
+      },
+      "/api/v1/units/{id}": {
+        "get": {
+          "operationId": "units.get",
+          "parameters": [
+            {
+              "description": "School to act in. Must be one of the caller's memberships; grants nothing by itself.",
+              "in": "header",
+              "name": "Trestle-Tenant",
+              "required": true,
+              "schema": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            {
+              "in": "path",
+              "name": "id",
+              "required": true,
+              "schema": {
+                "format": "uuid",
+                "type": "string"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/units.view"
+                  }
+                }
+              },
+              "description": "Read one unit in the selected school.",
+              "headers": {
+                "ETag": {
+                  "description": "Send as If-Match to change this version.",
+                  "schema": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "401": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "403": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "404": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "500": {
+              "$ref": "#/components/responses/Problem"
+            },
+            "503": {
+              "$ref": "#/components/responses/Problem"
+            }
+          },
+          "security": [
+            {
+              "bearer": []
+            }
+          ],
+          "summary": "Read one unit in the selected school.",
+          "tags": [
+            "units"
+          ],
+          "x-trestle-operation-version": "1.0.0"
+        }
+      }
+    }
+  },
+  "resources": {
+    "audience": "admin",
+    "digest": "sha256:50ed8835d1b45836f79bd0ea540dd648d18a239a9907bfc543dd4a272d95bbbb",
+    "resources": [
+      {
+        "actions": [
+          {
+            "bind": {
+              "expected_version": "/version"
+            },
+            "label": "Publish",
+            "name": "publish",
+            "operation": "lessons.publish",
+            "path": "/api/v1/lessons/{id}/actions/publish",
+            "visibleWhen": {
+              "equals": "draft",
+              "pointer": "/status"
+            }
+          }
+        ],
+        "columns": [
+          "title",
+          "grade_level",
+          "status",
+          "version"
+        ],
+        "create": {
+          "form": null,
+          "method": "POST",
+          "operation": "lessons.create",
+          "path": "/api/v1/lessons"
+        },
+        "delete": {
+          "method": "DELETE",
+          "operation": "lessons.delete",
+          "path": "/api/v1/lessons/{id}"
+        },
+        "filters": [
+          {
+            "name": "grade_level",
+            "schema": {
+              "maximum": 12,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "status",
+            "schema": {
+              "enum": [
+                "draft",
+                "published"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "id": "lessons.lessons",
+        "label": "title",
+        "list": {
+          "item": {
+            "additionalProperties": false,
+            "properties": {
+              "duration_minutes": {
+                "maximum": 600,
+                "minimum": 1,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "grade_level": {
+                "maximum": 12,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "draft",
+                  "published"
+                ],
+                "type": "string"
+              },
+              "subtitle": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "title": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              "unit_id": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "version": {
+                "pattern": "^[0-9]+$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "duration_minutes",
+              "grade_level",
+              "id",
+              "status",
+              "subtitle",
+              "title",
+              "unit_id",
+              "version"
+            ],
+            "type": "object"
+          },
+          "operation": "lessons.list",
+          "path": "/api/v1/lessons"
+        },
+        "path": "/api/v1/lessons",
+        "retrieve": {
+          "etagOf": "lessons.view",
+          "method": "GET",
+          "operation": "lessons.get",
+          "path": "/api/v1/lessons/{id}"
+        },
+        "title": "Lessons",
+        "update": {
+          "form": "lessons.admin_edit.form",
+          "method": "PATCH",
+          "operation": "lessons.update",
+          "path": "/api/v1/lessons/{id}"
+        }
+      }
+    ]
+  }
+}

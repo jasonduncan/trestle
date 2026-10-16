@@ -1,0 +1,292 @@
+{
+  "format": "trestle.revisions/1",
+  "interactions": {
+    "lessons.admin_edit.form": {
+      "r-271a27d449f770e0": {
+        "input": {
+          "fields": {
+            "duration_minutes": {
+              "maximum": 600,
+              "minimum": 1,
+              "nullable": true,
+              "required": false,
+              "type": "integer"
+            },
+            "expected_version": {
+              "nullable": false,
+              "required": true,
+              "type": "digits"
+            },
+            "grade_level": {
+              "maximum": 12,
+              "minimum": 1,
+              "nullable": false,
+              "required": false,
+              "type": "integer"
+            },
+            "id": {
+              "nullable": false,
+              "required": true,
+              "type": "uuid"
+            },
+            "subtitle": {
+              "maxChars": 200,
+              "minChars": 1,
+              "nullable": true,
+              "required": false,
+              "type": "text"
+            },
+            "title": {
+              "maxChars": 200,
+              "minChars": 1,
+              "nullable": false,
+              "required": false,
+              "type": "text"
+            },
+            "unit_id": {
+              "nullable": true,
+              "required": false,
+              "type": "uuid"
+            }
+          },
+          "id": "lessons.update.input",
+          "kind": "input",
+          "profile": "trestle.portable@1",
+          "version": "1.1.0"
+        },
+        "operation": "lessons.update"
+      },
+      "r-9adfca22d27dfc4e": {
+        "input": {
+          "fields": {
+            "expected_version": {
+              "nullable": false,
+              "required": true,
+              "type": "digits"
+            },
+            "grade_level": {
+              "maximum": 12,
+              "minimum": 1,
+              "nullable": false,
+              "required": false,
+              "type": "integer"
+            },
+            "id": {
+              "nullable": false,
+              "required": true,
+              "type": "uuid"
+            },
+            "subtitle": {
+              "maxChars": 200,
+              "minChars": 1,
+              "nullable": true,
+              "required": false,
+              "type": "text"
+            },
+            "title": {
+              "maxChars": 200,
+              "minChars": 1,
+              "nullable": false,
+              "required": false,
+              "type": "text"
+            },
+            "unit_id": {
+              "nullable": true,
+              "required": false,
+              "type": "uuid"
+            }
+          },
+          "id": "lessons.update.input",
+          "kind": "input",
+          "profile": "trestle.portable@1",
+          "version": "1.0.0"
+        },
+        "operation": "lessons.update"
+      }
+    },
+    "lessons.create.form": {
+      "r-1ebb15cb88c28c05": {
+        "input": {
+          "fields": {
+            "duration_minutes": {
+              "maximum": 600,
+              "minimum": 1,
+              "nullable": false,
+              "required": false,
+              "type": "integer"
+            },
+            "grade_level": {
+              "maximum": 12,
+              "minimum": 1,
+              "nullable": false,
+              "required": true,
+              "type": "integer"
+            },
+            "subtitle": {
+              "maxChars": 200,
+              "minChars": 1,
+              "nullable": false,
+              "required": false,
+              "type": "text"
+            },
+            "title": {
+              "maxChars": 200,
+              "minChars": 1,
+              "nullable": false,
+              "required": true,
+              "type": "text"
+            },
+            "unit_id": {
+              "nullable": false,
+              "required": false,
+              "type": "uuid"
+            }
+          },
+          "id": "lessons.create.input",
+          "kind": "input",
+          "profile": "trestle.portable@1",
+          "version": "1.3.0"
+        },
+        "operation": "lessons.create"
+      },
+      "r-acbd164ff4e78da6": {
+        "input": {
+          "fields": {
+            "grade_level": {
+              "maximum": 12,
+              "minimum": 1,
+              "nullable": false,
+              "required": true,
+              "type": "integer"
+            },
+            "title": {
+              "maxChars": 200,
+              "minChars": 1,
+              "nullable": false,
+              "required": true,
+              "type": "text"
+            }
+          },
+          "id": "lessons.create.input",
+          "kind": "input",
+          "profile": "trestle.portable@1",
+          "version": "1.0.0"
+        },
+        "operation": "lessons.create"
+      },
+      "r-b68fa979090594a2": {
+        "input": {
+          "fields": {
+            "grade_level": {
+              "maximum": 12,
+              "minimum": 1,
+              "nullable": false,
+              "required": true,
+              "type": "integer"
+            },
+            "subtitle": {
+              "maxChars": 200,
+              "minChars": 1,
+              "nullable": false,
+              "required": false,
+              "type": "text"
+            },
+            "title": {
+              "maxChars": 200,
+              "minChars": 1,
+              "nullable": false,
+              "required": true,
+              "type": "text"
+            },
+            "unit_id": {
+              "nullable": false,
+              "required": false,
+              "type": "uuid"
+            }
+          },
+          "id": "lessons.create.input",
+          "kind": "input",
+          "profile": "trestle.portable@1",
+          "version": "1.2.0"
+        },
+        "operation": "lessons.create"
+      },
+      "r-cab979f086c703f7": {
+        "input": {
+          "fields": {
+            "grade_level": {
+              "maximum": 12,
+              "minimum": 1,
+              "nullable": false,
+              "required": true,
+              "type": "integer"
+            },
+            "subtitle": {
+              "maxChars": 200,
+              "minChars": 1,
+              "nullable": false,
+              "required": false,
+              "type": "text"
+            },
+            "title": {
+              "maxChars": 200,
+              "minChars": 1,
+              "nullable": false,
+              "required": true,
+              "type": "text"
+            }
+          },
+          "id": "lessons.create.input",
+          "kind": "input",
+          "profile": "trestle.portable@1",
+          "version": "1.1.0"
+        },
+        "operation": "lessons.create"
+      },
+      "r-ff12a6ddaa0b96ac": {
+        "input": {
+          "fields": {
+            "duration_minutes": {
+              "maximum": 600,
+              "minimum": 1,
+              "nullable": false,
+              "required": false,
+              "type": "integer"
+            },
+            "grade_level": {
+              "maximum": 12,
+              "minimum": 1,
+              "nullable": false,
+              "required": true,
+              "type": "integer"
+            },
+            "subtitle": {
+              "maxChars": 200,
+              "minChars": 1,
+              "nullable": false,
+              "required": false,
+              "type": "text"
+            },
+            "title": {
+              "maxChars": 200,
+              "minChars": 1,
+              "nullable": false,
+              "required": true,
+              "type": "text"
+            },
+            "unit_id": {
+              "nullable": false,
+              "required": false,
+              "type": "uuid"
+            }
+          },
+          "id": "lessons.create.input",
+          "kind": "input",
+          "profile": "trestle.portable@1",
+          "version": "1.3.0"
+        },
+        "operation": "lessons.create"
+      }
+    }
+  }
+}

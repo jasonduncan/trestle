@@ -1,0 +1,26 @@
+{
+  "format": 2,
+  "app": "lessons",
+  "id": "0004_duration",
+  "depends_on": [
+    "lessons.0003_unit"
+  ],
+  "operations": [
+    {
+      "op": "add_field",
+      "model": "lessons.lesson",
+      "field": {
+        "id": "lessons.lesson.duration_minutes",
+        "column": "duration_minutes",
+        "type": "small_int",
+        "nullable": true,
+        "check": {
+          "kind": "range",
+          "min": 1,
+          "max": 600
+        },
+        "check_name": "lessons_duration_minutes_check"
+      }
+    }
+  ]
+}

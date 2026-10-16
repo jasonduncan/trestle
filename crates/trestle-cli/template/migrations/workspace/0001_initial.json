@@ -1,0 +1,100 @@
+{
+  "format": 2,
+  "app": "workspace",
+  "id": "0001_initial",
+  "depends_on": [],
+  "operations": [
+    {
+      "op": "create_model",
+      "model": {
+        "id": "workspace.workspace",
+        "table": "workspaces",
+        "fields": [
+          {
+            "id": "workspace.workspace.id",
+            "column": "id",
+            "type": "uuid",
+            "nullable": false,
+            "primary_key": true
+          },
+          {
+            "id": "workspace.workspace.name",
+            "column": "name",
+            "type": "text",
+            "nullable": false,
+            "check": {
+              "kind": "chars",
+              "min": 1,
+              "max": 200
+            },
+            "check_name": "workspaces_name_check"
+          },
+          {
+            "id": "workspace.workspace.created_at",
+            "column": "created_at",
+            "type": "timestamptz",
+            "nullable": false,
+            "default": {
+              "kind": "now"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "op": "create_model",
+      "model": {
+        "id": "workspace.membership",
+        "table": "workspace_memberships",
+        "fields": [
+          {
+            "id": "workspace.membership.workspace_id",
+            "column": "workspace_id",
+            "type": "uuid",
+            "nullable": false,
+            "primary_key": true,
+            "references": "workspace.workspace"
+          },
+          {
+            "id": "workspace.membership.actor_id",
+            "column": "actor_id",
+            "type": "uuid",
+            "nullable": false,
+            "primary_key": true
+          },
+          {
+            "id": "workspace.membership.role",
+            "column": "role",
+            "type": "text",
+            "nullable": false,
+            "check": {
+              "kind": "one_of",
+              "values": [
+                "member",
+                "viewer"
+              ]
+            },
+            "check_name": "workspace_memberships_role_check"
+          },
+          {
+            "id": "workspace.membership.created_at",
+            "column": "created_at",
+            "type": "timestamptz",
+            "nullable": false,
+            "default": {
+              "kind": "now"
+            }
+          }
+        ],
+        "indexes": [
+          {
+            "name": "workspace_memberships_actor_idx",
+            "fields": [
+              "workspace.membership.actor_id"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # Integration tests create and drop trestle_test_* databases here.
+  TRESTLE_TEST_DATABASE_URL: postgres://postgres@localhost:5432/postgres
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    name: test (PostgreSQL ${{ matrix.postgres }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["13", "17"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags, for the upgrade check
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: pg${{ matrix.postgres }}
+      - name: Tests
+        run: cargo test --workspace
+      - name: Pilot models match committed migrations
+        run: cargo run -q -p pilot -- makemigrations --check
+      - name: Replay pilot history from empty, then verify
+        run: scripts/ci/replay.sh
+      - name: Upgrade from the last release tag, then verify
+        run: scripts/ci/upgrade-from-tag.sh
+
+  scaffold:
+    name: scaffold (trestle new)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: scripts/ci/scaffold.sh
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - run: cargo deny check advisories bans sources licenses
+
+  frontend:
+    name: frontend (tests and typecheck)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [lint, test, scaffold, audit, frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/ci/release-check.sh "${GITHUB_REF_NAME}"
+      - run: rustup show active-toolchain || rustup toolchain install
+      # Packages and verifies every publishable crate together (internal
+      # path dependencies resolve locally). Nothing is uploaded: a real
+      # publish is a separate, approved step.
+      - name: cargo publish --dry-run
+        run: >-
+          cargo publish --dry-run --locked
+          -p trestle-protocol -p trestle-historical -p trestle-core
+          -p trestle-identity -p trestle-mail -p trestle-framework -p trestle-cli

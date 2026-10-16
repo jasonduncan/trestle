@@ -1,0 +1,12 @@
+Trestle
+Copyright (c) 2026 Jason Duncan
+Licensed under either of the Apache License, Version 2.0 (LICENSE-APACHE) or
+the MIT license (LICENSE-MIT), at your option.
+
+This product includes third-party material:
+
+- crates/trestle-identity/data/common-passwords.txt is derived from Django's
+  common-passwords list (Copyright (c) Django Software Foundation and
+  individual contributors), distributed under the BSD 3-Clause license.
+  The full attribution and license text are in
+  crates/trestle-identity/data/NOTICE.md.

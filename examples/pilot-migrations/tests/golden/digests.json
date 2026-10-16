@@ -1,0 +1,12 @@
+{
+  "audit.0001_initial": "d875b3eacb4a43f1f416b7020c2cc7caeda1464ffdf234bb4efc82154edbe909",
+  "identity.0001_initial": "394e9e6628745f9457769533ea190a947b3202d0ca6db40218ea58e1ca900f8c",
+  "identity.0002_accounts": "8d9fba741e920ebc96649e53f5825fca6b2a679d9d8a6d99177fd531aea341ae",
+  "schools.0001_initial": "fff27311052001b012d395e0f897670e6827f6429eb4147cefb65e42b7d2373b",
+  "lessons.0001_initial": "b20ccf03070ddccdde305417abcefc0afe53bc6915abe64e5b1bf93d60e2b910",
+  "lessons.0002_subtitle": "9dd25f15d20a729e34e9f4d175037df3dc2205708826dc9be6647e420d0a33be",
+  "smartfolder.0001_initial": "c06ee541fddb815214f2cd6b87782902c9e19e7e856c000ba7f3dec172d04c3e",
+  "units.0001_initial": "08ec8c636be23b10ab1fa70571fbb6ebaa321ad5f657d33053e05e1d35848b43",
+  "lessons.0003_unit": "71c70dbd07bd897a1685e22d792cf9c4cd449e8bf5edbee9a1306779b88c045d",
+  "lessons.0004_duration": "37dfd3963611669baa46a4902540367c54e011d361da4bfd7c685a8f04f0afa3"
+}

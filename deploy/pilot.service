@@ -1,0 +1,27 @@
+# systemd unit for one API replica. NOT VALIDATED on a Linux host.
+[Unit]
+Description=Trestle pilot API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/trestle/pilot.env
+ExecStart=/usr/local/bin/pilot serve
+# SIGTERM stops accepting and drains in-flight requests (graceful shutdown).
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=2
+User=trestle
+Group=trestle
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+CapabilityBoundingSet=
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

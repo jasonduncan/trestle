@@ -1,0 +1,10 @@
+# cargo audit configuration. Every ignore needs a reason and a re-check date.
+[advisories]
+ignore = [
+  # RUSTSEC-2023-0071 (rsa: Marvin timing side channel). `rsa` is in
+  # Cargo.lock only through `sqlx-mysql`, which sqlx lists as an optional
+  # dependency; this workspace enables only the postgres driver, and
+  # `cargo tree -i rsa --target all` shows it is never built. JWT
+  # verification uses aws-lc-rs. Re-check whenever sqlx features change.
+  "RUSTSEC-2023-0071",
+]

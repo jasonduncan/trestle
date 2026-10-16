@@ -1,0 +1,36 @@
+{
+  "format": 2,
+  "app": "notes",
+  "id": "0001_initial",
+  "depends_on": [],
+  "operations": [
+    {
+      "op": "create_model",
+      "model": {
+        "id": "notes.note",
+        "table": "notes",
+        "fields": [
+          {
+            "id": "notes.note.id",
+            "column": "id",
+            "type": "uuid",
+            "nullable": false,
+            "primary_key": true
+          },
+          {
+            "id": "notes.note.title",
+            "column": "title",
+            "type": "text",
+            "nullable": false,
+            "check": {
+              "kind": "chars",
+              "min": 1,
+              "max": 200
+            },
+            "check_name": "notes_title_check"
+          }
+        ]
+      }
+    }
+  ]
+}

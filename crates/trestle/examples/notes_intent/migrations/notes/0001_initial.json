@@ -1,0 +1,93 @@
+{
+  "format": 2,
+  "app": "notes",
+  "id": "0001_initial",
+  "depends_on": [
+    "workspace.0001_initial"
+  ],
+  "operations": [
+    {
+      "op": "create_model",
+      "model": {
+        "id": "notes.note",
+        "table": "notes",
+        "fields": [
+          {
+            "id": "notes.note.id",
+            "column": "id",
+            "type": "uuid",
+            "nullable": false,
+            "primary_key": true
+          },
+          {
+            "id": "notes.note.workspace_id",
+            "column": "workspace_id",
+            "type": "uuid",
+            "nullable": false,
+            "references": "workspace.workspace"
+          },
+          {
+            "id": "notes.note.title",
+            "column": "title",
+            "type": "text",
+            "nullable": false,
+            "check": {
+              "kind": "chars",
+              "min": 0,
+              "max": 200
+            },
+            "check_name": "notes_title_check"
+          },
+          {
+            "id": "notes.note.body",
+            "column": "body",
+            "type": "text",
+            "nullable": true
+          },
+          {
+            "id": "notes.note.pinned",
+            "column": "pinned",
+            "type": "boolean",
+            "nullable": false,
+            "default": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          {
+            "id": "notes.note.version",
+            "column": "version",
+            "type": "big_int",
+            "nullable": false,
+            "check": {
+              "kind": "at_least",
+              "min": 1
+            },
+            "check_name": "notes_version_check",
+            "default": {
+              "kind": "int",
+              "value": 1
+            }
+          },
+          {
+            "id": "notes.note.created_at",
+            "column": "created_at",
+            "type": "timestamptz",
+            "nullable": false,
+            "default": {
+              "kind": "now"
+            }
+          }
+        ],
+        "indexes": [
+          {
+            "name": "notes_workspace_id_idx",
+            "fields": [
+              "notes.note.workspace_id"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

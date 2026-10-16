@@ -1,0 +1,37 @@
+[project]
+name = "notes"
+trestle = "0.1"
+
+[auth]
+passwords = true           # default; invites/resets by operator command
+# oidc = "google"          # opt-in; needs GOOGLE_CLIENT_ID/SECRET via env
+
+[tenancy]
+model = "workspace"        # every model below is scoped to a workspace
+
+[roles]
+member = ["notes.read", "notes.write"]
+viewer = ["notes.read"]
+
+[[models]]
+id = "notes.note"          # stable ID: never change it, rename the label instead
+fields = [
+  { id = "title",  type = "text", max = 200 },
+  { id = "body",   type = "text", optional = true },
+  { id = "pinned", type = "bool", default = false },
+]
+
+[[endpoints]]
+model = "notes.note"
+crud = ["list", "get", "create", "update", "delete"]
+read = "notes.read"
+write = "notes.write"
+filter = ["pinned"]
+order = "-created_at"
+hooks = { validate = "notes::tidy" }
+
+[[endpoints]]
+id = "notes.pin"           # a custom action written in Rust
+path = "POST /api/v1/notes/{id}/pin"
+permission = "notes.write"
+handler = "notes::pin"

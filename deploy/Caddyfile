@@ -1,0 +1,86 @@
+# Edge for the Trestle pilot (design doc §12.2, §16.1). NOT VALIDATED: this
+# file has not been loaded (`caddy validate --config deploy/Caddyfile`) or
+# exercised against a real Caddy.
+# The routing rules it encodes are exercised by frontend/e2e/run-m5.mjs,
+# whose edge implements the same split in Node.
+#
+# One public origin. Static bundles come from disk (or a CDN in front of
+# this edge); /api and /_meta go to the API replicas. The edge never
+# rewrites an unknown /api or /_meta path to the SPA entry document, never
+# caches personalised responses, and never exposes /metrics.
+#
+# Replace app.example.com, the upstream addresses and the asset roots.
+
+{
+	# Keep the admin API off the network.
+	admin localhost:2019
+}
+
+app.example.com {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		X-Frame-Options "DENY"
+		# The bundles load only same-origin scripts, styles and data.
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+		-Server
+	}
+
+	# API and metadata: always upstream, never cached here, never the SPA.
+	@api path /api/* /_meta/*
+	handle @api {
+		reverse_proxy 10.0.0.11:8000 10.0.0.12:8000 {
+			lb_policy least_conn
+			# Stop sending to a replica that is draining or not migrated.
+			health_uri /readyz
+			health_interval 5s
+			health_timeout 2s
+			fail_duration 10s
+			# The API rate-limits unauthenticated clients by this header
+			# (TRESTLE_CLIENT_ADDRESS_HEADER=X-Real-IP). Overwrite, never append.
+			header_up X-Real-IP {remote_host}
+			header_up -X-Forwarded-For
+		}
+	}
+
+	# Health and metrics stay internal: the orchestrator probes replicas
+	# directly and Prometheus scrapes TRESTLE_METRICS_BIND on the private
+	# network.
+	@internal path /healthz /readyz /metrics
+	handle @internal {
+		respond 404
+	}
+
+	# Admin shell (built with base /admin/). Same origin, so it shares the
+	# host-only session cookie and the login callback.
+	redir /admin /admin/ 308
+	handle_path /admin/* {
+		root * /srv/trestle/admin
+		# Entry document revalidated; hashed assets immutable (set after, so
+		# it wins for assets).
+		header Cache-Control "no-cache"
+		@admin_assets path /assets/*
+		header @admin_assets Cache-Control "public, max-age=31536000, immutable"
+		try_files {path} /index.html
+		file_server
+	}
+
+	# Product bundle: hashed assets are immutable; the entry document is
+	# revalidated on every load so a rollout reaches new sessions promptly.
+	@assets path /assets/*
+	handle @assets {
+		root * /srv/trestle/product
+		header Cache-Control "public, max-age=31536000, immutable"
+		file_server
+	}
+
+	handle {
+		root * /srv/trestle/product
+		try_files {path} /index.html
+		header Cache-Control "no-cache"
+		file_server
+	}
+}

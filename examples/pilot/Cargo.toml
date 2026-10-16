@@ -1,0 +1,40 @@
+[package]
+name = "pilot"
+description = "The pilot product that drives Trestle: schools (tenants) and lessons"
+# The application's own version, independent of Trestle releases (it is
+# part of published OpenAPI documents).
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+license.workspace = true
+
+[dependencies]
+axum.workspace = true
+clap.workspace = true
+dotenvy = "0.15"
+http.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+trestle.workspace = true
+trestle-core.workspace = true
+trestle-historical.workspace = true
+trestle-identity.workspace = true
+trestle-mail.workspace = true
+pilot-migrations.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+base64.workspace = true
+http-body-util.workspace = true
+jsonwebtoken = { version = "11", default-features = false, features = ["aws_lc_rs", "use_pem"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "form"] }
+sha2.workspace = true
+url = "2"
+jsonschema.workspace = true
+tower.workspace = true
+trestle-historical = { workspace = true, features = ["testing"] }

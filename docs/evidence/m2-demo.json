@@ -1,0 +1,109 @@
+{
+  "demonstration": "M2: runtime-rendered form across a backend release",
+  "startedAt": "2026-09-26T08:36:18.435Z",
+  "steps": [
+    {
+      "name": "release A renders and submits",
+      "labels": [
+        "Title",
+        "Grade level"
+      ],
+      "revision": "r-acbd164ff4e78da6",
+      "request": {
+        "grade_level": 4,
+        "title": "Fractions (release A)"
+      },
+      "status": 201,
+      "response": {
+        "id": "01a0dcdb-b213-70ab-956d-fbf191afe65b",
+        "title": "Fractions (release A)",
+        "grade_level": 4,
+        "status": "draft",
+        "version": "1"
+      }
+    },
+    {
+      "name": "B's expand migration applied while A serves",
+      "migrationOutput": "\u001b[2m2026-09-26T08:36:21.062605Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mtrestle_historical::runner\u001b[0m\u001b[2m:\u001b[0m applying migration \u001b[3mmigration\u001b[0m\u001b[2m=\u001b[0mlessons.0002_subtitle\nApplied lessons.0002_subtitle",
+      "releaseAStatusAfterExpand": 201
+    },
+    {
+      "name": "open release A form submits to release B",
+      "revision": "r-acbd164ff4e78da6",
+      "request": {
+        "grade_level": 5,
+        "title": "Fractions (A form, B server)"
+      },
+      "status": 201,
+      "response": {
+        "id": "01a0dcdb-b660-7546-a087-cabdb49d1e09",
+        "title": "Fractions (A form, B server)",
+        "grade_level": 5,
+        "status": "draft",
+        "version": "1",
+        "subtitle": null
+      }
+    },
+    {
+      "name": "same bundle renders and submits the new optional field",
+      "bundleDigest": "sha256:89793de75e2c3dc03b812b1f5ac190ca6b92e69cb28cef09c255269e113ecfa5",
+      "assets": {
+        "/assets/index-DquwzH_w.js": "6ef6b5a9b7113514d7ec55641464f152531f40bb0e8efea61828387f634593f4",
+        "/assets/index-iVlt1zVF.css": "904eaa5ee0698e2174ac816be2164ecdc6c18c977fc32db31cbb95c37fe1d76f"
+      },
+      "labels": [
+        "Title",
+        "Grade level",
+        "Subtitle (optional)"
+      ],
+      "revision": "r-cab979f086c703f7",
+      "request": {
+        "grade_level": 6,
+        "subtitle": "Part-to-part",
+        "title": "Ratios (release B)"
+      },
+      "status": 201,
+      "response": {
+        "id": "01a0dcdb-b6f3-7723-8f69-71f8e584eb20",
+        "title": "Ratios (release B)",
+        "grade_level": 6,
+        "status": "draft",
+        "version": "1",
+        "subtitle": "Part-to-part"
+      }
+    },
+    {
+      "name": "permission revoked after load is rejected at submit",
+      "status": 403,
+      "code": "permission_denied",
+      "lessonsBefore": 4,
+      "lessonsAfter": 4
+    },
+    {
+      "name": "two tenants stay isolated; unaccepted revisions get 409",
+      "bobCreate": 201,
+      "ownSchool": 404,
+      "claimedSchool": 403,
+      "stale": 409,
+      "staleCode": "interaction_stale"
+    }
+  ],
+  "releases": {
+    "A": {
+      "ref": "m2-release-a",
+      "commit": "54d2306215bed819ef437a23f57209d9a7da86ac"
+    },
+    "B": {
+      "ref": "HEAD",
+      "commit": "c63682e11f626f6fe2a8e5adbd1d14d3e16b8341",
+      "uncommittedChanges": false
+    }
+  },
+  "bundle": {
+    "digest": "sha256:89793de75e2c3dc03b812b1f5ac190ca6b92e69cb28cef09c255269e113ecfa5",
+    "builtOnce": true
+  },
+  "database": "trestle_e2e_1790411778784",
+  "result": "passed",
+  "finishedAt": "2026-09-26T08:36:22.066Z"
+}

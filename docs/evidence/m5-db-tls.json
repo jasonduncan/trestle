@@ -1,0 +1,27 @@
+{
+  "drill": "database TLS",
+  "date": "2026-09-26T09:49:59Z",
+  "postgres": "postgres (PostgreSQL) 16.15 (Homebrew)",
+  "server": "throwaway instance on a spare port, hostssl only, certificate for DNS name localhost signed by a drill CA; the mismatched-host case connects to 127.0.0.1, which the certificate does not name",
+  "results": {
+    "migrate_with_verify_full": "ok",
+    "schema_verify_with_verify_full": "ok",
+    "plaintext_connection": "refused",
+    "verify_full_with_untrusted_ca": "refused",
+    "verify_full_with_mismatched_host": "refused",
+    "psql_session_reports_ssl": "t"
+  },
+  "refusal_reasons": {
+    "plaintext_connection": "error: error returned from database: pg_hba.conf rejects connection for host 127.0.0.1, user trestle, database postgres, no encryption",
+    "verify_full_with_untrusted_ca": "error: error communicating with database: invalid peer certificate: UnknownIssuer",
+    "verify_full_with_mismatched_host": "error: error communicating with database: invalid peer certificate: certificate not valid for name 127.0.0.1; certificate is only valid for DnsName(localhost)"
+  },
+  "expected": {
+    "migrate_with_verify_full": "ok",
+    "schema_verify_with_verify_full": "ok",
+    "plaintext_connection": "refused",
+    "verify_full_with_untrusted_ca": "refused",
+    "verify_full_with_mismatched_host": "refused",
+    "psql_session_reports_ssl": "t"
+  }
+}

@@ -1,0 +1,54 @@
+:root {
+  --ink: #1d2433;
+  --muted: #5b6475;
+  --line: #d6dae3;
+  --accent: #2553a8;
+  --error: #b3261e;
+  --paper: #fbfbfd;
+  color-scheme: light;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--ink);
+  background: var(--paper);
+}
+body { margin: 0; }
+.app { max-width: 56rem; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+header { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; justify-content: space-between; border-bottom: 1px solid var(--line); padding-bottom: 1rem; }
+h1 { font-size: 1.4rem; margin: 0; }
+h2 { font-size: 1.1rem; }
+.identity { display: flex; gap: 1rem; border: 1px dashed var(--line); padding: 0.5rem 0.75rem; }
+.identity legend { color: var(--muted); font-size: 0.8rem; }
+main section { margin-top: 1.5rem; }
+.manifest code { color: var(--muted); font-size: 0.8rem; }
+.form-panel { background: white; border: 1px solid var(--line); border-radius: 8px; padding: 0 1.25rem 1rem; }
+.trestle-field { display: grid; gap: 0.25rem; margin: 0.9rem 0; max-width: 28rem; }
+.trestle-field label { font-weight: 600; }
+.trestle-field input[type="text"], .trestle-field input[type="email"], .trestle-field input[type="password"], .trestle-field textarea, .trestle-field select { font: inherit; padding: 0.45rem 0.55rem; border: 1px solid var(--line); border-radius: 6px; }
+.trestle-field [aria-invalid="true"] { border-color: var(--error); }
+.trestle-help { margin: 0; color: var(--muted); font-size: 0.85rem; }
+.trestle-error { margin: 0; color: var(--error); font-size: 0.9rem; }
+.trestle-summary, .trestle-unsupported { border-left: 4px solid var(--error); padding: 0.25rem 0.75rem; background: #fdf1f0; }
+.trestle-notice, .trestle-unavailable { border-left: 4px solid var(--accent); padding: 0.5rem 0.75rem; background: #eef3fc; }
+button { font: inherit; background: var(--accent); color: white; border: 0; border-radius: 6px; padding: 0.5rem 1rem; cursor: pointer; }
+a.button { display: inline-block; font: inherit; background: var(--accent); color: white; border-radius: 6px; padding: 0.5rem 1rem; text-decoration: none; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+:focus-visible { outline: 3px solid #7aa2e8; outline-offset: 2px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+th, td { text-align: left; border-bottom: 1px solid var(--line); padding: 0.35rem 0.5rem; }
+.message:empty { display: none; }
+.message { border-left: 4px solid var(--accent); padding: 0.5rem 0.75rem; background: #eef3fc; }
+.inline-form { display: flex; gap: 0.5rem; align-items: center; }
+.inline-form input { font: inherit; padding: 0.4rem 0.5rem; border: 1px solid var(--line); border-radius: 6px; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+td button { padding: 0.25rem 0.6rem; font-size: 0.85rem; }
+.filters { display: flex; gap: 1rem; margin-bottom: 0.75rem; }
+.filters input, .filters select { font: inherit; padding: 0.25rem 0.4rem; }
+.actions { display: flex; gap: 0.4rem; }
+button.secondary { background: white; color: var(--accent); border: 1px solid var(--accent); margin-top: 0.5rem; }
+.reveal { border-left: 4px solid var(--accent); padding: 0.5rem 0.75rem; margin: 0.75rem 0; background: var(--paper); display: grid; gap: 0.4rem; max-width: 40rem; }
+.reveal input { font: 0.85rem ui-monospace, monospace; padding: 0.4rem; border: 1px solid var(--line); border-radius: 6px; }
+@media (prefers-color-scheme: dark) {
+  :root { --ink: #dfe3ee; --muted: #9aa3bd; --line: #2c3450; --accent: #8ab4ff; --error: #ff8080; --paper: #10131c; color-scheme: dark; }
+  .form-panel { background: #161b2b; }
+  .trestle-summary, .trestle-unsupported { background: #2a1416; }
+  .trestle-notice, .trestle-unavailable { background: #141e33; }
+}

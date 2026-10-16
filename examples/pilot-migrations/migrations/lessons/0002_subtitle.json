@@ -1,0 +1,29 @@
+{
+  "format": 1,
+  "app": "lessons",
+  "id": "0002_subtitle",
+  "depends_on": [
+    "lessons.0001_initial"
+  ],
+  "operations": [
+    {
+      "op": "add_field",
+      "model": "lessons.lesson",
+      "field": {
+        "id": "lessons.lesson.subtitle",
+        "column": "subtitle",
+        "type": "text",
+        "nullable": true,
+        "check": {
+          "kind": "chars",
+          "min": 1,
+          "max": 200
+        },
+        "check_name": "lessons_subtitle_length"
+      }
+    }
+  ],
+  "notes": [
+    "Hand-written before the planner existed; this manifest declares its state delta."
+  ]
+}

@@ -1,0 +1,126 @@
+{
+  "format": 1,
+  "app": "lessons",
+  "id": "0001_initial",
+  "depends_on": [
+    "schools.0001_initial"
+  ],
+  "operations": [
+    {
+      "op": "create_model",
+      "model": {
+        "id": "lessons.lesson",
+        "table": "lessons",
+        "fields": [
+          {
+            "id": "lessons.lesson.id",
+            "column": "id",
+            "type": "uuid",
+            "nullable": false,
+            "primary_key": true
+          },
+          {
+            "id": "lessons.lesson.school_id",
+            "column": "school_id",
+            "type": "uuid",
+            "nullable": false,
+            "references": "schools.school"
+          },
+          {
+            "id": "lessons.lesson.title",
+            "column": "title",
+            "type": "text",
+            "nullable": false,
+            "check": {
+              "kind": "chars",
+              "min": 1,
+              "max": 200
+            },
+            "check_name": "lessons_title_check"
+          },
+          {
+            "id": "lessons.lesson.grade_level",
+            "column": "grade_level",
+            "type": "small_int",
+            "nullable": false,
+            "check": {
+              "kind": "range",
+              "min": 1,
+              "max": 12
+            },
+            "check_name": "lessons_grade_level_check"
+          },
+          {
+            "id": "lessons.lesson.status",
+            "column": "status",
+            "type": "text",
+            "nullable": false,
+            "check": {
+              "kind": "one_of",
+              "values": [
+                "draft",
+                "published"
+              ]
+            },
+            "check_name": "lessons_status_check",
+            "default": {
+              "kind": "text",
+              "value": "draft"
+            }
+          },
+          {
+            "id": "lessons.lesson.version",
+            "column": "version",
+            "type": "big_int",
+            "nullable": false,
+            "check": {
+              "kind": "at_least",
+              "min": 1
+            },
+            "check_name": "lessons_version_check",
+            "default": {
+              "kind": "int",
+              "value": 1
+            }
+          },
+          {
+            "id": "lessons.lesson.created_by",
+            "column": "created_by",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "id": "lessons.lesson.created_at",
+            "column": "created_at",
+            "type": "timestamptz",
+            "nullable": false,
+            "default": {
+              "kind": "now"
+            }
+          },
+          {
+            "id": "lessons.lesson.updated_at",
+            "column": "updated_at",
+            "type": "timestamptz",
+            "nullable": false,
+            "default": {
+              "kind": "now"
+            }
+          }
+        ],
+        "unique": [
+          {
+            "name": "lessons_school_title_key",
+            "fields": [
+              "lessons.lesson.school_id",
+              "lessons.lesson.title"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "notes": [
+    "Hand-written before the planner existed; this manifest declares its state delta."
+  ]
+}

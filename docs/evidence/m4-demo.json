@@ -1,0 +1,73 @@
+{
+  "demonstration": "M4: resources, generated client and admin on the same operations",
+  "startedAt": "2026-09-26T09:22:16.033Z",
+  "steps": [
+    {
+      "name": "product: scoped relation picker and generated client",
+      "offeredUnits": [
+        "None",
+        "Number sense"
+      ],
+      "created": [
+        {
+          "grade_level": 4,
+          "title": "Fractions",
+          "unit_id": "01a0dd05-c84e-7486-8093-afa291998dd1"
+        },
+        {
+          "grade_level": 6,
+          "title": "Ratios"
+        }
+      ]
+    },
+    {
+      "name": "product and admin invoke the same publish operation",
+      "product": {
+        "path": "/api/v1/lessons/01a0dd05-c8a4-726e-994c-f1d4060f7324/actions/publish",
+        "payload": {
+          "expected_version": "1"
+        },
+        "status": 200
+      },
+      "admin": {
+        "path": "/api/v1/lessons/01a0dd05-c8d4-75f2-aca5-256ad0b45775/actions/publish",
+        "payload": {
+          "expected_version": "1"
+        },
+        "status": 200
+      },
+      "audit": [
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa lessons.publish",
+        "dddddddd-dddd-4ddd-8ddd-dddddddddddd lessons.publish"
+      ]
+    },
+    {
+      "name": "admin edit: stale ETag refused, then only the change is sent",
+      "staleIfMatch": "\"lessons.view:2\"",
+      "staleStatus": 412,
+      "freshIfMatch": "\"lessons.view:3\"",
+      "freshPayload": {
+        "subtitle": "Parts of a whole"
+      },
+      "result": {
+        "id": "01a0dd05-c8a4-726e-994c-f1d4060f7324",
+        "title": "Fractions",
+        "grade_level": 5,
+        "status": "published",
+        "version": "4",
+        "subtitle": "Parts of a whole",
+        "unit_id": "01a0dd05-c84e-7486-8093-afa291998dd1"
+      }
+    },
+    {
+      "name": "teachers cannot open the admin profile",
+      "message": "Only school owners can use the admin."
+    }
+  ],
+  "release": {
+    "commit": "c9c19ea84d460b6e95a64a8f570e176822d73344",
+    "uncommittedChanges": true
+  },
+  "result": "passed",
+  "finishedAt": "2026-09-26T09:22:19.587Z"
+}

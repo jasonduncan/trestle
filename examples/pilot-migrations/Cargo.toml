@@ -1,0 +1,27 @@
+[package]
+name = "pilot-migrations"
+description = "Committed migration history for the pilot product. Depends on trestle-historical only, never on `pilot`."
+# The application's own version, independent of Trestle releases (it is
+# part of published OpenAPI documents).
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+license.workspace = true
+
+[[bin]]
+name = "pilot-migrate"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+include_dir = "0.7"
+sqlx.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+trestle-historical.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+trestle-historical = { workspace = true, features = ["testing"] }

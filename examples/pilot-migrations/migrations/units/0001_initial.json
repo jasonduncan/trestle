@@ -1,0 +1,78 @@
+{
+  "format": 2,
+  "app": "units",
+  "id": "0001_initial",
+  "depends_on": [
+    "schools.0001_initial"
+  ],
+  "operations": [
+    {
+      "op": "create_model",
+      "model": {
+        "id": "units.unit",
+        "table": "units",
+        "fields": [
+          {
+            "id": "units.unit.id",
+            "column": "id",
+            "type": "uuid",
+            "nullable": false,
+            "primary_key": true
+          },
+          {
+            "id": "units.unit.school_id",
+            "column": "school_id",
+            "type": "uuid",
+            "nullable": false,
+            "references": "schools.school"
+          },
+          {
+            "id": "units.unit.name",
+            "column": "name",
+            "type": "text",
+            "nullable": false,
+            "check": {
+              "kind": "chars",
+              "min": 1,
+              "max": 120
+            },
+            "check_name": "units_name_check"
+          },
+          {
+            "id": "units.unit.version",
+            "column": "version",
+            "type": "big_int",
+            "nullable": false,
+            "check": {
+              "kind": "at_least",
+              "min": 1
+            },
+            "check_name": "units_version_check",
+            "default": {
+              "kind": "int",
+              "value": 1
+            }
+          },
+          {
+            "id": "units.unit.created_at",
+            "column": "created_at",
+            "type": "timestamptz",
+            "nullable": false,
+            "default": {
+              "kind": "now"
+            }
+          }
+        ],
+        "unique": [
+          {
+            "name": "units_school_name_key",
+            "fields": [
+              "units.unit.school_id",
+              "units.unit.name"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

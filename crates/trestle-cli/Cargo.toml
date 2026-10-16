@@ -1,0 +1,29 @@
+[package]
+name = "trestle-cli"
+description = "The `trestle` command: scaffolds projects and runs a project's own CLI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["web","framework","scaffold","cli"]
+categories = ["command-line-utilities","web-programming"]
+include = ["src/**","template/**","Cargo.toml","README.md"]
+
+[[bin]]
+name = "trestle"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+getrandom = "0.3"
+include_dir = "0.7"
+uuid.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tokio.workspace = true
+trestle = { workspace = true, features = ["testing"] }

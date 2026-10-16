@@ -1,0 +1,104 @@
+{
+  "format": 1,
+  "app": "schools",
+  "id": "0001_initial",
+  "depends_on": [],
+  "operations": [
+    {
+      "op": "create_model",
+      "model": {
+        "id": "schools.school",
+        "table": "schools",
+        "fields": [
+          {
+            "id": "schools.school.id",
+            "column": "id",
+            "type": "uuid",
+            "nullable": false,
+            "primary_key": true
+          },
+          {
+            "id": "schools.school.name",
+            "column": "name",
+            "type": "text",
+            "nullable": false,
+            "check": {
+              "kind": "chars",
+              "min": 1,
+              "max": 200
+            },
+            "check_name": "schools_name_check"
+          },
+          {
+            "id": "schools.school.created_at",
+            "column": "created_at",
+            "type": "timestamptz",
+            "nullable": false,
+            "default": {
+              "kind": "now"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "op": "create_model",
+      "model": {
+        "id": "schools.membership",
+        "table": "school_memberships",
+        "fields": [
+          {
+            "id": "schools.membership.school_id",
+            "column": "school_id",
+            "type": "uuid",
+            "nullable": false,
+            "primary_key": true,
+            "references": "schools.school"
+          },
+          {
+            "id": "schools.membership.actor_id",
+            "column": "actor_id",
+            "type": "uuid",
+            "nullable": false,
+            "primary_key": true
+          },
+          {
+            "id": "schools.membership.role",
+            "column": "role",
+            "type": "text",
+            "nullable": false,
+            "check": {
+              "kind": "one_of",
+              "values": [
+                "owner",
+                "teacher",
+                "viewer"
+              ]
+            },
+            "check_name": "school_memberships_role_check"
+          },
+          {
+            "id": "schools.membership.created_at",
+            "column": "created_at",
+            "type": "timestamptz",
+            "nullable": false,
+            "default": {
+              "kind": "now"
+            }
+          }
+        ],
+        "indexes": [
+          {
+            "name": "school_memberships_actor_idx",
+            "fields": [
+              "schools.membership.actor_id"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "notes": [
+    "Hand-written before the planner existed; this manifest declares its state delta."
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "drill": "backup, restore and forward repair",
+  "date": "2026-09-26T10:35:33Z",
+  "commit": "205422dcb91e7a223a08300af0ffcb1fe66aec18",
+  "postgres": "postgres (PostgreSQL) 16.15 (Homebrew)",
+  "backup": { "tool": "pg_dump -Fc --no-owner", "bytes": 18622, "sha256": "c8430cd019a0f1e1971514f4f21179a3e8ce0aa03b01db2b7435211c1ab7a213", "ms": 48 },
+  "incident": { "rows_damaged": 19, "then": "one lesson created and one lesson edited through the API" },
+  "restore_rehearsal": {
+    "target": "a new database; the live database is never overwritten",
+    "ms": 85,
+    "fingerprint_matches_backup_time": true,
+    "schema_verify": "Schema matches committed history (7 models).",
+    "migrations_pending_after_restore": 0,
+    "replica_ready_ms": 151,
+    "lessons_served_by_restored_replica": 20
+  },
+  "forward_repair": {
+    "method": "copy pre-incident values from the restored copy in one transaction; only rows whose sole change was the damage; audited; versions bumped",
+    "ms": 26,
+    "rows_repaired": 18,
+    "rows_left_for_review": 1,
+    "left_for_review": "Northside lesson 5 (edited after the incident)",
+    "post_incident_writes_kept": 2,
+    "other_tenant_untouched": true,
+    "other_tenant_fingerprint": "5:f9ba477000683a40b87b842834f7b48d",
+    "pre_repair_etag_now_gets": 412
+  }
+}

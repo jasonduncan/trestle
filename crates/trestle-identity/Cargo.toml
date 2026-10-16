@@ -1,0 +1,40 @@
+[package]
+name = "trestle-identity"
+description = "Trestle identity integrations: OIDC login with server-side sessions, and JWT bearer tokens"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["authentication","oidc","sessions","argon2"]
+categories = ["authentication","web-programming"]
+include = ["src/**","data/**","Cargo.toml","README.md"]
+
+[dependencies]
+argon2 = "0.6"
+axum.workspace = true
+base64.workspace = true
+getrandom = "0.3"
+hmac.workspace = true
+http.workspace = true
+jsonwebtoken = { version = "11", default-features = false, features = ["aws_lc_rs"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "form"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+trestle-core.workspace = true
+trestle-historical.workspace = true
+url = "2"
+uuid.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["sync"] }
+trestle-historical = { workspace = true, features = ["testing"] }
+jsonwebtoken = { version = "11", default-features = false, features = ["aws_lc_rs", "use_pem"] }
