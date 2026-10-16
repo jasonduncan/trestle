@@ -1,12 +1,14 @@
 # Releasing
 
-Releases are annotated semver git tags (`vX.Y.Z`) on `main`. Projects pin a
-tag with `trestle = { git = "…/trestle", tag = "v0.1.0" }`. Nothing is
-published to crates.io until the open-source milestone.
+Releases are annotated semver git tags (`vX.Y.Z`) on `main`, published to
+crates.io from the tagged tree. Projects depend on
+`trestle-framework = "0.2"` (or pin a git tag with
+`trestle = { package = "trestle-framework", git = "…/trestle", tag = "vX.Y.Z" }`).
 
 1. Merge the release's changes to `main`. CI must be green.
 2. On a release branch:
-   - set `[workspace.package] version` in `Cargo.toml` to `X.Y.Z`
+   - set `[workspace.package] version` in `Cargo.toml` to `X.Y.Z`, and the
+     internal `version = "=X.Y.Z"` pins in `[workspace.dependencies]`
    - in `CHANGELOG.md`, rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`,
      add a new empty `## [Unreleased]` above it, and update the links at
      the bottom
@@ -17,5 +19,11 @@ published to crates.io until the open-source milestone.
    tag, the workspace version and the changelog disagree. From then on, the
    upgrade job migrates from this tag on every pull request.
 
-`trestle new` defaults to the tag that matches its own version
-(`v<version>`), so tag every version the wrapper ships with.
+5. From the tagged tree, `cargo publish -p <crate>` (dry-run first) in
+   dependency order: trestle-protocol, trestle-historical, trestle-core,
+   trestle-identity, trestle-mail, trestle-framework, trestle-cli. crates.io
+   rate-limits new crates; wait and retry on 429. Never yank to fix a
+   mistake; publish a patch release.
+
+`trestle new` defaults to the crates.io release of `trestle-framework`;
+`--git URL --tag TAG` pins a git tag instead.

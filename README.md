@@ -14,7 +14,7 @@ The MSRV is Rust 1.98: the code uses edition 2024, let-chains and
 ## Start a project
 
 ```sh
-cargo install trestle-cli   # until the crates.io release: --git https://github.com/jasonduncan/trestle --tag v0.2.1 trestle-cli
+cargo install trestle-cli
 trestle new notes && cd notes
 createdb notes
 trestle migrate
@@ -26,13 +26,23 @@ tenancy), a small `src/main.rs`, committed migrations, and a `.env` with
 fresh development keys and a development token. The generated `README.md`
 walks through the first tenant and the first request.
 
-To depend on Trestle directly (the package is `trestle-framework`; the library is `trestle`):
+To depend on Trestle directly, add the `trestle-framework` package from
+crates.io. Its library is named `trestle`, so code uses `use trestle::...`:
 
 ```toml
 [dependencies]
-trestle = { package = "trestle-framework", version = "0.2" }
-# or from git:
-# trestle = { package = "trestle-framework", git = "https://github.com/jasonduncan/trestle", tag = "v0.2.1" }
+trestle-framework = "0.2"
+```
+
+To track unreleased changes on `main` instead:
+
+```sh
+cargo install --git https://github.com/jasonduncan/trestle trestle-cli
+```
+
+```toml
+[dependencies]
+trestle = { package = "trestle-framework", git = "https://github.com/jasonduncan/trestle", branch = "main" }
 ```
 
 ## A small example
