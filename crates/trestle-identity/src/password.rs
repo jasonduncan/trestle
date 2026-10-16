@@ -71,6 +71,10 @@ pub struct PasswordPolicy {
     /// many accounts from one source; per-account lockout protects each
     /// account.
     pub attempts_per_minute: f64,
+    /// Sign-in attempts per account (by normalized email, whether or not
+    /// the account exists) per minute, from any address. Lockout after
+    /// `lock_after` consecutive failures still applies on top.
+    pub account_attempts_per_minute: f64,
     pub concurrent_hashes: usize,
 }
 
@@ -81,7 +85,8 @@ impl Default for PasswordPolicy {
             max_chars: 256,
             lock_after: 5,
             lock_for: Duration::from_secs(15 * 60),
-            attempts_per_minute: 60.0,
+            attempts_per_minute: 30.0,
+            account_attempts_per_minute: 10.0,
             concurrent_hashes: 4,
         }
     }
@@ -92,6 +97,7 @@ pub struct Passwords {
     policy: PasswordPolicy,
     hashing: Arc<Semaphore>,
     limiter: RateLimiter,
+    accounts: RateLimiter,
     client_address_header: Option<String>,
     /// Test-only pause point between password verification and the writes
     /// that follow, for deterministic race tests.
@@ -128,6 +134,10 @@ impl Passwords {
             limiter: RateLimiter::new(
                 policy.attempts_per_minute / 60.0,
                 policy.attempts_per_minute.max(1.0),
+            ),
+            accounts: RateLimiter::new(
+                policy.account_attempts_per_minute / 60.0,
+                policy.account_attempts_per_minute.max(1.0),
             ),
             client_address_header,
             policy,
@@ -261,7 +271,14 @@ impl Passwords {
         if password.chars().count() > self.policy.max_chars {
             return Err(login_failed());
         }
-        let account = match normalize_email(email) {
+        let normalized = normalize_email(email);
+        let mut key = b"password-account:".to_vec();
+        match &normalized {
+            Ok(e) => key.extend_from_slice(e.as_bytes()),
+            Err(_) => key.extend_from_slice(email.trim().to_lowercase().as_bytes()),
+        }
+        self.accounts.take(&key).map_err(Problem::rate_limited)?;
+        let account = match normalized {
             Ok(email) => {
                 sqlx::query_as::<_, (Uuid, Uuid, Option<String>, bool, bool)>(
                     "SELECT id, actor_id, password_hash, disabled_at IS NOT NULL, \

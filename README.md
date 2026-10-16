@@ -99,6 +99,19 @@ styles.
 - Rate limits are per process and in memory. Use edge limits as well.
 - See [`SECURITY.md`](SECURITY.md) for how to report a vulnerability.
 
+## Default limits
+
+These built-in defaults are a starting point and safe to adjust for your
+deployment (see `docs/runbooks/operate.md`):
+
+| Limit | Default | Setting |
+|---|---|---|
+| Unauthenticated requests per client address | 20/s, burst 60 | `TRESTLE_ADDRESS_RATE_PER_SECOND`, `TRESTLE_ADDRESS_BURST` |
+| Signed-in requests per actor (API key or session) | 20/s, burst 40 | `TRESTLE_RATE_PER_SECOND`, `TRESTLE_RATE_BURST` |
+| Password sign-in attempts per client address | 30/min | `TRESTLE_PASSWORD_ATTEMPTS_PER_MINUTE` |
+| Password sign-in attempts per account | 10/min | `PasswordPolicy::account_attempts_per_minute` |
+| Lockout | 5 consecutive failures, 15 min | `PasswordPolicy` |
+
 ## Repository layout
 
 ```text

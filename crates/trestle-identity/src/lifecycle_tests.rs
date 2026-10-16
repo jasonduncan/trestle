@@ -374,3 +374,48 @@ async fn every_failed_sign_in_makes_the_same_write() {
     );
     env.finish().await;
 }
+
+#[tokio::test]
+async fn sign_in_attempts_are_limited_per_account_from_any_address() {
+    let env = Env::new().await;
+    env.account("target@example.com", &weak_hash(OLD)).await;
+    // Ten attempts a minute per account by default; lockout (5 failures)
+    // would refuse with login_failed, so use the right password here.
+    for i in 0..10 {
+        assert!(
+            env.passwords
+                .login_session(&env.sessions, "target@example.com", OLD.into())
+                .await
+                .is_ok(),
+            "attempt {i} allowed"
+        );
+    }
+    let refused = env
+        .passwords
+        .login_session(&env.sessions, " Target@Example.com ", OLD.into())
+        .await
+        .unwrap_err();
+    assert_eq!(refused.status(), http::StatusCode::TOO_MANY_REQUESTS);
+    // Unknown accounts are limited the same way, so the limit reveals nothing.
+    for _ in 0..10 {
+        let _ = env
+            .passwords
+            .login_session(&env.sessions, "nobody@example.com", OLD.into())
+            .await;
+    }
+    let unknown = env
+        .passwords
+        .login_session(&env.sessions, "nobody@example.com", OLD.into())
+        .await
+        .unwrap_err();
+    assert_eq!(unknown.status(), http::StatusCode::TOO_MANY_REQUESTS);
+    // Other accounts are unaffected.
+    env.account("other@example.com", &weak_hash(OLD)).await;
+    assert!(
+        env.passwords
+            .login_session(&env.sessions, "other@example.com", OLD.into())
+            .await
+            .is_ok()
+    );
+    env.finish().await;
+}

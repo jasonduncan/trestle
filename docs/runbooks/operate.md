@@ -80,7 +80,8 @@ pilot mail test --to ops@school.org      # proves the email settings end to end
   slows that.
 - **Many people behind one address** (a school network) share the
   per-address limit of `TRESTLE_PASSWORD_ATTEMPTS_PER_MINUTE`. The default
-  is 60, all accounts together. Raise it if a morning rush sees 429s on
+  is 30, all accounts together. Separately, each account (by email, from
+  any address) gets 10 attempts a minute; lockout still applies on top. Raise it if a morning rush sees 429s on
   sign-in.
 - **No self-service reset yet.** People who forget their password ask an
   operator for a reset link.
@@ -101,7 +102,8 @@ pilot mail test --to ops@school.org      # proves the email settings end to end
 
 - **`TRESTLE_RATE_PER_SECOND` and `TRESTLE_RATE_BURST`** apply per
   verified actor per replica. Before identity is verified, every request
-  is charged to its client address at ten times those limits. The address
+  is charged to its client address: `TRESTLE_ADDRESS_RATE_PER_SECOND`
+  (default 20) and `TRESTLE_ADDRESS_BURST` (default 60). The address
   comes from `TRESTLE_CLIENT_ADDRESS_HEADER` (set and overwritten by the
   edge; the API must only be reachable through it; a value that is not a
   single IP address falls back to the peer) or, with
