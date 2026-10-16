@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*", "examples/*"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT OR Apache-2.0"
@@ -38,10 +38,10 @@ jsonschema = { version = "0.58", default-features = false }
 
 # Internal crates carry no stability promise, so they are pinned exactly.
 # Publish order: protocol, historical, core, identity + mail, framework, cli.
-trestle = { package = "trestle-framework", path = "crates/trestle", version = "=0.2.0" }
-trestle-core = { path = "crates/trestle-core", version = "=0.2.0" }
-trestle-protocol = { path = "crates/trestle-protocol", version = "=0.2.0" }
-trestle-historical = { path = "crates/trestle-historical", version = "=0.2.0" }
-trestle-identity = { path = "crates/trestle-identity", version = "=0.2.0" }
-trestle-mail = { path = "crates/trestle-mail", version = "=0.2.0" }
+trestle = { package = "trestle-framework", path = "crates/trestle", version = "=0.2.1" }
+trestle-core = { path = "crates/trestle-core", version = "=0.2.1" }
+trestle-protocol = { path = "crates/trestle-protocol", version = "=0.2.1" }
+trestle-historical = { path = "crates/trestle-historical", version = "=0.2.1" }
+trestle-identity = { path = "crates/trestle-identity", version = "=0.2.1" }
+trestle-mail = { path = "crates/trestle-mail", version = "=0.2.1" }
 pilot-migrations = { path = "examples/pilot-migrations" }

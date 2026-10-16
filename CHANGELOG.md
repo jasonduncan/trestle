@@ -14,7 +14,7 @@ promise.
 
 ## [Unreleased]
 
-Planned as 0.2.1.
+## [0.2.1] - 2026-10-16
 
 ### Changed
 - Unauthenticated traffic per client address now defaults to 20 requests/s
