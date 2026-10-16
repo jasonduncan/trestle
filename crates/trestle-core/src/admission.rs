@@ -34,14 +34,19 @@ pub struct AdmissionConfig {
     /// Requests allowed in a burst per key.
     pub burst: f64,
     /// Sustained requests per second per client address, before identity
-    /// is known. `None` is ten times `rate_per_second`.
-    pub address_rate_per_second: Option<f64>,
-    /// Burst per client address. `None` is ten times `burst`.
-    pub address_burst: Option<f64>,
+    /// is known (unauthenticated traffic). Default 20.
+    pub address_rate_per_second: f64,
+    /// Burst per client address. Default 60.
+    pub address_burst: f64,
     /// Header set by the trusted edge with the client address (e.g.
     /// `X-Real-IP`). Only used when configured.
     pub client_address_header: Option<String>,
 }
+
+/// Default unauthenticated requests per second per client address.
+pub const DEFAULT_ADDRESS_RATE_PER_SECOND: f64 = 20.0;
+/// Default unauthenticated burst per client address.
+pub const DEFAULT_ADDRESS_BURST: f64 = 60.0;
 
 impl Default for AdmissionConfig {
     fn default() -> Self {
@@ -49,8 +54,8 @@ impl Default for AdmissionConfig {
             max_in_flight: 256,
             rate_per_second: 20.0,
             burst: 40.0,
-            address_rate_per_second: None,
-            address_burst: None,
+            address_rate_per_second: DEFAULT_ADDRESS_RATE_PER_SECOND,
+            address_burst: DEFAULT_ADDRESS_BURST,
             client_address_header: None,
         }
     }
@@ -188,12 +193,7 @@ impl Admission {
         Arc::new(Self {
             permits: Arc::new(Semaphore::new(config.max_in_flight)),
             limiter: RateLimiter::new(config.rate_per_second, config.burst),
-            addresses: RateLimiter::new(
-                config
-                    .address_rate_per_second
-                    .unwrap_or(config.rate_per_second * 10.0),
-                config.address_burst.unwrap_or(config.burst * 10.0),
-            ),
+            addresses: RateLimiter::new(config.address_rate_per_second, config.address_burst),
             config,
         })
     }
@@ -302,5 +302,32 @@ mod tests {
         ] {
             assert_eq!(with(junk), b"10.0.0.1", "{junk:?} falls back to the peer");
         }
+    }
+
+    #[test]
+    fn unauthenticated_defaults_are_explicit_and_independent_of_key_limits() {
+        let config = AdmissionConfig {
+            rate_per_second: 1.0,
+            burst: 1.0,
+            ..AdmissionConfig::default()
+        };
+        assert_eq!(config.address_rate_per_second, 20.0);
+        assert_eq!(config.address_burst, 60.0);
+        let admission = Admission::new(config);
+        let key = b"address:192.0.2.7";
+        for i in 0..60 {
+            assert!(
+                admission.addresses.take(key).is_ok(),
+                "request {i} within burst"
+            );
+        }
+        assert!(
+            admission.addresses.take(key).is_err(),
+            "61st request refused"
+        );
+        assert!(
+            admission.addresses.take(b"address:192.0.2.8").is_ok(),
+            "other addresses unaffected"
+        );
     }
 }

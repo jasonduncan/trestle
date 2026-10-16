@@ -14,6 +14,21 @@ promise.
 
 ## [Unreleased]
 
+Planned as 0.2.1.
+
+### Changed
+- Unauthenticated traffic per client address now defaults to 20 requests/s
+  with a burst of 60, instead of ten times the per-actor limits.
+  `AdmissionConfig::address_rate_per_second` and `address_burst` are now
+  plain `f64`; set them with `TRESTLE_ADDRESS_RATE_PER_SECOND` and
+  `TRESTLE_ADDRESS_BURST`.
+- Password sign-in attempts per client address default to 30/min (was 60).
+
+### Added
+- Per-account password sign-in limit: 10 attempts a minute per email, from
+  any address, whether or not the account exists
+  (`PasswordPolicy::account_attempts_per_minute`). Lockout still applies.
+
 ## [0.2.0] - 2026-10-15
 
 ### Added

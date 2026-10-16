@@ -53,6 +53,12 @@ pub struct ServeConfig {
     pub rate_per_second: f64,
     #[arg(long, env = "TRESTLE_RATE_BURST", default_value_t = 40.0)]
     pub rate_burst: f64,
+    /// Unauthenticated requests per second per client address.
+    #[arg(long, env = "TRESTLE_ADDRESS_RATE_PER_SECOND", default_value_t = 20.0)]
+    pub address_rate_per_second: f64,
+    /// Unauthenticated burst per client address.
+    #[arg(long, env = "TRESTLE_ADDRESS_BURST", default_value_t = 60.0)]
+    pub address_burst: f64,
     /// Header the trusted edge sets to the client address (e.g. X-Real-IP).
     /// Only set this behind an edge that overwrites it.
     #[arg(long, env = "TRESTLE_CLIENT_ADDRESS_HEADER")]
@@ -100,7 +106,7 @@ pub struct ServeConfig {
     #[arg(
         long,
         env = "TRESTLE_PASSWORD_ATTEMPTS_PER_MINUTE",
-        default_value_t = 60.0
+        default_value_t = 30.0
     )]
     pub password_attempts_per_minute: f64,
     /// Public browser origin(s), comma-separated. The first one hosts the
@@ -120,6 +126,8 @@ impl ServeConfig {
             max_in_flight: 256,
             rate_per_second: 20.0,
             rate_burst: 40.0,
+            address_rate_per_second: 20.0,
+            address_burst: 60.0,
             client_address_header: None,
             trust_peer_address: false,
             pool_size: 10,
@@ -129,7 +137,7 @@ impl ServeConfig {
             oidc_issuer: None,
             oidc_client_id: None,
             password_login: false,
-            password_attempts_per_minute: 60.0,
+            password_attempts_per_minute: 30.0,
             oidc_client_secret: None,
             oidc_scopes: "openid".into(),
             oidc_api_audience: None,
@@ -201,6 +209,8 @@ impl ServeConfig {
         if self.max_in_flight == 0
             || !(self.rate_per_second > 0.0 && finite(self.rate_per_second))
             || !(self.rate_burst >= 1.0 && finite(self.rate_burst))
+            || !(self.address_rate_per_second > 0.0 && finite(self.address_rate_per_second))
+            || !(self.address_burst >= 1.0 && finite(self.address_burst))
             || !(self.password_attempts_per_minute >= 1.0
                 && finite(self.password_attempts_per_minute))
         {
@@ -360,8 +370,8 @@ impl ServeConfig {
             max_in_flight: self.max_in_flight,
             rate_per_second: self.rate_per_second,
             burst: self.rate_burst,
-            address_rate_per_second: None,
-            address_burst: None,
+            address_rate_per_second: self.address_rate_per_second,
+            address_burst: self.address_burst,
             client_address_header: self.client_address_header.clone(),
         })
     }
