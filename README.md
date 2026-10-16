@@ -67,6 +67,53 @@ The same project can be declared in `trestle.toml` instead, with Rust
 handlers and hooks linked by name. See `crates/trestle/examples/` for both
 styles.
 
+## Declaring a project in trestle.toml
+
+`trestle.toml` (the intent file) describes models, CRUD endpoints, roles and
+tenancy. It holds no secrets or deployment settings; those come from
+`TRESTLE_*` environment variables. A minimal one:
+
+<!-- readme-intent:start -->
+```toml
+[project]
+name = "notes"
+
+[tenancy]
+model = "workspace"        # every model is scoped to a workspace
+
+[roles]
+member = ["notes.read", "notes.write"]
+
+[[models]]
+id = "notes.note"          # stable ID: never change it
+fields = [
+  { id = "title", type = "text", max = 200 },
+  { id = "body",  type = "text", optional = true },
+]
+
+[[endpoints]]
+model = "notes.note"
+crud = ["list", "get", "create", "update", "delete"]
+read = "notes.read"
+write = "notes.write"
+```
+<!-- readme-intent:end -->
+
+`src/main.rs` only loads it (from `./trestle.toml` or `$TRESTLE_INTENT` by
+default) and links any Rust handlers or hooks it names:
+
+```rust
+fn main() -> std::process::ExitCode {
+    trestle::project().run()
+}
+```
+
+Roles are granted per tenant membership, so `[roles]` and endpoint
+permissions require `[tenancy]`. Endpoints and hooks can name Rust
+handlers; `trestle new` writes a fuller example, and
+`crates/trestle/examples/notes_intent/` shows both. `trestle check` validates
+the file and reports problems with line numbers.
+
 ## Core concepts
 
 - **Apps** register models, operations, routes and migrations. A project

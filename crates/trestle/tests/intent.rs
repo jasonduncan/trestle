@@ -710,3 +710,25 @@ async fn non_object_filters_and_values_are_refused() {
     assert_eq!(s.version(&id).await, json!(1), "no empty update happened");
     s.db.drop().await;
 }
+
+/// The `trestle.toml` example in README.md parses and assembles as written.
+#[test]
+fn the_readme_intent_example_is_valid() {
+    let readme = include_str!("../../../README.md");
+    let block = readme
+        .split("<!-- readme-intent:start -->")
+        .nth(1)
+        .and_then(|rest| rest.split("<!-- readme-intent:end -->").next())
+        .expect("README has the intent example markers");
+    let text = block
+        .trim()
+        .strip_prefix("```toml")
+        .and_then(|t| t.strip_suffix("```"))
+        .expect("a toml code block");
+    let intent = trestle::intent::parse("trestle.toml", text).unwrap();
+    assert_eq!(intent.name, "notes");
+    trestle::project()
+        .intent_str("trestle.toml", text)
+        .assemble()
+        .unwrap();
+}
