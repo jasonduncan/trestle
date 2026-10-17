@@ -4,6 +4,7 @@
 use pilot::AppState;
 use pilot::audit::AuditApp;
 use pilot::lessons::LessonsApp;
+use serde_json::json;
 use trestle_core::protocol::{Audience, FormPresentation, Widget};
 use trestle_core::registry::{App, AppBuilder, Project};
 
@@ -117,10 +118,53 @@ fn operations_are_inspectable() {
     assert_eq!(create["input"]["id"], "lessons.create.input");
     assert_eq!(create["forms"][0]["id"], "lessons.create.form");
 
+    assert_eq!(create["effects"]["reads"], json!(["units.unit"]));
+    assert_eq!(
+        create["effects"]["writes"],
+        json!(["audit.event", "lessons.lesson"])
+    );
+
     let read = registry.inspect_operation("lessons.get").unwrap();
     assert_eq!(read["mode"], "read");
     assert_eq!(read["http"]["body"], "path");
     assert!(registry.inspect_operation("lessons.archive").is_none());
+}
+
+/// The pilot declares what every operation touches (ADR-018); assembly
+/// checks that each named model is installed.
+#[test]
+fn every_operation_declares_its_effects() {
+    let registry = pilot::registry().unwrap();
+    let undeclared: Vec<&str> = registry
+        .operations()
+        .iter()
+        .filter(|op| op.info.effects.is_none())
+        .map(|op| &*op.info.id)
+        .collect();
+    assert!(undeclared.is_empty(), "{undeclared:?}");
+    let writers: Vec<&str> = registry
+        .operations()
+        .iter()
+        .filter(|op| {
+            op.info
+                .effects
+                .as_ref()
+                .unwrap()
+                .writes
+                .iter()
+                .any(|m| &**m == "lessons.lesson")
+        })
+        .map(|op| &*op.info.id)
+        .collect();
+    assert_eq!(
+        writers,
+        [
+            "lessons.create",
+            "lessons.update",
+            "lessons.delete",
+            "lessons.publish"
+        ]
+    );
 }
 
 #[test]

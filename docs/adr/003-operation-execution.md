@@ -2,7 +2,8 @@
 
 **Status:** Accepted (M1, 2026-09-26) · **Design doc:** §6, §12, I03, I04, I12, I13 ·
 **Amended by:** ADR-012 (output check before commit), ADR-013 (contexts resolve from an
-`Invocation`), ADR-014 (owned `DynOperation` descriptors), ADR-016 (idempotency keys)
+`Invocation`), ADR-014 (owned `DynOperation` descriptors), ADR-016 (idempotency keys),
+ADR-018 (declared effects; reads run read-only)
 
 ## Context
 

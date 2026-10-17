@@ -6,7 +6,7 @@
 use serde_json::{Value, json};
 use sqlx::PgConnection;
 use trestle_core::db::unique_violation;
-use trestle_core::operation::{Mode, Operation, OperationInfo};
+use trestle_core::operation::{EffectsInfo, Mode, Operation, OperationInfo};
 use trestle_core::pagination::{Page, decode_cursor, page_from, page_size};
 use trestle_core::protocol::Audience;
 use trestle_core::{FieldError, Problem};
@@ -96,6 +96,12 @@ impl Operation for CreateLesson {
         summary: "Create a draft lesson in the selected school.",
     };
 
+    const EFFECTS: Option<EffectsInfo> = Some(
+        EffectsInfo::new()
+            .reads(&["units.unit"])
+            .writes(&["audit.event", "lessons.lesson"]),
+    );
+
     fn policy(&self) -> &LessonPolicy {
         &LessonPolicy::Create
     }
@@ -149,6 +155,8 @@ impl Operation for GetLesson {
         summary: "Read one lesson in the selected school.",
     };
 
+    const EFFECTS: Option<EffectsInfo> = Some(EffectsInfo::new().reads(&["lessons.lesson"]));
+
     fn policy(&self) -> &LessonPolicy {
         &LessonPolicy::Read
     }
@@ -183,6 +191,8 @@ impl Operation for ListLessons {
         audiences: AUDIENCES,
         summary: "List lessons in the selected school by title.",
     };
+
+    const EFFECTS: Option<EffectsInfo> = Some(EffectsInfo::new().reads(&["lessons.lesson"]));
 
     fn policy(&self) -> &LessonPolicy {
         &LessonPolicy::Read
@@ -249,6 +259,12 @@ impl Operation for PatchLesson {
         audiences: AUDIENCES,
         summary: "Change a lesson's title, grade, subtitle, unit or duration.",
     };
+
+    const EFFECTS: Option<EffectsInfo> = Some(
+        EffectsInfo::new()
+            .reads(&["units.unit"])
+            .writes(&["audit.event", "lessons.lesson"]),
+    );
 
     fn policy(&self) -> &LessonPolicy {
         &LessonPolicy::Update
@@ -331,6 +347,9 @@ impl Operation for DeleteLesson {
         summary: "Delete a lesson.",
     };
 
+    const EFFECTS: Option<EffectsInfo> =
+        Some(EffectsInfo::new().writes(&["audit.event", "lessons.lesson"]));
+
     fn policy(&self) -> &LessonPolicy {
         &LessonPolicy::Delete
     }
@@ -370,6 +389,9 @@ impl Operation for PublishLesson {
         audiences: AUDIENCES,
         summary: "Publish a draft lesson.",
     };
+
+    const EFFECTS: Option<EffectsInfo> =
+        Some(EffectsInfo::new().writes(&["audit.event", "lessons.lesson"]));
 
     fn policy(&self) -> &LessonPolicy {
         &LessonPolicy::Publish

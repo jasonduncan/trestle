@@ -12,7 +12,7 @@ use trestle_core::Problem;
 use trestle_core::identity::ActorId;
 use trestle_core::invocation::{FromInvocation, Invocation};
 use trestle_core::operation::{
-    ContextDescriptor, Mode, Operation, OperationInfo, Policy, RequestContext,
+    ContextDescriptor, EffectsInfo, Mode, Operation, OperationInfo, Policy, RequestContext,
 };
 use trestle_core::pagination::{MAX_PAGE, Page};
 use trestle_core::protocol::{Audience, Contract, ContractDoc, Field};
@@ -104,6 +104,9 @@ impl Operation for MySchools {
         audiences: &[Audience::Product, Audience::Admin],
         summary: "The caller's schools and roles, by name; at most 100.",
     };
+
+    const EFFECTS: Option<EffectsInfo> =
+        Some(EffectsInfo::new().reads(&["schools.membership", "schools.school"]));
 
     fn policy(&self) -> &OwnMemberships {
         &OwnMemberships

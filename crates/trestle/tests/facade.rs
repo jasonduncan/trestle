@@ -156,6 +156,8 @@ fn offline_commands_run_without_a_database() {
     for args in [
         &["notes", "check"][..],
         &["notes", "inspect", "apps"],
+        &["notes", "inspect", "effects"],
+        &["notes", "inspect", "effects", "--model", "notes.note"],
         &["notes", "openapi", "export"],
         &["notes", "contracts", "export"],
         &["notes", "schema", "show"],
@@ -165,6 +167,12 @@ fn offline_commands_run_without_a_database() {
         rt.block_on(notes().run_matches(&matches))
             .unwrap_or_else(|e| panic!("{args:?}: {e}"));
     }
+    let matches = notes()
+        .command()
+        .try_get_matches_from(["notes", "inspect", "effects", "--model", "notes.nope"])
+        .unwrap();
+    let err = rt.block_on(notes().run_matches(&matches)).unwrap_err();
+    assert!(err.contains("no model \"notes.nope\""), "{err}");
 }
 
 #[test]

@@ -20,7 +20,8 @@ use trestle_core::Problem;
 use trestle_core::identity::{ActorId, Identity};
 use trestle_core::invocation::Invocation;
 use trestle_core::operation::{
-    BoxFuture, ContextDescriptor, DynConn, DynContext, DynOperation, Mode, OperationDescriptor,
+    BoxFuture, ContextDescriptor, DynConn, DynContext, DynOperation, Effects, Mode,
+    OperationDescriptor,
 };
 use trestle_core::registry::{App as CoreApp, AppBuilder, Http};
 use trestle_historical::schema::{Column, Model};
@@ -805,18 +806,37 @@ where
                 format!("Delete a {}.", model.id),
             ),
         };
+    // Generated CRUD touches only its model. A hook is Rust code that may
+    // do anything, so a write that runs one declares nothing (ADR-018).
+    let hooked = match op {
+        Crud::List | Crud::Get => &[][..],
+        Crud::Create => &["validate", "before_create", "after_create"][..],
+        Crud::Update => &["validate", "before_update", "after_update"][..],
+        Crud::Delete => &["before_delete"][..],
+    }
+    .iter()
+    .any(|point| hooks.contains_key(*point));
+    let effects = match (op.writes(), hooked) {
+        (false, _) => Some(Effects::new().reads(model.id.as_str())),
+        (true, false) => Some(Effects::new().writes(model.id.as_str())),
+        (true, true) => None,
+    };
     let hooks = hooks
         .iter()
         .map(|(k, v)| (k.clone(), v.name.clone()))
         .collect();
+    let mut info = OperationDescriptor::new(
+        format!("{}.{}", model.id, op.as_str()),
+        "1",
+        if op.writes() { Mode::Write } else { Mode::Read },
+    )
+    .audiences(&[Audience::Product])
+    .summary(summary);
+    if let Some(effects) = effects {
+        info = info.effects(effects);
+    }
     let built = IntentOp::<S> {
-        info: OperationDescriptor::new(
-            format!("{}.{}", model.id, op.as_str()),
-            "1",
-            if op.writes() { Mode::Write } else { Mode::Read },
-        )
-        .audiences(&[Audience::Product])
-        .summary(summary),
+        info,
         policy: policy_id(permission),
         permission: permission.to_owned(),
         input,

@@ -29,7 +29,7 @@ and is not self-granted. Open items before a pilot:
 choose how people sign in (password accounts are built; an OIDC provider is optional and only
 mock-tested), send through the real SMTP relay, get external security review (§12.4), and
 validate the edge config (`deploy/Caddyfile`) on a real host. Do not claim general
-maturity or benchmark leadership. ADRs: 001–017 (015 reopens 009: jobs and outbox).
+maturity or benchmark leadership. ADRs: 001–018 (015 reopens 009: jobs and outbox).
 
 ## Non-negotiables
 - Installing a model publishes nothing (I01). Endpoints, forms and writable fields are explicit.
@@ -88,6 +88,11 @@ maturity or benchmark leadership. ADRs: 001–017 (015 reopens 009: jobs and out
   refusal leaves the connection idle. A migration that changes meaning without breaking old
   SQL (units, semantics, code-only invariants) says `"fence": true`; fence migrations lock the
   fence table before any DDL and stay short.
+- Reads run in `BEGIN READ ONLY` in debug builds and with `--read-only-reads` (ADR-018): a
+  `Mode::Read` operation never writes; something that writes is a `Mode::Write`. Don't make it
+  the release default without a cheaper mechanism (it cost ~20% read throughput). Pilot operations declare
+  `const EFFECTS` (reads, writes, emits, egress) and a test requires it: update it with the
+  code. A declared write may enqueue only its `emits`; never widen the check to get a job out.
 - Assembly never leaks (ADR-014): no `Box::leak` on a registration path. Runtime-built apps
   register owned data (`OperationDescriptor`, `Arc<str>`, `Arc<ContractDoc>`);
   `crates/trestle/tests/assembly_memory.rs` fails if repeated assembly grows the heap.

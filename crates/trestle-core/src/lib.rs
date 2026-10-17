@@ -13,6 +13,7 @@
 
 pub mod admission;
 pub mod db;
+pub mod effects;
 pub mod fence;
 mod health;
 pub mod http;

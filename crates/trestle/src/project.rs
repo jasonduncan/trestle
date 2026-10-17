@@ -782,8 +782,14 @@ enum Inspect {
     Apps,
     /// Every route: managed, unmanaged (with waiver) and system.
     Routes,
-    /// One operation: contracts, policy, binding, forms.
+    /// One operation: contracts, policy, binding, forms, effects.
     Operation { id: String },
+    /// Declared effects of every operation (ADR-018); `--model` lists only
+    /// the operations that read or write that model.
+    Effects {
+        #[arg(long)]
+        model: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1217,6 +1223,45 @@ fn inspect<S>(registry: &Registry<S>, what: Inspect) -> Result<(), String> {
                 .inspect_operation(&id)
                 .ok_or_else(|| format!("no operation {id:?} is registered"))?;
             print!("{}", to_pretty(&described));
+        }
+        Inspect::Effects { model } => {
+            if let Some(model) = &model
+                && registry.desired_schema().model(model).is_none()
+            {
+                return Err(format!("no model {model:?} is installed"));
+            }
+            println!(
+                "{:<28} {:<6} {:<24} {:<24} {:<24} EGRESS",
+                "OPERATION", "MODE", "READS", "WRITES", "EMITS"
+            );
+            let list = |items: &[Arc<str>]| {
+                let joined: Vec<&str> = items.iter().map(|i| &**i).collect();
+                dash(&joined.join(", ")).to_owned()
+            };
+            for op in registry.operations() {
+                let effects = op.info.effects.as_deref();
+                if let Some(model) = &model
+                    && !effects.is_some_and(|e| e.touches(model))
+                {
+                    continue;
+                }
+                match effects {
+                    Some(e) => println!(
+                        "{:<28} {:<6} {:<24} {:<24} {:<24} {}",
+                        op.info.id,
+                        op.info.mode.as_str(),
+                        list(&e.reads),
+                        list(&e.writes),
+                        list(&e.emits),
+                        list(&e.egress)
+                    ),
+                    None => println!(
+                        "{:<28} {:<6} (not declared)",
+                        op.info.id,
+                        op.info.mode.as_str()
+                    ),
+                }
+            }
         }
     }
     Ok(())

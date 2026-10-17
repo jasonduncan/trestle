@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::{FromRow, PgConnection};
 use trestle_core::db::unique_violation;
-use trestle_core::operation::{Mode, Operation, OperationInfo, Policy};
+use trestle_core::operation::{EffectsInfo, Mode, Operation, OperationInfo, Policy};
 use trestle_core::pagination::{Page, decode_cursor, page_from, page_size};
 use trestle_core::protocol::{Audience, Contract, ContractDoc, Field};
 use trestle_core::query::{self, Col, Direction, Table};
@@ -207,6 +207,8 @@ impl Operation for ListUnits {
         summary: "List the selected school's units by name.",
     };
 
+    const EFFECTS: Option<EffectsInfo> = Some(EffectsInfo::new().reads(&["units.unit"]));
+
     fn policy(&self) -> &UnitPolicy {
         &UnitPolicy::Read
     }
@@ -266,6 +268,9 @@ impl Operation for CreateUnit {
         summary: "Create a unit in the selected school.",
     };
 
+    const EFFECTS: Option<EffectsInfo> =
+        Some(EffectsInfo::new().writes(&["audit.event", "units.unit"]));
+
     fn policy(&self) -> &UnitPolicy {
         &UnitPolicy::Write
     }
@@ -323,6 +328,8 @@ impl Operation for GetUnit {
         audiences: AUDIENCES,
         summary: "Read one unit in the selected school.",
     };
+
+    const EFFECTS: Option<EffectsInfo> = Some(EffectsInfo::new().reads(&["units.unit"]));
 
     fn policy(&self) -> &UnitPolicy {
         &UnitPolicy::Read

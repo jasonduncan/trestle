@@ -83,6 +83,11 @@ pub struct ServeConfig {
     /// Jobs the worker runs at once.
     #[arg(long, env = "TRESTLE_JOB_CONCURRENCY", default_value_t = 8)]
     pub job_concurrency: usize,
+    /// Run every read operation in a read-only transaction, so a read that
+    /// writes fails (ADR-018). Always on in debug builds; in release it
+    /// costs one round trip per read.
+    #[arg(long, env = "TRESTLE_READ_ONLY_READS")]
+    pub read_only_reads: bool,
 
     /// Signs list cursors (at least 32 bytes). Required in production.
     #[arg(long, env = "TRESTLE_CURSOR_KEY", hide_env_values = true)]
@@ -143,6 +148,7 @@ impl ServeConfig {
             statement_timeout_ms: 10_000,
             jobs: false,
             job_concurrency: 8,
+            read_only_reads: false,
             cursor_key: None,
             session_key: None,
             oidc_issuer: None,
@@ -432,6 +438,9 @@ where
     match &config.cursor_key {
         Some(key) => pagination::install_key(key.as_bytes())?,
         None => tracing::warn!("TRESTLE_CURSOR_KEY is not set: list cursors expire on restart"),
+    }
+    if config.read_only_reads {
+        trestle_core::db::set_read_only_reads(true);
     }
 
     let database = database.options([(

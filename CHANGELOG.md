@@ -52,7 +52,26 @@ promise.
   - **New API:** `trestle_core::fence` (`install`, `begin`, `check`) and
     `trestle_historical::fence` (`BuildFence`, `status`, `fenced_by`).
 
+- Declared operation effects (ADR-018):
+  - **Typed operations** declare `const EFFECTS: Option<EffectsInfo>`;
+    runtime-built ones use `OperationDescriptor::effects`. The four lists
+    are `reads`, `writes`, `emits` and `egress`.
+  - **At assembly,** every named model, operation and job kind must exist,
+    and a read may not declare writes or emits.
+  - **At run time,** a write that declared its effects may enqueue only
+    what its `emits` lists.
+  - **Shown by** `inspect operation`, and by the new
+    `inspect effects [--model ID]`.
+  - **Generated `trestle.toml` CRUD** declares its model, except where a
+    hook runs. The pilot declares effects on every operation.
+
 ### Changed
+- **Breaking (behavior):** with `trestle_core::db::read_only_reads()` on,
+  `Mode::Read` operations run in a `BEGIN READ ONLY` transaction, so a read
+  that writes fails with a 500 instead of committing (ADR-018). It is on by
+  default in debug builds, which includes tests. Release builds opt in with
+  `serve --read-only-reads` (`TRESTLE_READ_ONLY_READS`), at about a fifth of
+  read throughput. `DynConn` gains a `ReadOnly` variant.
 - `migrate` creates the `trestle_schema_fence` table and the
   `trestle_fence_v1` function on every run, like the ledger. `serve` refuses
   to start until they exist, so run `migrate` once after upgrading.
