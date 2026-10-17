@@ -155,15 +155,15 @@ struct DynCreate {
     output: fn(uuid::Uuid) -> Value,
 }
 
+static DYN_CREATE: LazyLock<OperationDescriptor> = LazyLock::new(|| {
+    OperationDescriptor::new("demo.note.dyn_create", "1", Mode::Write)
+        .audiences(&[Audience::Product])
+        .summary("Create a note.")
+});
+
 impl DynOperation<()> for DynCreate {
-    fn info(&self) -> OperationInfo {
-        OperationInfo {
-            id: "demo.note.dyn_create",
-            version: "1",
-            mode: Mode::Write,
-            audiences: &[Audience::Product],
-            summary: "Create a note.",
-        }
+    fn info(&self) -> &OperationDescriptor {
+        &DYN_CREATE
     }
 
     fn policy_id(&self) -> &'static str {

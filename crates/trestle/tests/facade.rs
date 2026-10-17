@@ -45,7 +45,7 @@ fn an_app_on_the_default_state_assembles() {
     assert_eq!(registry.name(), "Notes");
     assert_eq!(registry.version(), "1.2.3");
     assert_eq!(
-        registry.apps().iter().map(|a| a.id).collect::<Vec<_>>(),
+        registry.apps().iter().map(|a| &*a.id).collect::<Vec<_>>(),
         ["notes"]
     );
     assert!(registry.desired_schema().model("notes.note").is_some());
@@ -111,7 +111,7 @@ enum Extra {
 async fn extra(command: Extra, ctx: CommandContext<State>) -> trestle::Result<(), String> {
     match command {
         Extra::Hello { name } => {
-            assert_eq!(ctx.name, "Notes");
+            assert_eq!(&*ctx.name, "Notes");
             assert!(ctx.registry.desired_schema().model("notes.note").is_some());
             if name == "fail" {
                 return Err("asked to fail".into());

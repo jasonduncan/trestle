@@ -368,11 +368,12 @@ where
         accepted_revisions,
         input_contract,
         &output_contract.id,
-        op.info().id,
+        &op.info().id,
     )
     .await?;
     let pool = PgPool::from_ref(state);
-    let output = execute_dyn(&pool, op, ctx, &instance)
+    // The contracts above borrow from `op`; the executor gets its own handle.
+    let output = execute_dyn(&pool, op.clone(), ctx, &instance)
         .await
         .map_err(|p| path_not_found(p, &path))?;
     let status = StatusCode::from_u16(binding.success_status).unwrap_or(StatusCode::OK);
@@ -405,7 +406,7 @@ async fn prepare<S: Send + Sync>(
     accepted_revisions: &[String],
     input_contract: &ContractDoc,
     output_id: &str,
-    op_id: &'static str,
+    op_id: &str,
 ) -> Result<(Value, Vec<(String, String)>), Problem> {
     // A generated form names the descriptor revision it rendered. Anything
     // not explicitly accepted is refused before the body is read (§11.4).

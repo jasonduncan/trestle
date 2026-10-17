@@ -6,6 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
+use std::sync::Arc;
 
 use serde::Deserialize;
 use toml::Spanned;
@@ -191,7 +192,9 @@ pub struct Intent {
     pub tenancy: Option<Tenancy>,
     /// Role → permissions.
     pub roles: BTreeMap<String, BTreeSet<String>>,
-    pub models: Vec<ModelSpec>,
+    /// Shared with the operations and rows built from them, so the intent
+    /// lives exactly as long as something uses it.
+    pub models: Vec<Arc<ModelSpec>>,
     pub endpoints: Vec<EndpointSpec>,
 }
 
@@ -470,7 +473,7 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
         if !tables.insert(table.clone()) {
             problems.push(format!("{at}: table {table:?} is used twice"));
         }
-        if models.iter().any(|x: &ModelSpec| x.id == *id) {
+        if models.iter().any(|x: &Arc<ModelSpec>| x.id == *id) {
             problems.push(format!("{at}: model {id:?} is declared twice"));
         }
         let mut fields = Vec::new();
@@ -525,13 +528,13 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
                 fields: names.clone(),
             });
         }
-        models.push(ModelSpec {
+        models.push(Arc::new(ModelSpec {
             id: id.clone(),
             app: app.to_owned(),
             table,
             fields,
             unique,
-        });
+        }));
     }
 
     let known_permission = |p: &str| p == AUTHENTICATED || permissions.contains(p);
@@ -604,7 +607,11 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
             let model = match &e.model {
                 Some(m) => m.get_ref().clone(),
                 None => {
-                    let in_app: Vec<&ModelSpec> = models.iter().filter(|m| m.app == app).collect();
+                    let in_app: Vec<&ModelSpec> = models
+                        .iter()
+                        .filter(|m| m.app == app)
+                        .map(|m| &**m)
+                        .collect();
                     match in_app.as_slice() {
                         [only] => only.id.clone(),
                         _ => {

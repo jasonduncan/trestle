@@ -219,7 +219,7 @@ fn assembles_in_dependency_order_and_describes_itself() {
         .install(users())
         .assemble()
         .unwrap();
-    let order: Vec<&str> = registry.apps().iter().map(|a| a.id).collect();
+    let order: Vec<&str> = registry.apps().iter().map(|a| &*a.id).collect();
     assert_eq!(order, ["users", "notes"]);
 
     let routes = registry.routes();
@@ -227,7 +227,7 @@ fn assembles_in_dependency_order_and_describes_itself() {
         method: "POST".into(),
         path: "/notes".into(),
         kind: RouteKind::Managed {
-            operation: "notes.create"
+            operation: "notes.create".into()
         },
     }));
     assert_eq!(
@@ -398,7 +398,7 @@ fn waived_unmanaged_routes_are_inventoried() {
     let registry = Project::new("t", "0").install(raw).assemble().unwrap();
     assert!(registry.routes().iter().any(|r| r.kind
         == RouteKind::Unmanaged {
-            app: "notes",
+            app: "notes".into(),
             waiver: "CSV download; reviewed 2026-09-26"
         }));
     assert!(

@@ -50,7 +50,9 @@ impl Mode {
     }
 }
 
-/// Static facts about an operation: stable identity, not behavior.
+/// Static facts about an operation: stable identity, not behavior. Typed
+/// operations declare it as a `const`; the registry keeps an owned
+/// [`OperationDescriptor`] built from it.
 #[derive(Debug, Clone, Copy)]
 pub struct OperationInfo {
     /// Stable ID, namespaced by the owning app: `lessons.create`.
@@ -61,6 +63,47 @@ pub struct OperationInfo {
     /// admin). Never authority: the policy still decides.
     pub audiences: &'static [Audience],
     pub summary: &'static str,
+}
+
+/// The same facts as [`OperationInfo`], owned, so operations assembled from
+/// runtime data need no `'static` strings (ADR-014).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperationDescriptor {
+    pub id: Arc<str>,
+    pub version: Arc<str>,
+    pub mode: Mode,
+    pub audiences: Arc<[Audience]>,
+    pub summary: Arc<str>,
+}
+
+impl OperationDescriptor {
+    pub fn new(id: impl Into<Arc<str>>, version: impl Into<Arc<str>>, mode: Mode) -> Self {
+        Self {
+            id: id.into(),
+            version: version.into(),
+            mode,
+            audiences: Arc::new([]),
+            summary: Arc::from(""),
+        }
+    }
+
+    pub fn audiences(mut self, audiences: &[Audience]) -> Self {
+        self.audiences = Arc::from(audiences);
+        self
+    }
+
+    pub fn summary(mut self, summary: impl Into<Arc<str>>) -> Self {
+        self.summary = summary.into();
+        self
+    }
+}
+
+impl From<OperationInfo> for OperationDescriptor {
+    fn from(info: OperationInfo) -> Self {
+        Self::new(info.id, info.version, info.mode)
+            .audiences(info.audiences)
+            .summary(info.summary)
+    }
 }
 
 /// Authorization bound to an operation. Deny by default; policies decide
@@ -302,11 +345,7 @@ pub fn validate<T: Contract + DeserializeOwned>(input: &Value) -> Result<Validat
 /// normalized instance. A mismatch is the operation's bug, not the caller's:
 /// it is logged with field pointers and codes (never values) and becomes a
 /// plain 500.
-fn check_output(
-    info: &OperationInfo,
-    contract: &ContractDoc,
-    output: &Value,
-) -> Result<Value, Problem> {
+fn check_output(operation: &str, contract: &ContractDoc, output: &Value) -> Result<Value, Problem> {
     contract.validate(output).map_err(|rejection| {
         let errors: Vec<String> = match rejection.errors() {
             [] => vec!["(not an object)".to_owned()],
@@ -316,7 +355,7 @@ fn check_output(
                 .collect(),
         };
         tracing::error!(
-            operation = info.id,
+            operation,
             contract = %contract.id,
             errors = ?errors,
             "output does not satisfy its contract"
@@ -324,7 +363,7 @@ fn check_output(
         crate::metrics::increment(
             "trestle_operation_output_invalid_total",
             "Operation results refused because they do not satisfy the output contract.",
-            &[("operation", info.id)],
+            &[("operation", operation)],
         );
         Problem::internal()
     })
@@ -335,7 +374,7 @@ fn check_typed_output<O: Operation>(output: &O::Output) -> Result<(), Problem> {
         tracing::error!(operation = O::INFO.id, error = %err, "output does not serialize");
         Problem::internal()
     })?;
-    check_output(&O::INFO, O::Output::contract(), &value).map(drop)
+    check_output(O::INFO.id, O::Output::contract(), &value).map(drop)
 }
 
 /// Everything after decoding: authorization, transaction, run, output
@@ -453,11 +492,13 @@ impl DynConn {
 /// [`Operation`] (contracts, a policy, a mode) and goes through the same
 /// executor sequence ([`execute_dyn`]); inputs and outputs are JSON.
 pub trait DynOperation<S>: Send + Sync + 'static {
-    fn info(&self) -> OperationInfo;
-    fn policy_id(&self) -> &'static str;
+    /// Identity, owned by the operation (ADR-014): read on every call, so
+    /// borrowed rather than built.
+    fn info(&self) -> &OperationDescriptor;
+    fn policy_id(&self) -> &str;
     fn context(&self) -> ContextDescriptor;
-    fn input(&self) -> &'static ContractDoc;
-    fn output(&self) -> &'static ContractDoc;
+    fn input(&self) -> &ContractDoc;
+    fn output(&self) -> &ContractDoc;
 
     /// The context for this caller, from what its transport established
     /// (ADR-013): the same lookup for HTTP, jobs, commands and tests.
@@ -507,7 +548,7 @@ pub async fn execute_dyn<S: 'static>(
                 let conn = pool.acquire().await?;
                 observe_pool_wait(waiting);
                 let (_, result) = op.clone().run(DynConn::Read(conn), ctx, input).await;
-                check_output(&info, op.output(), &result?)
+                check_output(&info.id, op.output(), &result?)
             }
             Mode::Write => {
                 let waiting = std::time::Instant::now();
@@ -519,12 +560,12 @@ pub async fn execute_dyn<S: 'static>(
                 match conn {
                     DynConn::Write(tx) => {
                         // Returning early drops `tx`, which rolls it back.
-                        let output = check_output(&info, op.output(), &output)?;
+                        let output = check_output(&info.id, op.output(), &output)?;
                         db::commit(tx).await?;
                         Ok(output)
                     }
                     DynConn::Read(_) => {
-                        tracing::error!(operation = info.id, "write ran without its transaction");
+                        tracing::error!(operation = &*info.id, "write ran without its transaction");
                         Err(Problem::internal())
                     }
                 }
@@ -539,12 +580,12 @@ pub async fn execute_dyn<S: 'static>(
     crate::metrics::increment(
         "trestle_operation_total",
         "Operation executions by outcome (ok or problem code).",
-        &[("operation", info.id), ("outcome", outcome)],
+        &[("operation", &*info.id), ("outcome", outcome)],
     );
     crate::metrics::observe(
         "trestle_operation_duration_seconds",
         "Operation latency, including authorization and commit.",
-        &[("operation", info.id)],
+        &[("operation", &*info.id)],
         started.elapsed().as_secs_f64(),
     );
     result

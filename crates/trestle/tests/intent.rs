@@ -168,7 +168,7 @@ fn handlers_are_linked_by_name_both_ways() {
 fn the_intent_feeds_the_registry() {
     let registry = notes().assemble().unwrap();
     assert_eq!(registry.name(), "notes");
-    let ops: Vec<&str> = registry.operations().iter().map(|o| o.info.id).collect();
+    let ops: Vec<&str> = registry.operations().iter().map(|o| &*o.info.id).collect();
     assert_eq!(
         ops,
         [

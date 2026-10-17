@@ -91,7 +91,7 @@ pub struct CommandContext<S> {
     pub registry: Rc<Registry<S>>,
     pub env: Environment,
     /// The project's display name (`Project::named`).
-    pub name: &'static str,
+    pub name: Arc<str>,
     /// How to refer to this binary in messages (`notes`, `myapp`, …).
     pub bin: String,
     database_url: Option<String>,
@@ -102,7 +102,7 @@ impl<S> Clone for CommandContext<S> {
         Self {
             registry: self.registry.clone(),
             env: self.env,
-            name: self.name,
+            name: self.name.clone(),
             bin: self.bin.clone(),
             database_url: self.database_url.clone(),
         }
@@ -132,14 +132,14 @@ pub fn project() -> Project {
 
 /// The composition root of a project and its command line.
 pub struct Project<S = State, X = NoExtension, C = NoCommands> {
-    name: &'static str,
+    name: Arc<str>,
     named: bool,
-    version: &'static str,
+    version: Arc<str>,
     apps: Vec<Box<dyn CoreApp<S>>>,
     source: Source,
     migrations_dir: Option<PathBuf>,
     foreign: Vec<String>,
-    excluded: BTreeSet<&'static str>,
+    excluded: BTreeSet<String>,
     commands: Option<Handler<S, C>>,
     intent: IntentSource,
     handlers: Handlers,
@@ -162,9 +162,9 @@ impl<S: Clone + Send + Sync + 'static> Project<S, NoExtension, NoCommands> {
             .or_else(bin_name)
             .unwrap_or_else(|| "trestle project".to_owned());
         Self {
-            name: Box::leak(name.into_boxed_str()),
+            name: Arc::from(name),
             named: false,
-            version: "0.0.0",
+            version: Arc::from("0.0.0"),
             apps: Vec::new(),
             source: Source::Dir,
             migrations_dir: None,
@@ -181,10 +181,10 @@ impl<S: Clone + Send + Sync + 'static> Project<S, NoExtension, NoCommands> {
 impl<S: 'static, X, C> Project<S, X, C> {
     /// Display name and version (shown by `check`, OpenAPI, emails).
     /// Usually `.named("My API", env!("CARGO_PKG_VERSION"))`.
-    pub fn named(mut self, name: &'static str, version: &'static str) -> Self {
-        self.name = name;
+    pub fn named(mut self, name: impl Into<Arc<str>>, version: impl Into<Arc<str>>) -> Self {
+        self.name = name.into();
         self.named = true;
-        self.version = version;
+        self.version = version.into();
         self
     }
 
@@ -309,7 +309,7 @@ impl<S: 'static, X, C> Project<S, X, C> {
         let probe = D::augment_subcommands(Command::new("probe"));
         let excluded = probe
             .get_subcommands()
-            .map(|c| &*Box::leak(c.get_name().to_owned().into_boxed_str()))
+            .map(|c| c.get_name().to_owned())
             .collect();
         Project {
             name: self.name,
@@ -351,7 +351,7 @@ where
         (
             Registry<S>,
             MigrationSet,
-            Option<&'static crate::intent::spec::Tenancy>,
+            Option<crate::intent::spec::Tenancy>,
         ),
         String,
     > {
@@ -360,12 +360,12 @@ where
         let history = runtime
             .source
             .resolve(&runtime.migrations_dir, registry.data_steps())?;
-        let tenancy = runtime.intent.and_then(|r| r.intent.tenancy.as_ref());
+        let tenancy = runtime.intent.and_then(|r| r.intent.tenancy.clone());
         Ok((registry, history, tenancy))
     }
 
     fn split(self) -> (Result<Registry<S>, crate::AssemblyError>, Runtime<S, C>) {
-        let mut name = self.name;
+        let mut name = self.name.clone();
         let mut apps: Vec<Box<dyn CoreApp<S>>> = self.apps;
         let mut intent_problems = Vec::new();
         let mut resolved = None;
@@ -380,9 +380,9 @@ where
             }
             Ok(Some((file, intent))) => match Resolved::link(intent, &file, self.handlers) {
                 Ok(r) => {
-                    let r: &'static Resolved = Box::leak(Box::new(r));
+                    let r = Arc::new(r);
                     if !self.named {
-                        name = leak_str(r.intent.name.clone());
+                        name = Arc::from(r.intent.name.as_str());
                     }
                     for app in r.apps::<S>() {
                         apps.push(Box::new(app));
@@ -393,7 +393,7 @@ where
             },
             Err(problems) => intent_problems.extend(problems),
         }
-        let mut core = CoreProject::new(name, self.version);
+        let mut core = CoreProject::new(name.clone(), self.version.clone());
         for app in apps {
             core = core.install(app);
         }
@@ -478,15 +478,15 @@ where
             &ctx,
             &runtime.source,
             &runtime.migrations_dir,
-            runtime.intent,
+            runtime.intent.as_deref(),
         )
         .await
     }
 }
 
 struct Runtime<S, C> {
-    intent: Option<&'static Resolved>,
-    name: &'static str,
+    intent: Option<Arc<Resolved>>,
+    name: Arc<str>,
     source: Source,
     migrations_dir: PathBuf,
     commands: Option<Handler<S, C>>,
@@ -497,7 +497,7 @@ fn bin_name() -> Option<String> {
     Some(Path::new(&arg).file_stem()?.to_string_lossy().into_owned())
 }
 
-fn cli<X: Args, C: Subcommand>(excluded: &BTreeSet<&'static str>) -> Command {
+fn cli<X: Args, C: Subcommand>(excluded: &BTreeSet<String>) -> Command {
     let builtins = BuiltIn::<X>::augment_subcommands(Command::new("builtins"));
     let mut cmd = Globals::augment_args(
         Command::new(&*Box::leak(
@@ -816,7 +816,7 @@ async fn builtin<S, X>(
     ctx: &CommandContext<S>,
     source: &Source,
     migrations_dir: &Path,
-    intent: Option<&'static Resolved>,
+    intent: Option<&Resolved>,
 ) -> Result<(), Failure>
 where
     S: Clone + Send + Sync + 'static,
@@ -865,7 +865,7 @@ where
         } => {
             let mailer = mail.mailer(env)?;
             mailer
-                .send(&crate::mail::test_message(ctx.name, &to))
+                .send(&crate::mail::test_message(&ctx.name, &to))
                 .await
                 .map_err(|e| e.to_string())?;
             println!("Sent a test message to {to} via {}.", mailer.describe());
@@ -1138,8 +1138,8 @@ async fn schema_verify(
 }
 
 fn check<S>(registry: &Registry<S>) {
-    let apps: Vec<&str> = registry.apps().iter().map(|a| a.id).collect();
-    let operations: Vec<&str> = registry.operations().iter().map(|o| o.info.id).collect();
+    let apps: Vec<&str> = registry.apps().iter().map(|a| &*a.id).collect();
+    let operations: Vec<&str> = registry.operations().iter().map(|o| &*o.info.id).collect();
     let forms: Vec<&str> = registry
         .forms()
         .iter()
@@ -1236,7 +1236,7 @@ async fn account<S>(ctx: &CommandContext<S>, action: AccountCommand) -> Result<(
             let issued = password::invite(&pool, &email, hours(valid_hours))
                 .await
                 .map_err(|e| e.to_string())?;
-            deliver(ctx.name, &issued, origin, mailer).await?;
+            deliver(&ctx.name, &issued, origin, mailer).await?;
         }
         AccountCommand::ResetLink {
             email,
@@ -1248,7 +1248,7 @@ async fn account<S>(ctx: &CommandContext<S>, action: AccountCommand) -> Result<(
             let issued = password::issue_reset(&pool, &email, hours(valid_hours))
                 .await
                 .map_err(|e| e.to_string())?;
-            deliver(ctx.name, &issued, origin, mailer).await?;
+            deliver(&ctx.name, &issued, origin, mailer).await?;
         }
         AccountCommand::Disable { email } => {
             let actor = password::set_disabled(&pool, &email, true)
@@ -1340,7 +1340,7 @@ async fn migrate<S>(
 ) -> Result<(), Failure> {
     if args.plan {
         let mut conn = connect_one(&options).await?;
-        let report = reconcile::plan_report(&mut conn, &set, ctx.name).await?;
+        let report = reconcile::plan_report(&mut conn, &set, &ctx.name).await?;
         if args.json {
             println!("{}", serde_json::to_string(&report).expect("serializes"));
         } else {
@@ -1475,7 +1475,7 @@ fn read_intent(path: &Path) -> Result<(String, String), Vec<String>> {
 
 async fn tenant<S>(
     ctx: &CommandContext<S>,
-    intent: Option<&'static Resolved>,
+    intent: Option<&Resolved>,
     action: TenantCommand,
 ) -> Result<(), String> {
     let tenancy = intent
@@ -1543,10 +1543,6 @@ async fn tenant<S>(
         }
     }
     Ok(())
-}
-
-fn leak_str(s: String) -> &'static str {
-    Box::leak(s.into_boxed_str())
 }
 
 /// Intent apps declare no schema requirements by hand, so `serve` requires

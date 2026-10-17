@@ -102,7 +102,7 @@ where
 pub(crate) struct MetaEntry<S> {
     pub interaction_id: String,
     pub revision: String,
-    pub operation: &'static str,
+    pub operation: Arc<str>,
     pub title: String,
     pub descriptor: Value,
     pub availability: AvailabilityFn<S>,

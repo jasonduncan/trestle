@@ -29,7 +29,7 @@ and is not self-granted. Open items before a pilot:
 choose how people sign in (password accounts are built; an OIDC provider is optional and only
 mock-tested), send through the real SMTP relay, get external security review (§12.4), and
 validate the edge config (`deploy/Caddyfile`) on a real host. Do not claim general
-maturity or benchmark leadership. ADRs: 001–012 (009 records jobs/outbox as deferred).
+maturity or benchmark leadership. ADRs: 001–014 (009 records jobs/outbox as deferred).
 
 ## Non-negotiables
 - Installing a model publishes nothing (I01). Endpoints, forms and writable fields are explicit.
@@ -75,6 +75,9 @@ maturity or benchmark leadership. ADRs: 001–012 (009 records jobs/outbox as de
   what `describe()` declares, so a context that needs a header must declare it there.
   `Invocation::for_actor` is for trusted callers (jobs, commands, tests); never build one from
   request data. Hand-written handlers extract `Resolved<C>`.
+- Assembly never leaks (ADR-014): no `Box::leak` on a registration path. Runtime-built apps
+  register owned data (`OperationDescriptor`, `Arc<str>`, `Arc<ContractDoc>`);
+  `crates/trestle/tests/assembly_memory.rs` fails if repeated assembly grows the heap.
 - The executor checks every result against its output contract before a write commits (ADR-012).
   A refusal is a 500 that rolls back: fix the contract or the representation, never loosen the
   check. Its log carries field pointers and codes only, never values.

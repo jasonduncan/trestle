@@ -51,7 +51,7 @@ impl App<AppState> for LabsApp {
 #[test]
 fn pilot_assembles_in_dependency_order() {
     let registry = pilot::registry().unwrap();
-    let order: Vec<&str> = registry.apps().iter().map(|a| a.id).collect();
+    let order: Vec<&str> = registry.apps().iter().map(|a| &*a.id).collect();
     assert_eq!(order, ["identity", "schools", "audit", "units", "lessons"]);
     // Installed in reverse, dependencies still come first; install order only
     // breaks ties between apps that are ready at the same time.
@@ -62,7 +62,7 @@ fn pilot_assembles_in_dependency_order() {
         .install(pilot::schools::SchoolsApp)
         .assemble()
         .unwrap();
-    let order: Vec<&str> = reversed.apps().iter().map(|a| a.id).collect();
+    let order: Vec<&str> = reversed.apps().iter().map(|a| &*a.id).collect();
     assert_eq!(order, ["audit", "schools", "units", "lessons"]);
 }
 
@@ -83,7 +83,7 @@ fn a_second_app_is_checked_against_the_first() {
         extra_field: None,
     });
     let registry = valid.assemble().unwrap();
-    assert_eq!(registry.apps().last().unwrap().id, "labs");
+    assert_eq!(&*registry.apps().last().unwrap().id, "labs");
     assert_eq!(registry.forms().len(), 3);
 
     let undeclared = pilot::project().install(LabsApp {

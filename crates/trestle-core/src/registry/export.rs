@@ -27,7 +27,7 @@ impl<S> Registry<S> {
     /// Every contract used by an operation published for `audience`.
     pub fn contracts(&self, audience: Audience) -> BTreeMap<&str, &ContractDoc> {
         self.published(audience)
-            .flat_map(|op| [op.input, op.output])
+            .flat_map(|op| [&*op.input, &*op.output])
             .map(|c| (c.id.as_str(), c))
             .collect()
     }
@@ -240,8 +240,8 @@ impl<S> Registry<S> {
     /// only; policies stay private.
     pub(crate) fn admin_description(&self, resource: &RegisteredResource<S>) -> Option<Value> {
         let view = resource.admin_view()?;
-        let list = self.operation(resource.list?)?;
-        let item = page_item(list.output)?;
+        let list = self.operation(resource.list.as_deref()?)?;
+        let item = page_item(&list.output)?;
         let binding = |id: Option<&str>| {
             let op = self.operation(id?)?;
             let b = op.binding.as_ref()?;
@@ -279,10 +279,13 @@ impl<S> Registry<S> {
                 Some(described)
             })
             .collect();
-        let mut retrieve = binding(resource.retrieve);
+        let mut retrieve = binding(resource.retrieve.as_deref());
         if let (Some(r), Some(op)) = (
             &mut retrieve,
-            resource.retrieve.and_then(|id| self.operation(id)),
+            resource
+                .retrieve
+                .as_deref()
+                .and_then(|id| self.operation(id)),
         ) {
             r["etagOf"] = json!(op.output.id);
         }
@@ -299,9 +302,9 @@ impl<S> Registry<S> {
                 "item": item.schema_body(),
             },
             "retrieve": retrieve,
-            "update": binding(resource.update).map(|mut b| { b["form"] = json!(view.edit_form); b }),
-            "create": binding(resource.create).map(|mut b| { b["form"] = json!(view.create_form); b }),
-            "delete": binding(resource.delete),
+            "update": binding(resource.update.as_deref()).map(|mut b| { b["form"] = json!(view.edit_form); b }),
+            "create": binding(resource.create.as_deref()).map(|mut b| { b["form"] = json!(view.create_form); b }),
+            "delete": binding(resource.delete.as_deref()),
             "actions": actions,
         }))
     }
@@ -343,7 +346,7 @@ impl<S> Registry<S> {
         let forms: Vec<Value> = self
             .forms
             .iter()
-            .filter(|f| f.form.operation == op.info.id)
+            .filter(|f| *f.form.operation == *op.info.id)
             .map(|f| {
                 let retained: Vec<Value> = f
                     .retained
@@ -363,8 +366,8 @@ impl<S> Registry<S> {
             "audiences": op.info.audiences.iter().map(|a| a.as_str()).collect::<Vec<_>>(),
             "policy": op.policy,
             "context": { "authenticated": op.context.authenticated, "headers": headers },
-            "input": contract(op.input),
-            "output": contract(op.output),
+            "input": contract(&op.input),
+            "output": contract(&op.output),
             "http": binding,
             "forms": forms,
         }))

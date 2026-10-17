@@ -44,8 +44,8 @@ use crate::health::{self, LIVE_PATH, READY_PATH};
 use crate::identity::Identity;
 use crate::invocation::{FromInvocation, Invocation};
 use crate::operation::{
-    BoxFuture, ContextDescriptor, DynOperation, Operation, OperationInfo, Policy, RequestContext,
-    invoke, invoke_dyn,
+    BoxFuture, ContextDescriptor, DynOperation, Operation, OperationDescriptor, Policy,
+    RequestContext, invoke, invoke_dyn,
 };
 
 /// A cohesive feature: lessons, schools, billing. Dyn-compatible so a
@@ -53,14 +53,14 @@ use crate::operation::{
 pub trait App<S>: Send + Sync + 'static {
     /// Stable lowercase identifier; also the namespace of everything the
     /// app registers (`lessons` owns `lessons.create`, `lessons.view`, …).
-    fn id(&self) -> &'static str;
+    fn id(&self) -> &str;
 
     fn register(&self, app: &mut AppBuilder<S>);
 }
 
 /// A boxed app is an app, so a project can hold apps before assembly.
 impl<S: 'static> App<S> for Box<dyn App<S>> {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> &str {
         (**self).id()
     }
 
@@ -70,8 +70,8 @@ impl<S: 'static> App<S> for Box<dyn App<S>> {
 }
 
 pub struct AppBuilder<S> {
-    app: &'static str,
-    requires: Vec<&'static str>,
+    app: Arc<str>,
+    requires: Vec<Arc<str>>,
     schema: Vec<MigrationRef>,
     models: Vec<Model>,
     data_steps: Vec<(&'static str, DataStep)>,
@@ -82,9 +82,9 @@ pub struct AppBuilder<S> {
 }
 
 impl<S> AppBuilder<S> {
-    fn new(app: &'static str) -> Self {
+    fn new(app: &str) -> Self {
         Self {
-            app,
+            app: Arc::from(app),
             requires: Vec::new(),
             schema: Vec::new(),
             models: Vec::new(),
@@ -100,13 +100,13 @@ impl<S> AppBuilder<S> {
     /// opt-in; see [`ResourceRegistration`].
     pub fn resource(
         &mut self,
-        id: &'static str,
-        path: &'static str,
+        id: impl Into<Arc<str>>,
+        path: impl Into<Arc<str>>,
     ) -> ResourceRegistration<'_, S> {
         self.resources.push(RegisteredResource {
-            app: self.app,
-            id,
-            path,
+            app: self.app.clone(),
+            id: id.into(),
+            path: path.into(),
             list: None,
             create: None,
             retrieve: None,
@@ -124,8 +124,8 @@ impl<S> AppBuilder<S> {
 
     /// Declares a lifecycle dependency. Using another app's contracts,
     /// operations or forms requires one.
-    pub fn requires(&mut self, app: &'static str) -> &mut Self {
-        self.requires.push(app);
+    pub fn requires(&mut self, app: impl Into<Arc<str>>) -> &mut Self {
+        self.requires.push(app.into());
         self
     }
 
@@ -175,12 +175,12 @@ impl<S> AppBuilder<S> {
             })
         };
         let entry = RegisteredOperation {
-            app: self.app,
-            info: O::INFO,
-            policy: op.policy().id(),
+            app: self.app.clone(),
+            info: O::INFO.into(),
+            policy: Arc::from(op.policy().id()),
             context: O::Context::describe(),
-            input: O::Input::contract(),
-            output: O::Output::contract(),
+            input: Arc::new(O::Input::contract().clone()),
+            output: Arc::new(O::Output::contract().clone()),
             binding: None,
             route: None,
             availability: None,
@@ -206,7 +206,6 @@ impl<S> AppBuilder<S> {
         Identity: FromRef<S>,
     {
         let context = op.context();
-        let input = op.input();
         let invoker = {
             let op = op.clone();
             erase_invoker(move |state: &S, invocation, input| {
@@ -214,12 +213,12 @@ impl<S> AppBuilder<S> {
             })
         };
         let mut entry = RegisteredOperation {
-            app: self.app,
-            info: op.info(),
-            policy: op.policy_id(),
+            app: self.app.clone(),
+            info: op.info().clone(),
+            policy: Arc::from(op.policy_id()),
             context,
-            input,
-            output: op.output(),
+            input: Arc::new(op.input().clone()),
+            output: Arc::new(op.output().clone()),
             binding: None,
             route: None,
             availability: None,
@@ -228,7 +227,7 @@ impl<S> AppBuilder<S> {
             invoker,
         };
         if let Some(http) = http {
-            let binding = http.binding(&entry.context, input);
+            let binding = http.binding(&entry.context, &entry.input);
             entry.route = Some(routes::managed_dyn::<S>(
                 op,
                 &http,
@@ -264,7 +263,7 @@ impl<S> AppBuilder<S> {
         waiver: &'static str,
     ) -> &mut Self {
         self.unmanaged.push(UnmanagedRoute {
-            app: self.app,
+            app: self.app.clone(),
             method,
             path,
             route,
@@ -330,7 +329,7 @@ where
     /// Exposes the operation through a managed route.
     pub fn http(self, http: Http) {
         let entry = &mut self.builder.operations[self.index];
-        let binding = http.binding(&entry.context, entry.input);
+        let binding = http.binding(&entry.context, &entry.input);
         entry.availability = Some(meta::availability::<S, O>(self.op.clone()));
         entry.route = Some(routes::managed::<S, O>(
             self.op,
@@ -362,12 +361,12 @@ fn conformance<O: Operation>() -> Vec<String> {
 }
 
 pub struct RegisteredOperation<S> {
-    pub app: &'static str,
-    pub info: OperationInfo,
-    pub policy: &'static str,
+    pub app: Arc<str>,
+    pub info: OperationDescriptor,
+    pub policy: Arc<str>,
     pub context: ContextDescriptor,
-    pub input: &'static ContractDoc,
-    pub output: &'static ContractDoc,
+    pub input: Arc<ContractDoc>,
+    pub output: Arc<ContractDoc>,
     pub binding: Option<HttpBinding>,
     route: Option<MethodRouter<S>>,
     availability: Option<meta::AvailabilityFn<S>>,
@@ -406,7 +405,7 @@ impl<S> RegisteredOperation<S> {
 }
 
 pub struct UnmanagedRoute<S> {
-    pub app: &'static str,
+    pub app: Arc<str>,
     pub method: Method,
     pub path: &'static str,
     pub waiver: &'static str,
@@ -415,9 +414,9 @@ pub struct UnmanagedRoute<S> {
 
 #[derive(Debug, Clone)]
 pub struct AppInfo {
-    pub id: &'static str,
-    pub requires: Vec<&'static str>,
-    pub operations: Vec<&'static str>,
+    pub id: Arc<str>,
+    pub requires: Vec<Arc<str>>,
+    pub operations: Vec<Arc<str>>,
     pub forms: Vec<String>,
     pub models: Vec<String>,
     pub schema: Vec<MigrationRef>,
@@ -428,10 +427,10 @@ pub enum RouteKind {
     /// Framework health endpoints.
     System,
     Managed {
-        operation: &'static str,
+        operation: Arc<str>,
     },
     Unmanaged {
-        app: &'static str,
+        app: Arc<str>,
         waiver: &'static str,
     },
 }
@@ -465,16 +464,16 @@ impl fmt::Display for AssemblyError {
 impl std::error::Error for AssemblyError {}
 
 pub struct Project<S> {
-    name: &'static str,
-    version: &'static str,
+    name: Arc<str>,
+    version: Arc<str>,
     apps: Vec<Box<dyn App<S>>>,
 }
 
 impl<S: 'static> Project<S> {
-    pub fn new(name: &'static str, version: &'static str) -> Self {
+    pub fn new(name: impl Into<Arc<str>>, version: impl Into<Arc<str>>) -> Self {
         Self {
-            name,
-            version,
+            name: name.into(),
+            version: version.into(),
             apps: Vec::new(),
         }
     }
@@ -493,7 +492,7 @@ impl<S: 'static> Project<S> {
             if !valid_app_id(id) {
                 issues.push(format!("app id {id:?} is not a lowercase identifier"));
             }
-            if builders.iter().any(|b| b.app == id) {
+            if builders.iter().any(|b| &*b.app == id) {
                 issues.push(format!("app {id} is installed twice"));
                 continue;
             }
@@ -534,7 +533,7 @@ impl<S: 'static> Project<S> {
             let accepted: Vec<String> = published
                 .iter()
                 .flatten()
-                .filter(|p| p.form.operation == op.info.id)
+                .filter(|p| *p.form.operation == *op.info.id)
                 .flat_map(|p| {
                     std::iter::once(p.revision.clone())
                         .chain(p.retained.iter().map(|r| r.revision.to_owned()))
@@ -572,7 +571,11 @@ impl<S: 'static> Project<S> {
             registry.apps.push(AppInfo {
                 id: builder.app,
                 requires: builder.requires.clone(),
-                operations: builder.operations.iter().map(|o| o.info.id).collect(),
+                operations: builder
+                    .operations
+                    .iter()
+                    .map(|o| o.info.id.clone())
+                    .collect(),
                 forms: builder.forms.iter().map(|f| f.form.id.clone()).collect(),
                 models: builder.models.iter().map(|m| m.id().to_owned()).collect(),
                 schema: builder.schema.clone(),
@@ -603,7 +606,7 @@ fn owner(id: &str) -> &str {
 
 /// Whether `builder` may use something namespaced to `owner`.
 fn visible<S>(builder: &AppBuilder<S>, owner: &str) -> bool {
-    builder.app == owner || builder.requires.contains(&owner)
+    &*builder.app == owner || builder.requires.iter().any(|r| &**r == owner)
 }
 
 /// Dependency order (install order breaks ties). Reports missing
@@ -638,7 +641,7 @@ fn lifecycle_order<S>(builders: &[AppBuilder<S>], issues: &mut Vec<String>) -> V
             None => {
                 let stuck: Vec<&str> = (0..builders.len())
                     .filter(|i| !placed.contains(i))
-                    .map(|i| builders[i].app)
+                    .map(|i| &*builders[i].app)
                     .collect();
                 issues.push(format!("dependency cycle among apps: {}", stuck.join(", ")));
                 break;
@@ -653,12 +656,12 @@ fn check_operations<S>(builders: &[AppBuilder<S>], issues: &mut Vec<String>) {
     let mut contracts: BTreeMap<&str, &ContractDoc> = BTreeMap::new();
     for builder in builders {
         for op in &builder.operations {
-            let id = op.info.id;
+            let id: &str = &op.info.id;
             if !valid_stable_id(id) {
                 issues.push(format!(
                     "operation id {id:?} is not a dotted lowercase stable ID"
                 ));
-            } else if owner(id) != builder.app {
+            } else if owner(id) != &*builder.app {
                 issues.push(format!(
                     "operation {id} is registered by app {} but namespaced to {}",
                     builder.app,
@@ -677,8 +680,8 @@ fn check_operations<S>(builders: &[AppBuilder<S>], issues: &mut Vec<String>) {
                 ));
             }
             for (contract, kind) in [
-                (op.input, ContractKind::Input),
-                (op.output, ContractKind::Output),
+                (&*op.input, ContractKind::Input),
+                (&*op.output, ContractKind::Output),
             ] {
                 if contract.kind != kind {
                     issues.push(format!(
@@ -710,7 +713,7 @@ fn check_operations<S>(builders: &[AppBuilder<S>], issues: &mut Vec<String>) {
             }
             issues.extend(op.conformance.iter().cloned());
             if let Some(binding) = &op.binding {
-                check_binding(id, op.input, op.output, binding, issues);
+                check_binding(id, &op.input, &op.output, binding, issues);
             }
         }
     }
@@ -799,7 +802,7 @@ fn check_forms<S>(builders: &[AppBuilder<S>], issues: &mut Vec<String>) {
     for builder in builders {
         for RegisteredForm { form, .. } in &builder.forms {
             let id = &form.id;
-            if valid_stable_id(id) && owner(id) != builder.app {
+            if valid_stable_id(id) && owner(id) != &*builder.app {
                 issues.push(format!(
                     "form {id} is registered by app {} but namespaced to {}",
                     builder.app,
@@ -812,7 +815,7 @@ fn check_forms<S>(builders: &[AppBuilder<S>], issues: &mut Vec<String>) {
             let target = builders
                 .iter()
                 .flat_map(|b| &b.operations)
-                .find(|op| op.info.id == form.operation);
+                .find(|op| *op.info.id == *form.operation);
             let Some(op) = target else {
                 issues.push(format!(
                     "form {id} is bound to unknown operation {}",
@@ -820,11 +823,11 @@ fn check_forms<S>(builders: &[AppBuilder<S>], issues: &mut Vec<String>) {
                 ));
                 continue;
             };
-            if !visible(builder, owner(op.info.id)) {
+            if !visible(builder, owner(&op.info.id)) {
                 issues.push(format!(
                     "form {id} uses operation {} owned by {}, which app {} does not require",
                     op.info.id,
-                    owner(op.info.id),
+                    owner(&op.info.id),
                     builder.app
                 ));
             }
@@ -846,15 +849,15 @@ fn check_forms<S>(builders: &[AppBuilder<S>], issues: &mut Vec<String>) {
                 bound.extend(binding.path_params());
                 bound.extend(binding.if_match.as_deref());
             }
-            issues.extend(form.problems(op.input, &bound));
+            issues.extend(form.problems(&op.input, &bound));
             for source in form.fields.iter().filter_map(|f| f.source.as_ref()) {
                 let list = builders
                     .iter()
                     .flat_map(|b| &b.operations)
-                    .find(|o| o.info.id == source.operation);
+                    .find(|o| *o.info.id == *source.operation);
                 let valid = list.is_some_and(|list| {
                     list.binding.as_ref().is_some_and(|b| b.method == "GET")
-                        && page_item(list.output).is_some_and(|item| {
+                        && page_item(&list.output).is_some_and(|item| {
                             item.get("id").is_some_and(|f| f.ty == FieldType::Uuid)
                                 && item.get(&source.label).is_some()
                         })
@@ -882,7 +885,7 @@ fn check_forms<S>(builders: &[AppBuilder<S>], issues: &mut Vec<String>) {
 fn check_models<S>(builders: &[AppBuilder<S>], issues: &mut Vec<String>) -> Option<SchemaState> {
     for builder in builders {
         for model in &builder.models {
-            if owner(model.id()) != builder.app {
+            if owner(model.id()) != &*builder.app {
                 issues.push(format!(
                     "model {} is registered by app {} but namespaced to {}",
                     model.id(),
@@ -924,7 +927,7 @@ fn publish_forms<S>(
         builders.iter().flat_map(|b| &b.operations).collect();
     let sources: BTreeMap<String, String> = operations
         .iter()
-        .filter_map(|o| Some((o.info.id.to_owned(), o.binding.as_ref()?.path.clone())))
+        .filter_map(|o| Some((o.info.id.to_string(), o.binding.as_ref()?.path.clone())))
         .collect();
     builders
         .iter()
@@ -934,17 +937,17 @@ fn publish_forms<S>(
                 .iter()
                 .filter_map(|registered| {
                     let form = &registered.form;
-                    let op = operations.iter().find(|o| o.info.id == form.operation)?;
+                    let op = operations.iter().find(|o| *o.info.id == *form.operation)?;
                     let binding = op.binding.as_ref()?;
                     let descriptor = form_interaction(
                         form,
                         OperationRef {
-                            id: op.info.id,
-                            version: op.info.version,
+                            id: &op.info.id,
+                            version: &op.info.version,
                         },
                         binding,
-                        op.input,
-                        op.output,
+                        &op.input,
+                        &op.output,
                         &sources,
                     );
                     let size = descriptor.to_string().len();
@@ -999,13 +1002,13 @@ fn valid_revision(revision: &str) -> bool {
 fn check_resources<S>(builders: &[AppBuilder<S>], issues: &mut Vec<String>) {
     let operations: Vec<&RegisteredOperation<S>> =
         builders.iter().flat_map(|b| &b.operations).collect();
-    let op = |id: &str| operations.iter().find(|o| o.info.id == id).copied();
+    let op = |id: &str| operations.iter().find(|o| &*o.info.id == id).copied();
     let forms: Vec<&RegisteredForm> = builders.iter().flat_map(|b| &b.forms).collect();
     let mut ids = HashSet::new();
     for builder in builders {
         for resource in &builder.resources {
-            let id = resource.id;
-            if !valid_stable_id(id) || owner(id) != builder.app {
+            let id: &str = &resource.id;
+            if !valid_stable_id(id) || owner(id) != &*builder.app {
                 issues.push(format!(
                     "resource {id:?} must be a stable ID namespaced to app {}",
                     builder.app
@@ -1014,7 +1017,7 @@ fn check_resources<S>(builders: &[AppBuilder<S>], issues: &mut Vec<String>) {
             if !ids.insert(id) {
                 issues.push(format!("resource {id} is registered twice"));
             }
-            if !valid_path(resource.path) {
+            if !valid_path(&resource.path) {
                 issues.push(format!(
                     "resource {id}: {:?} is not a valid route path",
                     resource.path
@@ -1022,8 +1025,8 @@ fn check_resources<S>(builders: &[AppBuilder<S>], issues: &mut Vec<String>) {
             }
             // `If-Match` compares against the operation's output, so every
             // versioned verb must speak the retrieve representation.
-            if let Some(retrieve) = resource.retrieve.and_then(op) {
-                for verb in [resource.update, resource.delete]
+            if let Some(retrieve) = resource.retrieve.as_deref().and_then(op) {
+                for verb in [resource.update.as_deref(), resource.delete.as_deref()]
                     .into_iter()
                     .flatten()
                     .filter_map(op)
@@ -1036,9 +1039,9 @@ fn check_resources<S>(builders: &[AppBuilder<S>], issues: &mut Vec<String>) {
                     }
                 }
             }
-            let list = resource.list.and_then(op);
+            let list = resource.list.as_deref().and_then(op);
             if let Some(list) = list
-                && (page_item(list.output).is_none() || list.output.get("next_cursor").is_none())
+                && (page_item(&list.output).is_none() || list.output.get("next_cursor").is_none())
             {
                 issues.push(format!(
                     "resource {id}: list operation {} must return a Page<T>",
@@ -1054,7 +1057,7 @@ fn check_resources<S>(builders: &[AppBuilder<S>], issues: &mut Vec<String>) {
                 ));
                 continue;
             };
-            let item = page_item(list.output);
+            let item = page_item(&list.output);
             for column in view.columns.iter().chain([&view.label]) {
                 if item.is_none_or(|item| item.get(column).is_none()) {
                     issues.push(format!(
@@ -1071,8 +1074,8 @@ fn check_resources<S>(builders: &[AppBuilder<S>], issues: &mut Vec<String>) {
                 }
             }
             for (form, target, role) in [
-                (&view.edit_form, resource.update, "update"),
-                (&view.create_form, resource.create, "create"),
+                (&view.edit_form, resource.update.as_deref(), "update"),
+                (&view.create_form, resource.create.as_deref(), "create"),
             ] {
                 let Some(form) = form else { continue };
                 let found = forms.iter().find(|f| f.form.id == *form);
@@ -1171,8 +1174,8 @@ fn check_routes<S>(builders: &[AppBuilder<S>], issues: &mut Vec<String>) {
 
 /// The assembled, immutable composition.
 pub struct Registry<S> {
-    name: &'static str,
-    version: &'static str,
+    name: Arc<str>,
+    version: Arc<str>,
     desired: SchemaState,
     backfills: BTreeMap<String, serde_json::Value>,
     data_steps: Vec<DataStep>,
@@ -1185,12 +1188,12 @@ pub struct Registry<S> {
 }
 
 impl<S> Registry<S> {
-    pub fn name(&self) -> &'static str {
-        self.name
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
-    pub fn version(&self) -> &'static str {
-        self.version
+    pub fn version(&self) -> &str {
+        &self.version
     }
 
     /// Apps in lifecycle (dependency) order.
@@ -1203,7 +1206,7 @@ impl<S> Registry<S> {
     }
 
     pub fn operation(&self, id: &str) -> Option<&RegisteredOperation<S>> {
-        self.operations.iter().find(|op| op.info.id == id)
+        self.operations.iter().find(|op| &*op.info.id == id)
     }
 
     /// Runs the operation registered as `id` for a caller that is not an
@@ -1276,7 +1279,7 @@ impl<S> Registry<S> {
                     method: binding.method.clone(),
                     path: binding.path.clone(),
                     kind: RouteKind::Managed {
-                        operation: op.info.id,
+                        operation: op.info.id.clone(),
                     },
                 });
             }
@@ -1286,7 +1289,7 @@ impl<S> Registry<S> {
                 method: route.method.to_string(),
                 path: route.path.to_owned(),
                 kind: RouteKind::Unmanaged {
-                    app: route.app,
+                    app: route.app.clone(),
                     waiver: route.waiver,
                 },
             });
@@ -1323,7 +1326,7 @@ where
                     Some(meta::MetaEntry {
                         interaction_id: f.form.id.clone(),
                         revision: f.revision.clone(),
-                        operation: op.info.id,
+                        operation: op.info.id.clone(),
                         title: f.form.title.clone(),
                         descriptor: f.descriptor.clone(),
                         availability: op.availability.clone()?,
