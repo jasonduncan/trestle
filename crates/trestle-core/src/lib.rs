@@ -17,6 +17,7 @@ mod health;
 pub mod http;
 pub mod identity;
 pub mod input;
+pub mod invocation;
 pub mod metrics;
 pub mod operation;
 pub mod pagination;

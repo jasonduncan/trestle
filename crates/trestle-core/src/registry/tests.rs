@@ -1,25 +1,33 @@
 use std::sync::LazyLock;
 
-use axum::extract::{FromRef, FromRequestParts};
+use axum::extract::FromRef;
 use axum::routing::get;
 use http::Method;
-use http::request::Parts;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgConnection, PgPool};
 use trestle_protocol::{Audience, Contract, ContractDoc, Field, FormPresentation, Widget};
 
 use super::*;
 use crate::Problem;
+use crate::identity::Identity;
+use crate::invocation::{FromInvocation, Invocation};
 use crate::operation::{ContextDescriptor, Mode, Operation, OperationInfo, Policy, RequestContext};
 
 #[derive(Clone)]
 struct TestState {
     pool: PgPool,
+    identity: Identity,
 }
 
 impl FromRef<TestState> for PgPool {
     fn from_ref(state: &TestState) -> Self {
         state.pool.clone()
+    }
+}
+
+impl FromRef<TestState> for Identity {
+    fn from_ref(state: &TestState) -> Self {
+        state.identity.clone()
     }
 }
 
@@ -31,10 +39,9 @@ impl RequestContext for Ctx {
     }
 }
 
-impl FromRequestParts<TestState> for Ctx {
-    type Rejection = Problem;
-
-    async fn from_request_parts(_: &mut Parts, _: &TestState) -> Result<Self, Problem> {
+impl FromInvocation<TestState> for Ctx {
+    async fn resolve(invocation: &Invocation, _: &TestState) -> Result<Self, Problem> {
+        invocation.actor()?;
         Ok(Ctx)
     }
 }

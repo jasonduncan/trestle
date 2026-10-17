@@ -6,12 +6,11 @@
 
 use std::sync::LazyLock;
 
-use axum::extract::FromRequestParts;
-use http::request::Parts;
 use serde::{Deserialize, Serialize};
 use sqlx::PgConnection;
 use trestle_core::Problem;
-use trestle_core::identity::{ActorId, Authenticated};
+use trestle_core::identity::ActorId;
+use trestle_core::invocation::{FromInvocation, Invocation};
 use trestle_core::operation::{
     ContextDescriptor, Mode, Operation, OperationInfo, Policy, RequestContext,
 };
@@ -33,12 +32,11 @@ impl RequestContext for ActorContext {
     }
 }
 
-impl FromRequestParts<AppState> for ActorContext {
-    type Rejection = Problem;
-
-    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Problem> {
-        let Authenticated(actor) = Authenticated::from_request_parts(parts, state).await?;
-        Ok(ActorContext { actor })
+impl FromInvocation<AppState> for ActorContext {
+    async fn resolve(invocation: &Invocation, _: &AppState) -> Result<Self, Problem> {
+        Ok(ActorContext {
+            actor: invocation.actor()?,
+        })
     }
 }
 

@@ -24,6 +24,7 @@ use serde_json::{Value, json};
 use support::{Reply, TestEnv, get, post_json, send};
 use trestle_core::Problem;
 use trestle_core::input::JsonBody;
+use trestle_core::invocation::Resolved;
 use trestle_core::operation::execute_json;
 
 const FIXTURES: &str = include_str!("../../../fixtures/contracts/lessons.create.input.json");
@@ -31,7 +32,7 @@ const FIXTURES: &str = include_str!("../../../fixtures/contracts/lessons.create.
 /// A hand-written handler: no registry, just the executor.
 async fn manual_create(
     State(state): State<AppState>,
-    ctx: TenantContext,
+    Resolved(ctx): Resolved<TenantContext>,
     JsonBody(body): JsonBody,
 ) -> Result<(StatusCode, Json<LessonView>), Problem> {
     let view = execute_json(&state.pool, &CreateLesson, &ctx, &body).await?;

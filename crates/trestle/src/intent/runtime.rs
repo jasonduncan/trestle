@@ -10,15 +10,15 @@ use std::future::Future;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use axum::extract::{FromRef, FromRequestParts};
-use http::request::Parts;
+use axum::extract::FromRef;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 use sqlx::{PgConnection, PgPool};
 use tokio::sync::Mutex;
 use trestle_core::Problem;
-use trestle_core::identity::{ActorId, Authenticated, Identity};
+use trestle_core::identity::{ActorId, Identity};
+use trestle_core::invocation::Invocation;
 use trestle_core::operation::{
     BoxFuture, ContextDescriptor, DynConn, DynContext, DynOperation, Mode, OperationInfo,
 };
@@ -30,7 +30,7 @@ use uuid::Uuid;
 use super::spec::{AUTHENTICATED, Crud, EndpointSpec, FieldSpec, FieldType, Intent, ModelSpec};
 
 /// Header that selects the tenant to act in. Grants nothing by itself.
-pub const TENANT_HEADER: &str = "trestle-tenant";
+pub use trestle_core::invocation::TENANT_HEADER;
 /// Most items a list returns.
 pub const MAX_LIMIT: i64 = 100;
 
@@ -911,13 +911,13 @@ where
         self.output
     }
 
-    fn context_from<'a>(
+    fn resolve_context<'a>(
         &'a self,
-        parts: &'a mut Parts,
+        invocation: &'a Invocation,
         state: &'a S,
     ) -> BoxFuture<'a, Result<DynContext, Problem>> {
         Box::pin(async move {
-            let Authenticated(actor) = Authenticated::from_request_parts(parts, state).await?;
+            let actor = invocation.actor()?;
             if self.resolved.intent.tenancy.is_none() {
                 return Ok(Arc::new(IntentContext {
                     actor,
@@ -925,21 +925,12 @@ where
                     role: None,
                 }) as DynContext);
             }
-            let tenant = parts
-                .headers
-                .get(TENANT_HEADER)
-                .ok_or_else(|| {
-                    Problem::malformed(
-                        "tenant_required",
-                        "Select a tenant with the Trestle-Tenant header.",
-                    )
-                })?
-                .to_str()
-                .ok()
-                .and_then(|v| Uuid::parse_str(v.trim()).ok())
-                .ok_or_else(|| {
-                    Problem::malformed("tenant_invalid", "Trestle-Tenant must be a tenant ID.")
-                })?;
+            let tenant = invocation.tenant().ok_or_else(|| {
+                Problem::malformed(
+                    "tenant_required",
+                    "Select a tenant with the Trestle-Tenant header.",
+                )
+            })?;
             let pool = PgPool::from_ref(state);
             let mut conn = pool.acquire().await?;
             // Unknown tenants and tenants without membership look the same.

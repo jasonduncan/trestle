@@ -26,7 +26,7 @@ use std::fmt;
 use std::sync::{Arc, OnceLock};
 
 use axum::Router;
-use axum::extract::{FromRef, FromRequestParts};
+use axum::extract::FromRef;
 use axum::routing::MethodRouter;
 use http::Method;
 use serde_json::Value;
@@ -41,8 +41,11 @@ use trestle_protocol::{
 
 use crate::Problem;
 use crate::health::{self, LIVE_PATH, READY_PATH};
+use crate::identity::Identity;
+use crate::invocation::{FromInvocation, Invocation};
 use crate::operation::{
-    ContextDescriptor, DynOperation, Operation, OperationInfo, Policy, RequestContext,
+    BoxFuture, ContextDescriptor, DynOperation, Operation, OperationInfo, Policy, RequestContext,
+    invoke, invoke_dyn,
 };
 
 /// A cohesive feature: lessons, schools, billing. Dyn-compatible so a
@@ -148,9 +151,29 @@ impl<S> AppBuilder<S> {
         self
     }
 
-    /// Registers an operation. It is invocable and inspectable; it has no
-    /// HTTP route unless [`OperationRegistration::http`] is called.
-    pub fn operation<O: Operation>(&mut self, op: O) -> OperationRegistration<'_, S, O> {
+    /// Registers an operation. It is invocable ([`Registry::invoke`]) and
+    /// inspectable; it has no HTTP route unless [`OperationRegistration::http`]
+    /// is called.
+    pub fn operation<O: Operation>(&mut self, op: O) -> OperationRegistration<'_, S, O>
+    where
+        S: Send + Sync + 'static,
+        O::Context: FromInvocation<S>,
+        PgPool: FromRef<S>,
+    {
+        let op = Arc::new(op);
+        let invoker = {
+            let op = op.clone();
+            erase_invoker(move |state: &S, invocation, input| {
+                let op = op.clone();
+                Box::pin(async move {
+                    let output = invoke(state, &*op, invocation, input).await?;
+                    serde_json::to_value(output).map_err(|err| {
+                        tracing::error!(operation = O::INFO.id, error = %err, "output does not serialize");
+                        Problem::internal()
+                    })
+                })
+            })
+        };
         let entry = RegisteredOperation {
             app: self.app,
             info: O::INFO,
@@ -163,12 +186,13 @@ impl<S> AppBuilder<S> {
             availability: None,
             accepted_revisions: Arc::new(OnceLock::new()),
             conformance: conformance::<O>(),
+            invoker,
         };
         self.operations.push(entry);
         let index = self.operations.len() - 1;
         OperationRegistration {
             builder: self,
-            op: Arc::new(op),
+            op,
             index,
         }
     }
@@ -179,9 +203,16 @@ impl<S> AppBuilder<S> {
     where
         S: Clone + Send + Sync + 'static,
         PgPool: FromRef<S>,
+        Identity: FromRef<S>,
     {
         let context = op.context();
         let input = op.input();
+        let invoker = {
+            let op = op.clone();
+            erase_invoker(move |state: &S, invocation, input| {
+                Box::pin(invoke_dyn(state, op.clone(), invocation, input))
+            })
+        };
         let mut entry = RegisteredOperation {
             app: self.app,
             info: op.info(),
@@ -194,6 +225,7 @@ impl<S> AppBuilder<S> {
             availability: None,
             accepted_revisions: Arc::new(OnceLock::new()),
             conformance: Vec::new(),
+            invoker,
         };
         if let Some(http) = http {
             let binding = http.binding(&entry.context, input);
@@ -291,8 +323,9 @@ impl<S, O> OperationRegistration<'_, S, O>
 where
     S: Clone + Send + Sync + 'static,
     O: Operation,
-    O::Context: FromRequestParts<S, Rejection = Problem>,
+    O::Context: FromInvocation<S>,
     PgPool: FromRef<S>,
+    Identity: FromRef<S>,
 {
     /// Exposes the operation through a managed route.
     pub fn http(self, http: Http) {
@@ -342,6 +375,25 @@ pub struct RegisteredOperation<S> {
     /// `Trestle-Interaction-Revision`. Filled once at assembly.
     accepted_revisions: Arc<OnceLock<Vec<String>>>,
     conformance: Vec<String>,
+    invoker: InvokeFn<S>,
+}
+
+/// Resolves the context and runs the executor for one registered operation,
+/// with JSON in and out.
+type InvokeFn<S> = Arc<
+    dyn for<'a> Fn(&'a S, &'a Invocation, &'a Value) -> BoxFuture<'a, Result<Value, Problem>>
+        + Send
+        + Sync,
+>;
+
+fn erase_invoker<S, F>(f: F) -> InvokeFn<S>
+where
+    F: for<'a> Fn(&'a S, &'a Invocation, &'a Value) -> BoxFuture<'a, Result<Value, Problem>>
+        + Send
+        + Sync
+        + 'static,
+{
+    Arc::new(f)
 }
 
 impl<S> RegisteredOperation<S> {
@@ -1152,6 +1204,21 @@ impl<S> Registry<S> {
 
     pub fn operation(&self, id: &str) -> Option<&RegisteredOperation<S>> {
         self.operations.iter().find(|op| op.info.id == id)
+    }
+
+    /// Runs the operation registered as `id` for a caller that is not an
+    /// HTTP request (ADR-013): its context is resolved from `invocation`,
+    /// then the input is validated and the executor runs, exactly as a
+    /// managed route would. Not charged to admission. An unknown `id` is 404.
+    pub async fn invoke(
+        &self,
+        state: &S,
+        id: &str,
+        invocation: &Invocation,
+        input: &Value,
+    ) -> Result<Value, Problem> {
+        let op = self.operation(id).ok_or_else(Problem::not_found)?;
+        (op.invoker)(state, invocation, input).await
     }
 
     pub fn forms(&self) -> &[PublishedForm] {

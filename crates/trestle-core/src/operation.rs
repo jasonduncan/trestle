@@ -21,7 +21,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use http::request::Parts;
+use axum::extract::FromRef;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -30,6 +30,7 @@ use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 use trestle_protocol::{Audience, Contract, ContractDoc};
 
 use crate::input::decode;
+use crate::invocation::{FromInvocation, Invocation};
 use crate::{Problem, db};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,8 +82,9 @@ pub trait Policy<C>: Send + Sync + 'static {
     ) -> impl Future<Output = Result<(), Problem>> + Send;
 }
 
-/// What a request context needs from the transport, for exports and
-/// inspection. Extraction itself is the context's `FromRequestParts` impl.
+/// What a context needs from the transport. Exports and inspection publish
+/// it, and HTTP reads exactly this much into an [`Invocation`] (ADR-013).
+/// The context itself is built by its [`FromInvocation`] impl.
 pub trait RequestContext: Send + Sync + 'static {
     fn describe() -> ContextDescriptor;
 }
@@ -389,6 +391,38 @@ pub async fn execute_validated<O: Operation>(
     result
 }
 
+/// Runs `op` for a caller that is not an HTTP request (a job, an operator
+/// command, a test): resolves its context from `invocation`, then validates
+/// and executes exactly as a managed route does (ADR-013).
+pub async fn invoke<S, O>(
+    state: &S,
+    op: &O,
+    invocation: &Invocation,
+    input: &Value,
+) -> Result<O::Output, Problem>
+where
+    O: Operation,
+    O::Context: FromInvocation<S>,
+    PgPool: FromRef<S>,
+{
+    let ctx = O::Context::resolve(invocation, state).await?;
+    execute_json(&PgPool::from_ref(state), op, &ctx, input).await
+}
+
+/// [`invoke`] for a [`DynOperation`].
+pub async fn invoke_dyn<S: 'static>(
+    state: &S,
+    op: Arc<dyn DynOperation<S>>,
+    invocation: &Invocation,
+    input: &Value,
+) -> Result<Value, Problem>
+where
+    PgPool: FromRef<S>,
+{
+    let ctx = op.resolve_context(invocation, state).await?;
+    execute_dyn(&PgPool::from_ref(state), op, ctx, input).await
+}
+
 /// A boxed, sendable future.
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -425,10 +459,11 @@ pub trait DynOperation<S>: Send + Sync + 'static {
     fn input(&self) -> &'static ContractDoc;
     fn output(&self) -> &'static ContractDoc;
 
-    /// Identity and tenant from the request, before anything else is read.
-    fn context_from<'a>(
+    /// The context for this caller, from what its transport established
+    /// (ADR-013): the same lookup for HTTP, jobs, commands and tests.
+    fn resolve_context<'a>(
         &'a self,
-        parts: &'a mut Parts,
+        invocation: &'a Invocation,
         state: &'a S,
     ) -> BoxFuture<'a, Result<DynContext, Problem>>;
 

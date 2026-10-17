@@ -1,14 +1,16 @@
 //! `GET /api/v1/lessons/export.csv`: an ordinary Axum handler (§7.3, I13).
 //!
 //! Mounted as an unmanaged route with a named waiver, so it has no contract
-//! or OpenAPI entry of its own. It gets identity and tenant from the same
-//! extractor as managed routes, and every row comes from `lessons.list`
-//! through the executor, so scoping and policy are the operation's.
+//! or OpenAPI entry of its own. It resolves its context the same way as
+//! managed routes (`Resolved`, ADR-013), and every row comes from
+//! `lessons.list` through the executor, so scoping and policy are the
+//! operation's.
 
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 use http::header;
 use trestle_core::Problem;
+use trestle_core::invocation::Resolved;
 use trestle_core::operation::execute;
 
 use super::contracts::ListLessonsInput;
@@ -21,7 +23,7 @@ const MAX_PAGES: usize = 50;
 
 pub(crate) async fn csv(
     State(state): State<AppState>,
-    ctx: TenantContext,
+    Resolved(ctx): Resolved<TenantContext>,
 ) -> Result<Response, Problem> {
     let mut out = String::from("id,title,grade_level,status,version,subtitle\n");
     let mut cursor = None;

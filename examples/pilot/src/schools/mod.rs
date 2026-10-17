@@ -9,11 +9,9 @@ pub mod repository;
 
 use std::fmt;
 
-use axum::extract::FromRequestParts;
-use http::HeaderName;
-use http::request::Parts;
 use trestle_core::Problem;
-use trestle_core::identity::{ActorId, Authenticated};
+use trestle_core::identity::ActorId;
+use trestle_core::invocation::{FromInvocation, Invocation};
 use trestle_core::operation::{ContextDescriptor, RequestContext};
 use trestle_core::registry::{App, AppBuilder, Http};
 use trestle_historical::schema::{Column, Model};
@@ -60,8 +58,6 @@ pub fn membership_model() -> Model {
         .field(Column::timestamptz("created_at").default_now())
         .index("school_memberships_actor_idx", &["actor_id"])
 }
-
-pub const TENANT_HEADER: HeaderName = HeaderName::from_static("trestle-tenant");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SchoolId(pub Uuid);
@@ -165,25 +161,15 @@ impl RequestContext for TenantContext {
     }
 }
 
-impl FromRequestParts<AppState> for TenantContext {
-    type Rejection = Problem;
-
-    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Problem> {
-        let Authenticated(actor) = Authenticated::from_request_parts(parts, state).await?;
-        let selected = parts.headers.get(TENANT_HEADER).ok_or_else(|| {
+impl FromInvocation<AppState> for TenantContext {
+    async fn resolve(invocation: &Invocation, state: &AppState) -> Result<Self, Problem> {
+        let actor = invocation.actor()?;
+        let school = invocation.tenant().map(SchoolId).ok_or_else(|| {
             Problem::malformed(
                 "tenant_required",
                 "Select a school with the Trestle-Tenant header.",
             )
         })?;
-        let school = selected
-            .to_str()
-            .ok()
-            .and_then(|value| Uuid::parse_str(value.trim()).ok())
-            .map(SchoolId)
-            .ok_or_else(|| {
-                Problem::malformed("tenant_invalid", "Trestle-Tenant must be a school ID.")
-            })?;
         let mut conn = state.pool.acquire().await?;
         // Unknown schools and schools without membership look the same.
         let role = repository::membership_role(&mut conn, school, actor)

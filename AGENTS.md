@@ -68,8 +68,13 @@ maturity or benchmark leadership. ADRs: 001–012 (009 records jobs/outbox as de
   `.action(..)`s. Update/delete return the retrieve representation (If-Match checks it).
   Admin metadata grants nothing: every admin button calls the same operation, which authorizes.
 - `frontend/product/src/generated/api.ts` is generated (`make snapshots`); never edit it.
-- Every caller goes through the executor (`execute`, `execute_json`, managed routes). Never call
-  `Operation::run` directly; that skips the contract, policy and transaction.
+- Every caller goes through the executor (`execute`, `execute_json`, managed routes, `invoke`,
+  `Registry::invoke`). Never call `Operation::run` directly; that skips the contract, policy and
+  transaction.
+- Contexts implement `FromInvocation` and never read the request (ADR-013). What HTTP reads is
+  what `describe()` declares, so a context that needs a header must declare it there.
+  `Invocation::for_actor` is for trusted callers (jobs, commands, tests); never build one from
+  request data. Hand-written handlers extract `Resolved<C>`.
 - The executor checks every result against its output contract before a write commits (ADR-012).
   A refusal is a 500 that rolls back: fix the contract or the representation, never loosen the
   check. Its log carries field pointers and codes only, never values.
