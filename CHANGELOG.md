@@ -14,6 +14,20 @@ promise.
 
 ## [Unreleased]
 
+### Changed
+- The executor checks every operation's result against its output contract
+  before a write commits, and before a read returns, for typed operations
+  (`execute`, `execute_json`, `execute_validated`, managed routes) and
+  `DynOperation`s (`execute_dyn`) alike. A result that does not satisfy the
+  contract (a missing or undeclared field, a wrong type, an out-of-range
+  value) is a 500 `internal_error`; a write rolls back. The log names the
+  operation, contract, and failing field pointers and codes, never values.
+  `execute_dyn` now returns the normalized output. See ADR-012.
+
+### Added
+- `trestle_operation_output_invalid_total{operation}`: results refused
+  because they do not satisfy the output contract.
+
 ## [0.2.1] - 2026-10-16
 
 ### Changed

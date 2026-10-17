@@ -412,6 +412,25 @@ async fn main() -> Result<(), String> {
                 rounds,
             )
             .await?;
+            // A target that rejects requests is not slow or fast, it is
+            // broken: never publish percentiles of the few that got through.
+            let failed: Vec<String> = runs
+                .iter()
+                .filter(|r| r.errors > 0)
+                .map(|r| {
+                    format!(
+                        "{} {:?} c={} r{}: {} failed requests",
+                        r.target, r.scenario, r.concurrency, r.round, r.errors
+                    )
+                })
+                .collect();
+            if !failed.is_empty() {
+                return Err(format!(
+                    "{} run(s) had failed requests; no report written:\n  {}",
+                    failed.len(),
+                    failed.join("\n  ")
+                ));
+            }
             let report = json!({
                 "summary": summarize(&runs),
                 "runs": runs,

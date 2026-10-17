@@ -7,12 +7,14 @@
 //! ```text
 //! decode + portable validation (contract)
 //!   -> operation-level authorization (Policy::admit)
-//!   -> Write: begin transaction -> Policy::recheck -> run -> commit (classified)
-//!      Read:  acquire connection -> run
+//!   -> Write: begin transaction -> Policy::recheck -> run -> check output -> commit (classified)
+//!      Read:  acquire connection -> run -> check output
 //! ```
 //!
 //! The executor owns the transaction. Operations receive an explicit
-//! connection and never touch the pool.
+//! connection and never touch the pool. An output that does not satisfy its
+//! contract is a server fault (500): a write rolls back instead of committing
+//! (ADR-012).
 
 use std::any::Any;
 use std::future::Future;
@@ -294,7 +296,48 @@ pub fn validate<T: Contract + DeserializeOwned>(input: &Value) -> Result<Validat
     decode(input).map(Validated)
 }
 
-/// Everything after decoding: authorization, transaction, run, commit.
+/// Checks an operation's result against its output contract and returns the
+/// normalized instance. A mismatch is the operation's bug, not the caller's:
+/// it is logged with field pointers and codes (never values) and becomes a
+/// plain 500.
+fn check_output(
+    info: &OperationInfo,
+    contract: &ContractDoc,
+    output: &Value,
+) -> Result<Value, Problem> {
+    contract.validate(output).map_err(|rejection| {
+        let errors: Vec<String> = match rejection.errors() {
+            [] => vec!["(not an object)".to_owned()],
+            errors => errors
+                .iter()
+                .map(|e| format!("{} {}", e.pointer, e.code))
+                .collect(),
+        };
+        tracing::error!(
+            operation = info.id,
+            contract = %contract.id,
+            errors = ?errors,
+            "output does not satisfy its contract"
+        );
+        crate::metrics::increment(
+            "trestle_operation_output_invalid_total",
+            "Operation results refused because they do not satisfy the output contract.",
+            &[("operation", info.id)],
+        );
+        Problem::internal()
+    })
+}
+
+fn check_typed_output<O: Operation>(output: &O::Output) -> Result<(), Problem> {
+    let value = serde_json::to_value(output).map_err(|err| {
+        tracing::error!(operation = O::INFO.id, error = %err, "output does not serialize");
+        Problem::internal()
+    })?;
+    check_output(&O::INFO, O::Output::contract(), &value).map(drop)
+}
+
+/// Everything after decoding: authorization, transaction, run, output
+/// check, commit.
 pub async fn execute_validated<O: Operation>(
     pool: &PgPool,
     op: &O,
@@ -303,14 +346,16 @@ pub async fn execute_validated<O: Operation>(
 ) -> Result<O::Output, Problem> {
     let info = O::INFO;
     let started = std::time::Instant::now();
-    let result = async {
+    let result: Result<O::Output, Problem> = async {
         op.policy().admit(ctx)?;
         match info.mode {
             Mode::Read => {
                 let waiting = std::time::Instant::now();
                 let mut conn = pool.acquire().await?;
                 observe_pool_wait(waiting);
-                op.run(&mut conn, ctx, input).await
+                let output = op.run(&mut conn, ctx, input).await?;
+                check_typed_output::<O>(&output)?;
+                Ok(output)
             }
             Mode::Write => {
                 let waiting = std::time::Instant::now();
@@ -318,6 +363,8 @@ pub async fn execute_validated<O: Operation>(
                 observe_pool_wait(waiting);
                 op.policy().recheck(&mut tx, ctx).await?;
                 let output = op.run(&mut tx, ctx, input).await?;
+                // Returning early drops `tx`, which rolls it back.
+                check_typed_output::<O>(&output)?;
                 db::commit(tx).await?;
                 Ok(output)
             }
@@ -406,7 +453,8 @@ pub trait DynOperation<S>: Send + Sync + 'static {
 
 /// The executor for [`DynOperation`]s: validate against the input contract,
 /// admit, then read on a connection or write in a transaction (recheck, run,
-/// commit). The same sequence and metrics as [`execute_validated`].
+/// output check, commit). The same sequence and metrics as
+/// [`execute_validated`]; the returned value is the normalized output.
 pub async fn execute_dyn<S: 'static>(
     pool: &PgPool,
     op: Arc<dyn DynOperation<S>>,
@@ -424,7 +472,7 @@ pub async fn execute_dyn<S: 'static>(
                 let conn = pool.acquire().await?;
                 observe_pool_wait(waiting);
                 let (_, result) = op.clone().run(DynConn::Read(conn), ctx, input).await;
-                result
+                check_output(&info, op.output(), &result?)
             }
             Mode::Write => {
                 let waiting = std::time::Instant::now();
@@ -434,13 +482,17 @@ pub async fn execute_dyn<S: 'static>(
                 let (conn, result) = op.clone().run(DynConn::Write(tx), ctx, input).await;
                 let output = result?;
                 match conn {
-                    DynConn::Write(tx) => db::commit(tx).await?,
+                    DynConn::Write(tx) => {
+                        // Returning early drops `tx`, which rolls it back.
+                        let output = check_output(&info, op.output(), &output)?;
+                        db::commit(tx).await?;
+                        Ok(output)
+                    }
                     DynConn::Read(_) => {
                         tracing::error!(operation = info.id, "write ran without its transaction");
-                        return Err(Problem::internal());
+                        Err(Problem::internal())
                     }
                 }
-                Ok(output)
             }
         }
     }
