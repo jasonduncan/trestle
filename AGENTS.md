@@ -29,7 +29,7 @@ and is not self-granted. Open items before a pilot:
 choose how people sign in (password accounts are built; an OIDC provider is optional and only
 mock-tested), send through the real SMTP relay, get external security review (§12.4), and
 validate the edge config (`deploy/Caddyfile`) on a real host. Do not claim general
-maturity or benchmark leadership. ADRs: 001–011 (009 records jobs/outbox as deferred).
+maturity or benchmark leadership. ADRs: 001–012 (009 records jobs/outbox as deferred).
 
 ## Non-negotiables
 - Installing a model publishes nothing (I01). Endpoints, forms and writable fields are explicit.
@@ -70,6 +70,9 @@ maturity or benchmark leadership. ADRs: 001–011 (009 records jobs/outbox as de
 - `frontend/product/src/generated/api.ts` is generated (`make snapshots`); never edit it.
 - Every caller goes through the executor (`execute`, `execute_json`, managed routes). Never call
   `Operation::run` directly; that skips the contract, policy and transaction.
+- The executor checks every result against its output contract before a write commits (ADR-012).
+  A refusal is a 500 that rolls back: fix the contract or the representation, never loosen the
+  check. Its log carries field pointers and codes only, never values.
 - A `ContractDoc` is the only definition of a wire contract. Never hand-write JSON Schema or
   OpenAPI; serde types bound to contracts use `deny_unknown_fields` and only map validated input.
 - Published documents (`examples/pilot/published/`) change only through `make snapshots` plus a

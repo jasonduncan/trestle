@@ -30,3 +30,6 @@ tracing.workspace = true
 trestle-historical.workspace = true
 trestle-protocol.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+trestle-historical = { workspace = true, features = ["testing"] }

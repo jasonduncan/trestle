@@ -1,0 +1,651 @@
+{
+  "measurement": "M5 load comparison: pilot on Trestle vs hand-written Axum baseline (matched work)",
+  "date": "2026-10-17T18:03:47Z",
+  "commit": "968f43bb8a842180bf889b421c4e2794001a7258",
+  "machine": {
+    "cores": "10",
+    "os": "Darwin",
+    "postgres": "postgres (PostgreSQL) 16.15 (Homebrew)",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)"
+  },
+  "method": {
+    "builds": "cargo --release, same workspace lockfile",
+    "database": "one local PostgreSQL 16 database, 2,000 seeded lessons in the tenant under test, shared by both servers",
+    "pool_size_each": 10,
+    "load": "closed loop; a 10s prewarm of every scenario on both targets, then 15s per run after a 3s warm-up, 3 rounds alternating which target runs first; one bearer token and tenant (alice at Northside)",
+    "scenarios": {
+      "get": "GET /api/v1/lessons/{id}: token digest lookup, membership query, scoped read (2 pool acquisitions, 2 queries)",
+      "list": "GET /api/v1/lessons: membership query, first page of 20 ordered by title with a signed cursor",
+      "create": "POST /api/v1/lessons: membership query, JSON validation, transaction with role recheck FOR SHARE, insert, audit row"
+    },
+    "trestle": "pilot serve as deployed: registry routing, contract validation, executor, perimeter (admission semaphore, per-credential token bucket with limits raised so it never rejects, Prometheus counters and histograms, security headers, request IDs and tracing spans at RUST_LOG=warn)",
+    "baseline": "examples/loadtest/src/baseline.rs: the same SQL text and order, token digests, validation rules, cursor signing, ETag/Location; no perimeter, metrics or tracing",
+    "caveats": [
+      "The load generator, both servers and PostgreSQL share one laptop; absolute numbers are not capacity figures.",
+      "Database-bound routes measure the database as much as the framework; the difference between targets is the signal, not the totals.",
+      "Trestle's figures include perimeter features the baseline lacks; that is the cost of the framework as deployed.",
+      "3 rounds per cell; medians are reported. Variance between rounds is visible in runs[]."
+    ]
+  },
+  "target": "provisional: no more than 20% p95 overhead versus the matched Axum baseline (design doc \u00a719.3), a goal, not a guarantee",
+  "runs": [
+    {
+      "concurrency": 8,
+      "errors": 0,
+      "max_ms": 5.799,
+      "p50_ms": 0.582,
+      "p95_ms": 0.706,
+      "p99_ms": 0.77,
+      "requests": 204834,
+      "round": 1,
+      "scenario": "get",
+      "seconds": 15.000523208,
+      "target": "trestle",
+      "throughput_rps": 13655.12370200254
+    },
+    {
+      "concurrency": 8,
+      "errors": 0,
+      "max_ms": 4.748,
+      "p50_ms": 0.572,
+      "p95_ms": 0.7,
+      "p99_ms": 0.779,
+      "requests": 207667,
+      "round": 1,
+      "scenario": "get",
+      "seconds": 15.000486709,
+      "target": "baseline",
+      "throughput_rps": 13844.017466140205
+    },
+    {
+      "concurrency": 32,
+      "errors": 0,
+      "max_ms": 10.032,
+      "p50_ms": 2.352,
+      "p95_ms": 2.659,
+      "p99_ms": 2.856,
+      "requests": 201928,
+      "round": 1,
+      "scenario": "get",
+      "seconds": 15.001919,
+      "target": "trestle",
+      "throughput_rps": 13460.144665492462
+    },
+    {
+      "concurrency": 32,
+      "errors": 0,
+      "max_ms": 22.909,
+      "p50_ms": 2.296,
+      "p95_ms": 2.644,
+      "p99_ms": 3.002,
+      "requests": 205799,
+      "round": 1,
+      "scenario": "get",
+      "seconds": 15.001648875,
+      "target": "baseline",
+      "throughput_rps": 13718.425335428336
+    },
+    {
+      "concurrency": 8,
+      "errors": 0,
+      "max_ms": 15.681,
+      "p50_ms": 0.68,
+      "p95_ms": 0.856,
+      "p99_ms": 1.031,
+      "requests": 172392,
+      "round": 1,
+      "scenario": "list",
+      "seconds": 15.000364834,
+      "target": "trestle",
+      "throughput_rps": 11492.520475852314
+    },
+    {
+      "concurrency": 8,
+      "errors": 0,
+      "max_ms": 6.516,
+      "p50_ms": 0.632,
+      "p95_ms": 0.771,
+      "p99_ms": 0.854,
+      "requests": 187411,
+      "round": 1,
+      "scenario": "list",
+      "seconds": 15.000627541,
+      "target": "baseline",
+      "throughput_rps": 12493.543985927568
+    },
+    {
+      "concurrency": 32,
+      "errors": 0,
+      "max_ms": 21.243,
+      "p50_ms": 2.667,
+      "p95_ms": 2.976,
+      "p99_ms": 3.412,
+      "requests": 178237,
+      "round": 1,
+      "scenario": "list",
+      "seconds": 15.001947375,
+      "target": "trestle",
+      "throughput_rps": 11880.924225679068
+    },
+    {
+      "concurrency": 32,
+      "errors": 0,
+      "max_ms": 12.534,
+      "p50_ms": 2.507,
+      "p95_ms": 2.744,
+      "p99_ms": 2.921,
+      "requests": 190013,
+      "round": 1,
+      "scenario": "list",
+      "seconds": 15.002291125,
+      "target": "baseline",
+      "throughput_rps": 12665.598768668076
+    },
+    {
+      "concurrency": 8,
+      "errors": 0,
+      "max_ms": 8.358,
+      "p50_ms": 1.059,
+      "p95_ms": 1.298,
+      "p99_ms": 1.808,
+      "requests": 110898,
+      "round": 1,
+      "scenario": "create",
+      "seconds": 15.001024625,
+      "target": "trestle",
+      "throughput_rps": 7392.695017324525
+    },
+    {
+      "concurrency": 8,
+      "errors": 0,
+      "max_ms": 90.665,
+      "p50_ms": 1.039,
+      "p95_ms": 1.281,
+      "p99_ms": 1.89,
+      "requests": 112242,
+      "round": 1,
+      "scenario": "create",
+      "seconds": 15.001021708,
+      "target": "baseline",
+      "throughput_rps": 7482.290352272584
+    },
+    {
+      "concurrency": 32,
+      "errors": 0,
+      "max_ms": 16.411,
+      "p50_ms": 4.317,
+      "p95_ms": 5.013,
+      "p99_ms": 6.104,
+      "requests": 109082,
+      "round": 1,
+      "scenario": "create",
+      "seconds": 15.003915625,
+      "target": "trestle",
+      "throughput_rps": 7270.235498941631
+    },
+    {
+      "concurrency": 32,
+      "errors": 0,
+      "max_ms": 19.869,
+      "p50_ms": 4.256,
+      "p95_ms": 4.898,
+      "p99_ms": 5.664,
+      "requests": 111205,
+      "round": 1,
+      "scenario": "create",
+      "seconds": 15.003560708,
+      "target": "baseline",
+      "throughput_rps": 7411.907224176774
+    },
+    {
+      "concurrency": 8,
+      "errors": 0,
+      "max_ms": 6.034,
+      "p50_ms": 0.6,
+      "p95_ms": 0.725,
+      "p99_ms": 0.795,
+      "requests": 198685,
+      "round": 2,
+      "scenario": "get",
+      "seconds": 15.0005345,
+      "target": "baseline",
+      "throughput_rps": 13245.194696228991
+    },
+    {
+      "concurrency": 8,
+      "errors": 0,
+      "max_ms": 7.663,
+      "p50_ms": 0.615,
+      "p95_ms": 0.747,
+      "p99_ms": 0.817,
+      "requests": 193348,
+      "round": 2,
+      "scenario": "get",
+      "seconds": 15.000436041,
+      "target": "trestle",
+      "throughput_rps": 12889.491976868594
+    },
+    {
+      "concurrency": 32,
+      "errors": 0,
+      "max_ms": 8.491,
+      "p50_ms": 2.325,
+      "p95_ms": 2.55,
+      "p99_ms": 2.693,
+      "requests": 205308,
+      "round": 2,
+      "scenario": "get",
+      "seconds": 15.001515334,
+      "target": "baseline",
+      "throughput_rps": 13685.817427702266
+    },
+    {
+      "concurrency": 32,
+      "errors": 0,
+      "max_ms": 13.682,
+      "p50_ms": 2.349,
+      "p95_ms": 2.596,
+      "p99_ms": 3.05,
+      "requests": 202037,
+      "round": 2,
+      "scenario": "get",
+      "seconds": 15.001606583,
+      "target": "trestle",
+      "throughput_rps": 13467.690869120028
+    },
+    {
+      "concurrency": 8,
+      "errors": 0,
+      "max_ms": 6.677,
+      "p50_ms": 0.63,
+      "p95_ms": 0.765,
+      "p99_ms": 0.836,
+      "requests": 188391,
+      "round": 2,
+      "scenario": "list",
+      "seconds": 15.0005195,
+      "target": "baseline",
+      "throughput_rps": 12558.965041177407
+    },
+    {
+      "concurrency": 8,
+      "errors": 0,
+      "max_ms": 3.717,
+      "p50_ms": 0.663,
+      "p95_ms": 0.821,
+      "p99_ms": 0.909,
+      "requests": 178608,
+      "round": 2,
+      "scenario": "list",
+      "seconds": 15.003631083,
+      "target": "trestle",
+      "throughput_rps": 11904.318295480713
+    },
+    {
+      "concurrency": 32,
+      "errors": 0,
+      "max_ms": 8.328,
+      "p50_ms": 2.492,
+      "p95_ms": 2.704,
+      "p99_ms": 2.855,
+      "requests": 191880,
+      "round": 2,
+      "scenario": "list",
+      "seconds": 15.001902666,
+      "target": "baseline",
+      "throughput_rps": 12790.377612226004
+    },
+    {
+      "concurrency": 32,
+      "errors": 0,
+      "max_ms": 11.258,
+      "p50_ms": 2.606,
+      "p95_ms": 2.92,
+      "p99_ms": 3.196,
+      "requests": 182385,
+      "round": 2,
+      "scenario": "list",
+      "seconds": 15.002360084,
+      "target": "trestle",
+      "throughput_rps": 12157.087216864858
+    },
+    {
+      "concurrency": 8,
+      "errors": 0,
+      "max_ms": 19.382,
+      "p50_ms": 1.027,
+      "p95_ms": 1.271,
+      "p99_ms": 1.87,
+      "requests": 113938,
+      "round": 2,
+      "scenario": "create",
+      "seconds": 15.00068625,
+      "target": "baseline",
+      "throughput_rps": 7595.519171664563
+    },
+    {
+      "concurrency": 8,
+      "errors": 0,
+      "max_ms": 7.568,
+      "p50_ms": 1.06,
+      "p95_ms": 1.311,
+      "p99_ms": 1.872,
+      "requests": 110518,
+      "round": 2,
+      "scenario": "create",
+      "seconds": 15.000931916,
+      "target": "trestle",
+      "throughput_rps": 7367.408946248296
+    },
+    {
+      "concurrency": 32,
+      "errors": 0,
+      "max_ms": 29.713,
+      "p50_ms": 4.126,
+      "p95_ms": 4.772,
+      "p99_ms": 5.572,
+      "requests": 114373,
+      "round": 2,
+      "scenario": "create",
+      "seconds": 15.003037084,
+      "target": "baseline",
+      "throughput_rps": 7623.323155147911
+    },
+    {
+      "concurrency": 32,
+      "errors": 0,
+      "max_ms": 16.671,
+      "p50_ms": 4.29,
+      "p95_ms": 5.013,
+      "p99_ms": 6.007,
+      "requests": 109951,
+      "round": 2,
+      "scenario": "create",
+      "seconds": 15.003589,
+      "target": "trestle",
+      "throughput_rps": 7328.313245584107
+    },
+    {
+      "concurrency": 8,
+      "errors": 0,
+      "max_ms": 5.826,
+      "p50_ms": 0.596,
+      "p95_ms": 0.729,
+      "p99_ms": 0.826,
+      "requests": 198815,
+      "round": 3,
+      "scenario": "get",
+      "seconds": 15.000429708,
+      "target": "trestle",
+      "throughput_rps": 13253.953644672483
+    },
+    {
+      "concurrency": 8,
+      "errors": 0,
+      "max_ms": 5.642,
+      "p50_ms": 0.573,
+      "p95_ms": 0.692,
+      "p99_ms": 0.75,
+      "requests": 208306,
+      "round": 3,
+      "scenario": "get",
+      "seconds": 15.00045275,
+      "target": "baseline",
+      "throughput_rps": 13886.647521355648
+    },
+    {
+      "concurrency": 32,
+      "errors": 0,
+      "max_ms": 9.314,
+      "p50_ms": 2.394,
+      "p95_ms": 2.641,
+      "p99_ms": 2.807,
+      "requests": 199170,
+      "round": 3,
+      "scenario": "get",
+      "seconds": 15.0015505,
+      "target": "trestle",
+      "throughput_rps": 13276.627639256356
+    },
+    {
+      "concurrency": 32,
+      "errors": 0,
+      "max_ms": 3.306,
+      "p50_ms": 2.263,
+      "p95_ms": 2.444,
+      "p99_ms": 2.519,
+      "requests": 212033,
+      "round": 3,
+      "scenario": "get",
+      "seconds": 15.001594334,
+      "target": "baseline",
+      "throughput_rps": 14134.031042250152
+    },
+    {
+      "concurrency": 8,
+      "errors": 0,
+      "max_ms": 6.494,
+      "p50_ms": 0.687,
+      "p95_ms": 0.85,
+      "p99_ms": 0.955,
+      "requests": 171855,
+      "round": 3,
+      "scenario": "list",
+      "seconds": 15.000643458,
+      "target": "trestle",
+      "throughput_rps": 11456.50854786152
+    },
+    {
+      "concurrency": 8,
+      "errors": 0,
+      "max_ms": 8.752,
+      "p50_ms": 0.656,
+      "p95_ms": 0.797,
+      "p99_ms": 0.9,
+      "requests": 180274,
+      "round": 3,
+      "scenario": "list",
+      "seconds": 15.000651667,
+      "target": "baseline",
+      "throughput_rps": 12017.744562163627
+    },
+    {
+      "concurrency": 32,
+      "errors": 0,
+      "max_ms": 20.371,
+      "p50_ms": 2.617,
+      "p95_ms": 2.924,
+      "p99_ms": 3.216,
+      "requests": 181051,
+      "round": 3,
+      "scenario": "list",
+      "seconds": 15.001899833,
+      "target": "trestle",
+      "throughput_rps": 12068.538119534584
+    },
+    {
+      "concurrency": 32,
+      "errors": 0,
+      "max_ms": 21.495,
+      "p50_ms": 2.663,
+      "p95_ms": 3.01,
+      "p99_ms": 4.578,
+      "requests": 176542,
+      "round": 3,
+      "scenario": "list",
+      "seconds": 15.001818458,
+      "target": "baseline",
+      "throughput_rps": 11768.040020898645
+    },
+    {
+      "concurrency": 8,
+      "errors": 0,
+      "max_ms": 9.207,
+      "p50_ms": 1.077,
+      "p95_ms": 1.339,
+      "p99_ms": 2.012,
+      "requests": 108311,
+      "round": 3,
+      "scenario": "create",
+      "seconds": 15.00058125,
+      "target": "trestle",
+      "throughput_rps": 7220.453540758629
+    },
+    {
+      "concurrency": 8,
+      "errors": 0,
+      "max_ms": 14.451,
+      "p50_ms": 1.075,
+      "p95_ms": 1.327,
+      "p99_ms": 1.973,
+      "requests": 108621,
+      "round": 3,
+      "scenario": "create",
+      "seconds": 15.000830834,
+      "target": "baseline",
+      "throughput_rps": 7240.998928793067
+    },
+    {
+      "concurrency": 32,
+      "errors": 0,
+      "max_ms": 27.941,
+      "p50_ms": 4.364,
+      "p95_ms": 5.062,
+      "p99_ms": 6.336,
+      "requests": 108088,
+      "round": 3,
+      "scenario": "create",
+      "seconds": 15.003603334,
+      "target": "trestle",
+      "throughput_rps": 7204.136072769891
+    },
+    {
+      "concurrency": 32,
+      "errors": 0,
+      "max_ms": 17.476,
+      "p50_ms": 4.318,
+      "p95_ms": 4.948,
+      "p99_ms": 5.608,
+      "requests": 109663,
+      "round": 3,
+      "scenario": "create",
+      "seconds": 15.002984208,
+      "target": "baseline",
+      "throughput_rps": 7309.412479520221
+    }
+  ],
+  "summary": [
+    {
+      "concurrency": 8,
+      "p50_ms": {
+        "baseline": 1.04,
+        "trestle": 1.06
+      },
+      "p95_ms": {
+        "baseline": 1.28,
+        "trestle": 1.31
+      },
+      "p95_overhead_percent": 2.34,
+      "scenario": "create",
+      "throughput_rps": {
+        "baseline": 7482.0,
+        "trestle": 7367.0
+      },
+      "within_provisional_20_percent_target": true
+    },
+    {
+      "concurrency": 32,
+      "p50_ms": {
+        "baseline": 4.26,
+        "trestle": 4.32
+      },
+      "p95_ms": {
+        "baseline": 4.9,
+        "trestle": 5.01
+      },
+      "p95_overhead_percent": 2.35,
+      "scenario": "create",
+      "throughput_rps": {
+        "baseline": 7412.0,
+        "trestle": 7270.0
+      },
+      "within_provisional_20_percent_target": true
+    },
+    {
+      "concurrency": 8,
+      "p50_ms": {
+        "baseline": 0.57,
+        "trestle": 0.6
+      },
+      "p95_ms": {
+        "baseline": 0.7,
+        "trestle": 0.73
+      },
+      "p95_overhead_percent": 4.14,
+      "scenario": "get",
+      "throughput_rps": {
+        "baseline": 13844.0,
+        "trestle": 13254.0
+      },
+      "within_provisional_20_percent_target": true
+    },
+    {
+      "concurrency": 32,
+      "p50_ms": {
+        "baseline": 2.3,
+        "trestle": 2.35
+      },
+      "p95_ms": {
+        "baseline": 2.55,
+        "trestle": 2.64
+      },
+      "p95_overhead_percent": 3.57,
+      "scenario": "get",
+      "throughput_rps": {
+        "baseline": 13718.0,
+        "trestle": 13460.0
+      },
+      "within_provisional_20_percent_target": true
+    },
+    {
+      "concurrency": 8,
+      "p50_ms": {
+        "baseline": 0.63,
+        "trestle": 0.68
+      },
+      "p95_ms": {
+        "baseline": 0.77,
+        "trestle": 0.85
+      },
+      "p95_overhead_percent": 10.25,
+      "scenario": "list",
+      "throughput_rps": {
+        "baseline": 12494.0,
+        "trestle": 11493.0
+      },
+      "within_provisional_20_percent_target": true
+    },
+    {
+      "concurrency": 32,
+      "p50_ms": {
+        "baseline": 2.51,
+        "trestle": 2.62
+      },
+      "p95_ms": {
+        "baseline": 2.74,
+        "trestle": 2.92
+      },
+      "p95_overhead_percent": 6.56,
+      "scenario": "list",
+      "throughput_rps": {
+        "baseline": 12666.0,
+        "trestle": 12069.0
+      },
+      "within_provisional_20_percent_target": true
+    }
+  ],
+  "code_measured": "968f43b plus the ADR-012 executor change (this branch, uncommitted at measurement time)",
+  "conditions": {
+    "note": "Run back to back on one shared laptop (load average 7-16 during the runs, other applications open). Compare the two files with each other, not with m5-load.json from 2026-09-26."
+  }
+}
