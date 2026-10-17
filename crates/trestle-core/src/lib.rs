@@ -18,6 +18,7 @@ pub mod http;
 pub mod identity;
 pub mod input;
 pub mod invocation;
+pub mod jobs;
 pub mod metrics;
 pub mod operation;
 pub mod pagination;
