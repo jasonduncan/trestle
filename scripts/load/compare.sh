@@ -52,11 +52,14 @@ psql -qd "$DB" -c "INSERT INTO lessons (id, school_id, title, grade_level, creat
          'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
   FROM generate_series(1, 2000) AS g; ANALYZE;"
 
-# Trestle as served: perimeter on (admission, per-credential buckets,
-# metrics, headers, request IDs); limits raised so they never reject.
+# Trestle as served: perimeter on (admission, per-address and per-credential
+# buckets, metrics, headers, request IDs); limits raised so they never
+# reject. Every request is charged to its address before identity (0.2.1),
+# and the load generator is one address.
 (cd "$WORK" && exec env RUST_LOG=warn TRESTLE_ENV=development TRESTLE_BIND="127.0.0.1:$TRESTLE_PORT" \
   TRESTLE_DEV_TOKENS="$DEV_TOKENS" TRESTLE_DB_POOL_SIZE=$POOL_SIZE \
   TRESTLE_MAX_IN_FLIGHT=4096 TRESTLE_RATE_PER_SECOND=1000000 TRESTLE_RATE_BURST=1000000 \
+  TRESTLE_ADDRESS_RATE_PER_SECOND=1000000 TRESTLE_ADDRESS_BURST=1000000 \
   TRESTLE_CURSOR_KEY="load-test cursor key, at least 32 bytes long" \
   "$BIN/pilot" serve) &
 PIDS+=($!)
