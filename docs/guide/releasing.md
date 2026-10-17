@@ -2,7 +2,7 @@
 
 Releases are annotated semver git tags (`vX.Y.Z`) on `main`, published to
 crates.io from the tagged tree. Projects depend on
-`trestle-framework = "0.2"` (or pin a git tag with
+`trestle-framework = "0.3"` (or pin a git tag with
 `trestle = { package = "trestle-framework", git = "…/trestle", tag = "vX.Y.Z" }`).
 
 1. Merge the release's changes to `main`. CI must be green.

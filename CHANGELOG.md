@@ -14,8 +14,10 @@ promise.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-17
+
 ### Changed
-- The executor checks every operation's result against its output contract
+- **Breaking (behavior):** the executor checks every operation's result against its output contract
   before a write commits, and before a read returns, for typed operations
   (`execute`, `execute_json`, `execute_validated`, managed routes) and
   `DynOperation`s (`execute_dyn`) alike. A result that does not satisfy the
@@ -54,6 +56,10 @@ promise.
   from the operation.
 
 ### Fixed
+- `make load` (`scripts/load/compare.sh`) had measured a server that
+  rejected almost every request since 0.2.1: it now raises the per-address
+  admission limit, and `loadtest compare` refuses to report runs with failed
+  requests.
 - The `trestle.toml` runtime no longer leaks memory: every assembly leaked
   about 17 KB for the notes example (operation IDs, contracts, the parsed
   intent), and every `policy_id()` call leaked a string. The intent is now
@@ -193,5 +199,8 @@ The first release.
   `auto`. Anything else needs `--approve <digest>`.
 - `serve` refuses to start on schema drift or a partly applied migration.
 
-[Unreleased]: https://github.com/jasonduncan/trestle/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/jasonduncan/trestle/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/jasonduncan/trestle/compare/v0.2.1...v0.3.0
+[0.2.1]: https://github.com/jasonduncan/trestle/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/jasonduncan/trestle/releases/tag/v0.2.0
 [0.1.0]: https://github.com/jasonduncan/trestle/releases/tag/v0.1.0

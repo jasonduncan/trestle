@@ -31,7 +31,7 @@ crates.io. Its library is named `trestle`, so code uses `use trestle::...`:
 
 ```toml
 [dependencies]
-trestle-framework = "0.2"
+trestle-framework = "0.3"
 ```
 
 To track unreleased changes on `main` instead:
