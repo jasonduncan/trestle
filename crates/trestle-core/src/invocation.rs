@@ -26,6 +26,7 @@ pub const TENANT_HEADER: &str = "trestle-tenant";
 pub struct Invocation {
     actor: Option<ActorId>,
     tenant: Option<Uuid>,
+    idempotency_key: Option<String>,
 }
 
 impl Invocation {
@@ -41,6 +42,7 @@ impl Invocation {
         Self {
             actor: Some(actor),
             tenant: None,
+            idempotency_key: None,
         }
     }
 
@@ -59,6 +61,18 @@ impl Invocation {
     /// The selected tenant, if any.
     pub fn tenant(&self) -> Option<Uuid> {
         self.tenant
+    }
+
+    /// Makes a write repeatable (ADR-016): a repeat with the same key and
+    /// input replays the committed answer. Honored only by operations that
+    /// accept a key, through managed routes and `Registry::invoke`.
+    pub fn with_idempotency_key(mut self, key: impl Into<String>) -> Self {
+        self.idempotency_key = Some(key.into());
+        self
+    }
+
+    pub fn idempotency_key(&self) -> Option<&str> {
+        self.idempotency_key.as_deref()
     }
 
     /// Reads what `descriptor` declares, and nothing else: credentials only
@@ -96,7 +110,11 @@ impl Invocation {
             ),
             _ => None,
         };
-        Ok(Self { actor, tenant })
+        Ok(Self {
+            actor,
+            tenant,
+            idempotency_key: None,
+        })
     }
 }
 

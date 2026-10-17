@@ -103,3 +103,11 @@ impl JobHandler<AppState> for SendInvite {
 - **Shutdown.** The worker stops claiming and lets running jobs finish for
   up to 20 s. Anything still running then is retried once its lease (60 s)
   expires.
+
+## Exactly once for operation jobs
+
+An operation job is at least once by default. If its target operation
+accepts an `Idempotency-Key` (`Http::post(..).idempotency_key()`, ADR-016),
+the worker invokes it with the job's ID as the key. An attempt repeated
+after its write committed then replays instead of writing again. This needs
+`trestle::core::idempotency::IdempotencyApp` installed.

@@ -32,4 +32,5 @@ trestle-protocol.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+tower.workspace = true
 trestle-historical = { workspace = true, features = ["testing"] }

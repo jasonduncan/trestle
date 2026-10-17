@@ -412,21 +412,148 @@ pub async fn execute_validated<O: Operation>(
         }
     }
     .await;
-    let outcome = match &result {
-        Ok(_) => "ok",
-        Err(problem) => problem.code(),
-    };
+    observe_execution(info.id, started, result.as_ref().err());
+    result
+}
+
+fn observe_execution(operation: &str, started: std::time::Instant, problem: Option<&Problem>) {
+    let outcome = problem.map_or("ok", Problem::code);
     crate::metrics::increment(
         "trestle_operation_total",
         "Operation executions by outcome (ok or problem code).",
-        &[("operation", info.id), ("outcome", outcome)],
+        &[("operation", operation), ("outcome", outcome)],
     );
     crate::metrics::observe(
         "trestle_operation_duration_seconds",
         "Operation latency, including authorization and commit.",
-        &[("operation", info.id)],
+        &[("operation", operation)],
         started.elapsed().as_secs_f64(),
     );
+}
+
+/// The answer to a keyed write (ADR-016): the committed response body as
+/// JSON text, and whether it was replayed from an earlier attempt's receipt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Keyed {
+    pub body: String,
+    pub replayed: bool,
+}
+
+fn count_replay(operation: &str) {
+    crate::metrics::increment(
+        "trestle_idempotency_replays_total",
+        "Keyed writes answered from a committed receipt.",
+        &[("operation", operation)],
+    );
+}
+
+/// [`execute_validated`] for a write carrying `key` (ADR-016): the receipt
+/// is claimed after `recheck` in the same transaction, and either the
+/// committed answer is replayed or the operation runs and its answer is
+/// stored before commit.
+pub async fn execute_keyed<O: Operation>(
+    pool: &PgPool,
+    op: &O,
+    ctx: &O::Context,
+    Validated(input): Validated<O::Input>,
+    invocation: &Invocation,
+    key: &str,
+) -> Result<Keyed, Problem> {
+    let info = O::INFO;
+    let started = std::time::Instant::now();
+    let result: Result<Keyed, Problem> = async {
+        if info.mode != Mode::Write {
+            return Err(crate::idempotency::unsupported());
+        }
+        let canonical = serde_json::to_value(&input).map_err(|err| {
+            tracing::error!(operation = info.id, error = %err, "input does not serialize");
+            Problem::internal()
+        })?;
+        let receipt =
+            crate::idempotency::Receipt::new(invocation, info.id, info.version, key, &canonical);
+        op.policy().admit(ctx)?;
+        let waiting = std::time::Instant::now();
+        let mut tx = pool.begin().await?;
+        observe_pool_wait(waiting);
+        op.policy().recheck(&mut tx, ctx).await?;
+        match crate::idempotency::claim(&mut tx, &receipt).await? {
+            crate::idempotency::Claim::Replay(body) => {
+                count_replay(info.id);
+                Ok(Keyed {
+                    body,
+                    replayed: true,
+                })
+            }
+            crate::idempotency::Claim::Fresh => {
+                let output = op.run(&mut tx, ctx, input).await?;
+                check_typed_output::<O>(&output)?;
+                let body = serde_json::to_string(&output).map_err(|err| {
+                    tracing::error!(operation = info.id, error = %err, "output does not serialize");
+                    Problem::internal()
+                })?;
+                crate::idempotency::complete(&mut tx, &receipt, &body).await?;
+                db::commit(tx).await?;
+                Ok(Keyed {
+                    body,
+                    replayed: false,
+                })
+            }
+        }
+    }
+    .await;
+    observe_execution(info.id, started, result.as_ref().err());
+    result
+}
+
+/// [`execute_keyed`] for a [`DynOperation`].
+pub async fn execute_dyn_keyed<S: 'static>(
+    pool: &PgPool,
+    op: Arc<dyn DynOperation<S>>,
+    ctx: DynContext,
+    input: &Value,
+    invocation: &Invocation,
+    key: &str,
+) -> Result<Keyed, Problem> {
+    let info = op.info();
+    let started = std::time::Instant::now();
+    let result: Result<Keyed, Problem> = async {
+        if info.mode != Mode::Write {
+            return Err(crate::idempotency::unsupported());
+        }
+        let input = op.input().validate(input).map_err(Problem::from)?;
+        let receipt =
+            crate::idempotency::Receipt::new(invocation, &info.id, &info.version, key, &input);
+        op.admit(&ctx)?;
+        let waiting = std::time::Instant::now();
+        let mut tx = pool.begin().await?;
+        observe_pool_wait(waiting);
+        op.recheck(&mut tx, &ctx).await?;
+        if let crate::idempotency::Claim::Replay(body) =
+            crate::idempotency::claim(&mut tx, &receipt).await?
+        {
+            count_replay(&info.id);
+            return Ok(Keyed {
+                body,
+                replayed: true,
+            });
+        }
+        let (conn, result) = op.clone().run(DynConn::Write(tx), ctx, input).await;
+        let output = result?;
+        let DynConn::Write(mut tx) = conn else {
+            tracing::error!(operation = &*info.id, "write ran without its transaction");
+            return Err(Problem::internal());
+        };
+        let output = check_output(&info.id, op.output(), &output)?;
+        let body = output.to_string();
+        crate::idempotency::complete(&mut tx, &receipt, &body).await?;
+        db::commit(tx).await?;
+        Ok(Keyed {
+            body,
+            replayed: false,
+        })
+    }
+    .await;
+    observe_execution(&info.id, started, result.as_ref().err());
     result
 }
 
@@ -444,6 +571,10 @@ where
     O::Context: FromInvocation<S>,
     PgPool: FromRef<S>,
 {
+    if invocation.idempotency_key().is_some() {
+        // Only the registry knows whether an operation accepts a key.
+        return Err(crate::idempotency::unsupported());
+    }
     let ctx = O::Context::resolve(invocation, state).await?;
     execute_json(&PgPool::from_ref(state), op, &ctx, input).await
 }
@@ -458,6 +589,9 @@ pub async fn invoke_dyn<S: 'static>(
 where
     PgPool: FromRef<S>,
 {
+    if invocation.idempotency_key().is_some() {
+        return Err(crate::idempotency::unsupported());
+    }
     let ctx = op.resolve_context(invocation, state).await?;
     execute_dyn(&PgPool::from_ref(state), op, ctx, input).await
 }
@@ -573,20 +707,6 @@ pub async fn execute_dyn<S: 'static>(
         }
     }
     .await;
-    let outcome = match &result {
-        Ok(_) => "ok",
-        Err(problem) => problem.code(),
-    };
-    crate::metrics::increment(
-        "trestle_operation_total",
-        "Operation executions by outcome (ok or problem code).",
-        &[("operation", &*info.id), ("outcome", outcome)],
-    );
-    crate::metrics::observe(
-        "trestle_operation_duration_seconds",
-        "Operation latency, including authorization and commit.",
-        &[("operation", &*info.id)],
-        started.elapsed().as_secs_f64(),
-    );
+    observe_execution(&info.id, started, result.as_ref().err());
     result
 }

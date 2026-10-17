@@ -29,7 +29,7 @@ and is not self-granted. Open items before a pilot:
 choose how people sign in (password accounts are built; an OIDC provider is optional and only
 mock-tested), send through the real SMTP relay, get external security review (§12.4), and
 validate the edge config (`deploy/Caddyfile`) on a real host. Do not claim general
-maturity or benchmark leadership. ADRs: 001–015 (015 reopens 009: jobs and outbox).
+maturity or benchmark leadership. ADRs: 001–016 (015 reopens 009: jobs and outbox).
 
 ## Non-negotiables
 - Installing a model publishes nothing (I01). Endpoints, forms and writable fields are explicit.
@@ -79,6 +79,10 @@ maturity or benchmark leadership. ADRs: 001–015 (015 reopens 009: jobs and out
   `tokio::spawn`. Handlers are at least once: idempotent, passing `job.idempotency_key()` to
   providers. Database work in a handler goes through `job.invoke` (re-authorized). Job inputs
   are stored in plain text: no credentials, tokens or link secrets in them.
+- Idempotency keys (ADR-016) are opt-in per write binding (`.idempotency_key()`). The receipt is
+  claimed inside the write transaction after `recheck`; never move it out or before
+  authorization. Replays return the stored body only after the policy admits and rechecks.
+  A key sent where none is accepted is refused, never ignored.
 - Assembly never leaks (ADR-014): no `Box::leak` on a registration path. Runtime-built apps
   register owned data (`OperationDescriptor`, `Arc<str>`, `Arc<ContractDoc>`);
   `crates/trestle/tests/assembly_memory.rs` fails if repeated assembly grows the heap.

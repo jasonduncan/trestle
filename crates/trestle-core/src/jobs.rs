@@ -583,11 +583,25 @@ where
             Ok(input) => {
                 let run = async {
                     match job.target.as_str() {
-                        "operation" if inner.registry.operation(&job.name).is_some() => inner
-                            .registry
-                            .invoke(&inner.state, &job.name, &invocation, &input)
-                            .await
-                            .map(drop),
+                        "operation" if inner.registry.operation(&job.name).is_some() => {
+                            // An operation that accepts a key gets the job's ID
+                            // as its key: an attempt repeated after its write
+                            // committed replays instead of writing again.
+                            let keyed = inner
+                                .registry
+                                .operation(&job.name)
+                                .is_some_and(|op| op.accepts_idempotency_key());
+                            let invocation = if keyed {
+                                invocation.clone().with_idempotency_key(job.id.to_string())
+                            } else {
+                                invocation.clone()
+                            };
+                            inner
+                                .registry
+                                .invoke(&inner.state, &job.name, &invocation, &input)
+                                .await
+                                .map(drop)
+                        }
                         "operation" => Err(Problem::malformed(
                             "unknown_operation",
                             "The job names an operation that is not registered.",

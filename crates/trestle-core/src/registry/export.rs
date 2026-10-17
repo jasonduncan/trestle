@@ -115,6 +115,15 @@ impl<S> Registry<S> {
                     "schema": { "type": "string" },
                 }));
             }
+            if binding.idempotency_key {
+                parameters.push(json!({
+                    "name": crate::idempotency::IDEMPOTENCY_KEY_HEADER,
+                    "in": "header",
+                    "required": false,
+                    "description": "Repeating a request with the same key and body replays the committed response (header Idempotency-Replayed: true) instead of running it again. Retained for 24 hours; the same key with a different body is 409.",
+                    "schema": { "type": "string", "minLength": 1, "maxLength": crate::idempotency::MAX_KEY_CHARS, "pattern": "^[!-~]+$" },
+                }));
+            }
             // Fields not from the path or a precondition come from the query
             // (GET/DELETE) or the body (everything else).
             let from_request = |name: &str| {
