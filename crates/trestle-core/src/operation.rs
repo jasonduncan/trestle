@@ -400,7 +400,7 @@ pub async fn execute_validated<O: Operation>(
             }
             Mode::Write => {
                 let waiting = std::time::Instant::now();
-                let mut tx = pool.begin().await?;
+                let mut tx = crate::fence::begin(pool).await?;
                 observe_pool_wait(waiting);
                 op.policy().recheck(&mut tx, ctx).await?;
                 let output = op.run(&mut tx, ctx, input).await?;
@@ -473,7 +473,7 @@ pub async fn execute_keyed<O: Operation>(
             crate::idempotency::Receipt::new(invocation, info.id, info.version, key, &canonical);
         op.policy().admit(ctx)?;
         let waiting = std::time::Instant::now();
-        let mut tx = pool.begin().await?;
+        let mut tx = crate::fence::begin(pool).await?;
         observe_pool_wait(waiting);
         op.policy().recheck(&mut tx, ctx).await?;
         match crate::idempotency::claim(&mut tx, &receipt).await? {
@@ -525,7 +525,7 @@ pub async fn execute_dyn_keyed<S: 'static>(
             crate::idempotency::Receipt::new(invocation, &info.id, &info.version, key, &input);
         op.admit(&ctx)?;
         let waiting = std::time::Instant::now();
-        let mut tx = pool.begin().await?;
+        let mut tx = crate::fence::begin(pool).await?;
         observe_pool_wait(waiting);
         op.recheck(&mut tx, &ctx).await?;
         if let crate::idempotency::Claim::Replay(body) =
@@ -686,7 +686,7 @@ pub async fn execute_dyn<S: 'static>(
             }
             Mode::Write => {
                 let waiting = std::time::Instant::now();
-                let mut tx = pool.begin().await?;
+                let mut tx = crate::fence::begin(pool).await?;
                 observe_pool_wait(waiting);
                 op.recheck(&mut tx, &ctx).await?;
                 let (conn, result) = op.clone().run(DynConn::Write(tx), ctx, input).await;

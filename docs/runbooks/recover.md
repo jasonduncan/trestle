@@ -59,6 +59,12 @@ changes). Redeploy the previous binary; its required migrations are a
 subset of those applied. The previous frontend bundle keeps working while
 its form revisions are retained.
 
+A fence migration (`"fence": true`, ADR-017) ends that window for every
+binary that lacks it. Such a binary refuses to start (`serve` exits 6,
+naming the migration), and one still running answers writes with 503
+`schema_fenced`. Roll forward, or restore the database from before the fence
+migration together with the old binary.
+
 ## Dependency outages
 
 | Failure | Behaviour | Action |
@@ -66,6 +72,7 @@ its form revisions are retained.
 | Database unreachable | `/readyz` 503; requests 503 `database_unavailable` after the 5 s pool timeout | Restore the database; replicas recover without a restart |
 | Slow queries | 503 `database_timeout` after the statement timeout; the transaction rolls back | Find the query (`pg_stat_activity`); raise the timeout only with a reason |
 | Commit outcome unknown (connection lost during COMMIT) | 503 `outcome_unknown`; the client must re-read before retrying | Check the audit log for the operation and `request_id` |
+| Old replicas after a fence migration | Their `/readyz` is 503 `schema_fenced`; their writes are 503 `schema_fenced` with `Retry-After: 1` and write nothing; reads still answer | Finish the rollout. The load balancer drops them on readiness |
 | Identity provider down | New logins get 503 `identity_unavailable`. Existing sessions keep working: they are server-side. Bearer tokens keep verifying with cached keys; if a refetch fails, the stale keys are kept | Wait, or fail over at the provider |
 | Overload | 503 `overloaded`, with `Retry-After`; health is exempt | Add replicas or find the slow path |
 

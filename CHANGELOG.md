@@ -37,6 +37,28 @@ promise.
     only.
 - Operation jobs whose target accepts a key use the job ID as the key, so
   their database effects are exactly once.
+- A schema fence for older builds (ADR-017). A migration whose manifest
+  says `"fence": true` is recorded in `trestle_schema_fence` when applied.
+  From then on, a build that lacks it gets 503 `schema_fenced` with nothing
+  written, for executor writes, `Registry::invoke` and job claims.
+  - **Write path:** the check travels with `BEGIN`, so it adds no round
+    trip.
+  - **Migration side:** the fence migration waits for writes already under
+    way, and writes that arrive meanwhile wait for it.
+  - **Readiness and startup:** `/readyz` reports `schema_fenced`, and
+    `serve` refuses to start a fenced build.
+  - **Output:** `verify` lists `fenced_by`, and `trestle.plan/1` marks
+    `fence: true` with the approval reason `fence`.
+  - **New API:** `trestle_core::fence` (`install`, `begin`, `check`) and
+    `trestle_historical::fence` (`BuildFence`, `status`, `fenced_by`).
+
+### Changed
+- `migrate` creates the `trestle_schema_fence` table and the
+  `trestle_fence_v1` function on every run, like the ledger. `serve` refuses
+  to start until they exist, so run `migrate` once after upgrading.
+- `RunOptions` and `Manifest` have a `fence` field. Manifests that leave it
+  out are unchanged, digests included.
+- Job workers claim inside a transaction, so a fenced build claims nothing.
 
 ## [0.3.0] - 2026-10-17
 

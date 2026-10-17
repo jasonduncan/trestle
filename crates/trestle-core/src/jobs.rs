@@ -458,7 +458,10 @@ where
                             running.spawn(async move { worker.attempt(job).await });
                         }
                     }
-                    Err(_) => tracing::warn!("job claim failed; retrying after the poll interval"),
+                    Err(problem) => tracing::warn!(
+                        code = problem.code(),
+                        "job claim failed; retrying after the poll interval"
+                    ),
                 }
             }
             let wait = if claimed == free && free > 0 {
@@ -516,7 +519,7 @@ where
         if limit == 0 {
             return Ok(Vec::new());
         }
-        let rows = sqlx::query(&format!(
+        let sql = format!(
             "UPDATE {TABLE} AS j
                 SET status = 'running', claim = gen_random_uuid(), attempts = j.attempts + 1,
                     lease_until = now() + make_interval(secs => $1)
@@ -531,11 +534,16 @@ where
               WHERE j.id = due.id
           RETURNING j.id, j.claim, j.target, j.name, j.payload_version, j.input, j.actor_id,
                     j.tenant_id, j.attempts, j.max_attempts, due.lag"
-        ))
-        .bind(self.inner.config.lease.as_secs_f64())
-        .bind(limit as i64)
-        .fetch_all(&self.inner.pool)
-        .await?;
+        );
+        // A build the schema fence shuts out claims nothing, so it cannot
+        // spend attempts that a current worker would finish.
+        let mut tx = crate::fence::begin(&self.inner.pool).await?;
+        let rows = sqlx::query(&sql)
+            .bind(self.inner.config.lease.as_secs_f64())
+            .bind(limit as i64)
+            .fetch_all(&mut *tx)
+            .await?;
+        crate::db::commit(tx).await?;
         Ok(rows
             .into_iter()
             .map(|r| {

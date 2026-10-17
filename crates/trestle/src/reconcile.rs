@@ -136,6 +136,9 @@ pub struct PlanStep {
     pub id: String,
     pub digest: String,
     pub atomic: bool,
+    /// Raises the schema fence (ADR-017). Omitted when `false`.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub fence: bool,
     pub risk: &'static str,
     pub has_data_step: bool,
     pub statements: usize,
@@ -229,6 +232,7 @@ pub async fn plan_report(
             id: m.id.to_owned(),
             digest: format!("sha256:{}", m.digest()),
             atomic: options.atomic,
+            fence: options.fence,
             risk: classify::risk(reasons),
             has_data_step: m.data.is_some(),
             statements: if options.atomic {
@@ -393,6 +397,10 @@ pub struct VerifyReport {
     pub partial: Vec<String>,
     /// Applied migrations this build does not know (a newer release ran).
     pub unknown_applied: Vec<String>,
+    /// Applied fence migrations among them: this build may not write
+    /// (ADR-017).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub fenced_by: Vec<String>,
     /// Ledger rows of apps declared foreign (another project's history).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub foreign: Vec<String>,
@@ -442,6 +450,10 @@ pub async fn verify(conn: &mut PgConnection, set: &MigrationSet) -> Result<Verif
             report.pending.push(m.key().to_string());
         }
     }
+    report.fenced_by =
+        trestle_historical::fence::fenced_by(conn, &trestle_historical::fence::BuildFence::of(set))
+            .await
+            .map_err(db)?;
     if report.unknown_applied.is_empty() {
         match set.history_of(|k| applied_keys.contains(&k)) {
             Ok(history) => {

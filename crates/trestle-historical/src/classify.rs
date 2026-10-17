@@ -30,6 +30,9 @@ pub enum Reason {
     RewriteRisk,
     /// Locks or scans an existing table (new index, unique, FK or check).
     ExistingTableLock,
+    /// `"fence": true`: pauses writes while it runs, then refuses writes
+    /// from builds that do not contain it (ADR-017).
+    Fence,
 }
 
 impl Reason {
@@ -41,6 +44,7 @@ impl Reason {
             Reason::HandSql => "hand_sql",
             Reason::RewriteRisk => "rewrite_risk",
             Reason::ExistingTableLock => "existing_table_lock",
+            Reason::Fence => "fence",
         }
     }
 }
@@ -104,8 +108,12 @@ pub fn classify(
     before: Option<&SchemaState>,
 ) -> Vec<Reason> {
     let mut reasons = BTreeSet::new();
-    if !migration.options().atomic {
+    let options = migration.options();
+    if !options.atomic {
         reasons.insert(Reason::NonAtomic);
+    }
+    if options.fence {
+        reasons.insert(Reason::Fence);
     }
     if migration.data.is_some() {
         reasons.insert(Reason::DataStep);

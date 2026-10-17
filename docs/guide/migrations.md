@@ -62,3 +62,39 @@ How a run proceeds:
 
 Non-atomic migrations always need approval in automated deploys. See the
 reconciler contract.
+
+## Fencing older builds (`"fence": true`)
+
+Expand-and-contract releases keep the previous build working while a new
+one rolls out. Some changes can't: a column's unit or meaning changes, or
+new code starts enforcing an invariant old code ignores. Old code would keep
+writing without any error. Mark such a migration as a fence:
+
+```json
+{ "format": 2, "app": "orders", "id": "0007_amount_in_cents",
+  "depends_on": ["orders.0006_x"], "operations": [], "fence": true }
+```
+
+Once it is applied, a build may write only if it contains it:
+
+- **Refused writes.** A build whose history lacks the app's newest fence
+  migration gets 503 `schema_fenced`, with `Retry-After: 1` and nothing
+  written. This covers HTTP writes, `Registry::invoke` and job claims. Reads
+  still work.
+- **Readiness.** `/readyz` answers 503 `schema_fenced`, so the load balancer
+  takes the old build out of rotation.
+- **Startup.** `serve` refuses to start an old build, which also catches a
+  rollback to an image that predates the fence.
+- **Write pause.** While the migration runs, writes wait for it. It first
+  waits for writes already under way, for up to its `lock_timeout`, 10s by
+  default. Keep fence migrations short, and put a long backfill in a
+  migration of its own.
+- **Approval.** `migrate --plan` marks the step `"fence": true` with reason
+  `fence`, so it always needs approval in automated deploys.
+- **Inspecting.** `verify` lists the fences that shut the running build out.
+
+The fence covers writes made through the executor. SQL a handler sends on
+its own pool is not checked. Every `migrate` run creates the fence table and
+function, so after upgrading Trestle, run `migrate` before `serve`. See
+ADR-017.
+

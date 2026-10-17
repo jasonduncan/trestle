@@ -55,6 +55,7 @@ Anything else needs approval. These are the reason codes:
 | `hand_sql` | the SQL differs from what the planner renders, or there are no operations to check it against |
 | `rewrite_risk` | volatile default, NOT NULL without a default, or a nullability change |
 | `existing_table_lock` | a new index, unique constraint, foreign key or check on an existing table |
+| `fence` | `"fence": true`: pauses writes while it runs, then refuses writes from builds without it (ADR-017) |
 
 ## 3. Apply
 

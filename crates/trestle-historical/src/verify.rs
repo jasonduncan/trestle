@@ -157,7 +157,9 @@ pub async fn verify(
     }
     report.unmanaged_tables = observed
         .keys()
-        .filter(|t| !managed.contains(*t) && **t != "trestle_migrations")
+        .filter(|t| {
+            !managed.contains(*t) && **t != "trestle_migrations" && **t != crate::fence::TABLE
+        })
         .map(|t| (*t).to_owned())
         .collect();
     report

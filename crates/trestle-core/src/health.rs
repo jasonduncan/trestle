@@ -1,6 +1,6 @@
 //! System routes. Liveness reports the process; readiness reports the
-//! database and required schema capabilities (§15.3). Neither applies
-//! migrations.
+//! database, required schema capabilities (§15.3) and the schema fence
+//! (ADR-017). Neither applies migrations.
 
 use std::sync::Arc;
 
@@ -44,5 +44,7 @@ async fn readiness(pool: &PgPool, required: &[MigrationRef]) -> Result<Json<Valu
         return Err(Problem::unavailable("schema_not_ready")
             .with_detail("Required migrations have not been applied."));
     }
+    // A fenced build drops out of rotation (ADR-017).
+    crate::fence::check(&mut conn).await?;
     Ok(Json(json!({ "status": "ready" })))
 }

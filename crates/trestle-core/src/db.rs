@@ -48,6 +48,12 @@ impl From<sqlx::Error> for Problem {
                 tracing::warn!("database statement timed out");
                 Problem::unavailable("database_timeout")
             }
+            // The schema fence refused this build before its transaction
+            // began (ADR-017).
+            sqlx::Error::Database(db) if db.code().as_deref() == Some(crate::fence::SQLSTATE) => {
+                tracing::warn!(error = %db.message(), "write refused: schema fenced");
+                crate::fence::fenced()
+            }
             err => {
                 tracing::error!(error = %err, "database error");
                 Problem::internal()
