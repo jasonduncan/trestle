@@ -182,9 +182,9 @@ impl DynOperation<()> for DynCreate {
         &VIEW
     }
 
-    fn context_from<'a>(
+    fn resolve_context<'a>(
         &'a self,
-        _: &'a mut http::request::Parts,
+        _: &'a trestle_core::invocation::Invocation,
         _: &'a (),
     ) -> BoxFuture<'a, Result<DynContext, Problem>> {
         Box::pin(async { Ok(Arc::new(()) as DynContext) })

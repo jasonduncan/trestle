@@ -1,5 +1,6 @@
 //! Managed HTTP routes: the generated adapter between a request and the
-//! executor (I04, I13). It extracts context, checks the interaction
+//! executor (I04, I13). It builds the caller's `Invocation` and resolves the
+//! context from it (ADR-013), checks the interaction
 //! revision, assembles the input instance, enforces preconditions,
 //! validates against the contract and calls the same executor a
 //! hand-written handler would.
@@ -24,9 +25,12 @@ use trestle_protocol::interaction::{BodySource, HttpBinding, REVISION_HEADER};
 use trestle_protocol::{ContractDoc, FieldType};
 
 use crate::Problem;
+use crate::identity::Identity;
 use crate::input::JsonBody;
+use crate::invocation::{FromInvocation, Invocation};
 use crate::operation::{
-    ContextDescriptor, DynOperation, Operation, execute_dyn, execute_validated, validate,
+    ContextDescriptor, DynOperation, Operation, RequestContext, execute_dyn, execute_validated,
+    validate,
 };
 
 /// How an operation is exposed over HTTP. Registered with
@@ -165,17 +169,20 @@ pub(crate) fn managed<S, O>(
 where
     S: Clone + Send + Sync + 'static,
     O: Operation,
-    O::Context: FromRequestParts<S, Rejection = Problem>,
+    O::Context: FromInvocation<S>,
     PgPool: FromRef<S>,
+    Identity: FromRef<S>,
 {
     let binding = Arc::new(binding);
+    let descriptor = Arc::new(O::Context::describe());
     let handler = move |State(state): State<S>, request: Request| {
         let op = op.clone();
         let binding = binding.clone();
+        let descriptor = descriptor.clone();
         let accepted = accepted_revisions.clone();
         async move {
             let accepted = accepted.get().map(Vec::as_slice).unwrap_or(&[]);
-            match handle::<S, O>(&state, &op, &binding, accepted, request).await {
+            match handle::<S, O>(&state, &op, &binding, &descriptor, accepted, request).await {
                 Ok(response) => response,
                 Err(problem) => problem.into_response(),
             }
@@ -237,21 +244,24 @@ async fn handle<S, O>(
     state: &S,
     op: &O,
     binding: &HttpBinding,
+    descriptor: &ContextDescriptor,
     accepted_revisions: &[String],
     request: Request,
 ) -> Result<Response, Problem>
 where
     S: Clone + Send + Sync + 'static,
     O: Operation,
-    O::Context: FromRequestParts<S, Rejection = Problem>,
+    O::Context: FromInvocation<S>,
     PgPool: FromRef<S>,
+    Identity: FromRef<S>,
 {
     use trestle_protocol::Contract as _;
     let input_contract = O::Input::contract();
     let output_contract = O::Output::contract();
     let (mut parts, body) = request.into_parts();
     // Identity and tenant before anything else is read (§6.2).
-    let ctx = O::Context::from_request_parts(&mut parts, state).await?;
+    let invocation = Invocation::from_http(&mut parts, state, descriptor).await?;
+    let ctx = O::Context::resolve(&invocation, state).await?;
     let (instance, path) = prepare(
         state,
         parts,
@@ -310,15 +320,18 @@ pub(crate) fn managed_dyn<S>(
 where
     S: Clone + Send + Sync + 'static,
     PgPool: FromRef<S>,
+    Identity: FromRef<S>,
 {
     let binding = Arc::new(binding);
+    let descriptor = Arc::new(op.context());
     let handler = move |State(state): State<S>, request: Request| {
         let op = op.clone();
         let binding = binding.clone();
+        let descriptor = descriptor.clone();
         let accepted = accepted_revisions.clone();
         async move {
             let accepted = accepted.get().map(Vec::as_slice).unwrap_or(&[]);
-            match handle_dyn::<S>(&state, op, &binding, accepted, request).await {
+            match handle_dyn::<S>(&state, op, &binding, &descriptor, accepted, request).await {
                 Ok(response) => response,
                 Err(problem) => problem.into_response(),
             }
@@ -333,17 +346,20 @@ async fn handle_dyn<S>(
     state: &S,
     op: Arc<dyn DynOperation<S>>,
     binding: &HttpBinding,
+    descriptor: &ContextDescriptor,
     accepted_revisions: &[String],
     request: Request,
 ) -> Result<Response, Problem>
 where
     S: Clone + Send + Sync + 'static,
     PgPool: FromRef<S>,
+    Identity: FromRef<S>,
 {
     let input_contract = op.input();
     let output_contract = op.output();
     let (mut parts, body) = request.into_parts();
-    let ctx = op.context_from(&mut parts, state).await?;
+    let invocation = Invocation::from_http(&mut parts, state, descriptor).await?;
+    let ctx = op.resolve_context(&invocation, state).await?;
     let (instance, path) = prepare(
         state,
         parts,

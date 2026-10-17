@@ -10,15 +10,16 @@
 
 use std::sync::Arc;
 
-use axum::extract::{FromRef, FromRequestParts};
+use axum::extract::FromRef;
 use http::request::Parts;
 use sqlx::PgPool;
 use trestle_protocol::Contract;
 
 use super::{AppBuilder, Http};
 use crate::Problem;
-use crate::identity::BoxFuture;
-use crate::operation::{Operation, Policy, RequestContext};
+use crate::identity::{BoxFuture, Identity};
+use crate::invocation::{FromInvocation, Invocation};
+use crate::operation::{Operation, Policy};
 
 /// Conventional field names: responses carry `version`; updates, deletes
 /// and domain actions compare `expected_version`.
@@ -171,7 +172,8 @@ where
     fn register<O>(&mut self, op: O, http: Http) -> &'static str
     where
         O: Operation,
-        O::Context: FromRequestParts<S, Rejection = Problem>,
+        O::Context: FromInvocation<S>,
+        Identity: FromRef<S>,
     {
         let http = if O::Output::contract().get(VERSION_FIELD).is_some() {
             http.etag(VERSION_FIELD)
@@ -186,7 +188,8 @@ where
     pub fn list<O>(mut self, op: O) -> Self
     where
         O: Operation,
-        O::Context: FromRequestParts<S, Rejection = Problem>,
+        O::Context: FromInvocation<S>,
+        Identity: FromRef<S>,
     {
         let path = self.path();
         let id = self.register(op, Http::get(path));
@@ -198,7 +201,8 @@ where
     pub fn create<O>(mut self, op: O) -> Self
     where
         O: Operation,
-        O::Context: FromRequestParts<S, Rejection = Problem>,
+        O::Context: FromInvocation<S>,
+        Identity: FromRef<S>,
     {
         let path = self.path();
         let id = self.register(op, Http::post(path).created(format!("{path}/{{id}}")));
@@ -210,7 +214,8 @@ where
     pub fn retrieve<O>(mut self, op: O) -> Self
     where
         O: Operation,
-        O::Context: FromRequestParts<S, Rejection = Problem>,
+        O::Context: FromInvocation<S>,
+        Identity: FromRef<S>,
     {
         let path = self.path();
         let id = self.register(op, Http::get(format!("{path}/{{id}}")));
@@ -223,7 +228,8 @@ where
     pub fn update<O>(mut self, op: O) -> Self
     where
         O: Operation,
-        O::Context: FromRequestParts<S, Rejection = Problem>,
+        O::Context: FromInvocation<S>,
+        Identity: FromRef<S>,
     {
         let path = self.path();
         let http = Http::patch(format!("{path}/{{id}}")).if_match(EXPECTED_VERSION_FIELD);
@@ -236,7 +242,8 @@ where
     pub fn delete<O>(mut self, op: O) -> Self
     where
         O: Operation,
-        O::Context: FromRequestParts<S, Rejection = Problem>,
+        O::Context: FromInvocation<S>,
+        Identity: FromRef<S>,
     {
         let path = self.path();
         let http = Http::delete(format!("{path}/{{id}}"))
@@ -252,7 +259,8 @@ where
     pub fn action<O>(mut self, name: &str, op: O) -> Self
     where
         O: Operation,
-        O::Context: FromRequestParts<S, Rejection = Problem>,
+        O::Context: FromInvocation<S>,
+        Identity: FromRef<S>,
     {
         let path = self.path();
         let id = self.register(op, Http::post(format!("{path}/{{id}}/actions/{name}")));
@@ -265,15 +273,19 @@ where
     /// its own policy.
     pub fn admin<C, P>(mut self, view: AdminView, policy: P) -> Self
     where
-        C: RequestContext + FromRequestParts<S, Rejection = Problem>,
+        C: FromInvocation<S>,
         P: Policy<C>,
+        Identity: FromRef<S>,
     {
         let id = policy.id();
         let policy = Arc::new(policy);
+        let descriptor = Arc::new(C::describe());
         let check = erase(move |parts, state| {
             let policy = policy.clone();
+            let descriptor = descriptor.clone();
             Box::pin(async move {
-                let ctx = C::from_request_parts(parts, state).await?;
+                let invocation = Invocation::from_http(parts, state, &descriptor).await?;
+                let ctx = C::resolve(&invocation, state).await?;
                 policy.admit(&ctx)
             })
         });

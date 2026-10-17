@@ -194,6 +194,8 @@ fn the_intent_feeds_the_registry() {
 struct Server {
     app: Router,
     db: TestDatabase,
+    registry: trestle::core::registry::Registry<State>,
+    state: State,
     tenant: uuid::Uuid,
     other: uuid::Uuid,
 }
@@ -245,10 +247,13 @@ impl Server {
         let tokens = format!("{MEMBER}={MEMBER_ID},{VIEWER}={VIEWER_ID},{STRANGER}={STRANGER_ID}");
         let identity = Arc::new(DevTokenIdentity::parse(&tokens).unwrap());
         let registry = project.assemble().unwrap();
-        let app = trestle::router_with(&registry, State::new(pool, identity), Default::default());
+        let state = State::new(pool, identity);
+        let app = trestle::router_with(&registry, state.clone(), Default::default());
         Server {
             app,
             db,
+            registry,
+            state,
             tenant,
             other,
         }
@@ -288,6 +293,77 @@ impl Server {
         let json = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
         (status, json, etag)
     }
+}
+
+/// ADR-013: intent operations invoked by ID (as a job would) resolve the same
+/// membership and reach the same decisions as their HTTP routes.
+#[tokio::test]
+async fn intent_operations_decide_the_same_without_http() {
+    use trestle::core::identity::ActorId;
+    use trestle::core::invocation::Invocation;
+
+    let s = Server::start().await;
+    let as_actor = |id: &str, tenant| {
+        Invocation::for_actor(ActorId(uuid::Uuid::parse_str(id).unwrap())).with_tenant(tenant)
+    };
+    let invoke = |invocation: Invocation, op: &'static str, input: Value| {
+        let s = &s;
+        async move { s.registry.invoke(&s.state, op, &invocation, &input).await }
+    };
+
+    let note = invoke(
+        as_actor(MEMBER_ID, s.tenant),
+        "notes.note.create",
+        json!({"title": "  Direct  "}),
+    )
+    .await
+    .expect("a member creates");
+    assert_eq!(note["title"], "Direct", "hooks run for direct callers too");
+
+    for (who, token, id, tenant, code) in [
+        ("viewer", VIEWER, VIEWER_ID, s.tenant, "permission_denied"),
+        (
+            "member elsewhere",
+            STRANGER,
+            STRANGER_ID,
+            s.tenant,
+            "tenant_not_permitted",
+        ),
+    ] {
+        let (status, body, _) = s
+            .call(
+                "POST",
+                "/api/v1/notes",
+                token,
+                tenant,
+                Some(json!({"title": "x"})),
+                None,
+            )
+            .await;
+        let problem = invoke(
+            as_actor(id, tenant),
+            "notes.note.create",
+            json!({"title": "x"}),
+        )
+        .await
+        .expect_err(who);
+        assert_eq!(status, StatusCode::FORBIDDEN, "{who}: {body}");
+        assert_eq!(body["code"], code, "{who} over HTTP");
+        assert_eq!(
+            (problem.status(), problem.code()),
+            (StatusCode::FORBIDDEN, code),
+            "{who} directly"
+        );
+    }
+
+    // What the direct caller wrote is what HTTP lists.
+    let (status, list, _) = s
+        .call("GET", "/api/v1/notes", VIEWER, s.tenant, None, None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["items"].as_array().unwrap().len(), 1);
+    assert_eq!(list["items"][0]["id"], note["id"]);
+    s.db.drop().await;
 }
 
 #[tokio::test]

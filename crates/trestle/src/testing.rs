@@ -27,7 +27,10 @@ use uuid::Uuid;
 
 use crate::intent::spec::Tenancy;
 use crate::{Project, State};
+use trestle_core::Problem;
 use trestle_core::identity::DevTokenIdentity;
+use trestle_core::invocation::Invocation;
+use trestle_core::registry::Registry;
 use trestle_historical::testing::TestDatabase;
 
 /// A migrated database and the project's router, answering in-process.
@@ -35,6 +38,8 @@ pub struct TestApp {
     db: TestDatabase,
     pool: PgPool,
     router: Router,
+    registry: Registry<State>,
+    state: State,
     tenancy: Option<&'static Tenancy>,
 }
 
@@ -50,17 +55,29 @@ impl TestApp {
             .unwrap_or_else(|e| panic!("migrate: {e}"));
         let pool = db.pool().await;
         let identity = Arc::new(DevTokenIdentity::parse(dev_tokens).expect("dev tokens"));
-        let router = crate::router_with(
-            &registry,
-            State::new(pool.clone(), identity),
-            Default::default(),
-        );
+        let state = State::new(pool.clone(), identity);
+        let router = crate::router_with(&registry, state.clone(), Default::default());
         Self {
             db,
             pool,
             router,
+            registry,
+            state,
             tenancy,
         }
+    }
+
+    /// Runs operation `id` without HTTP, as a job or command would
+    /// (`Registry::invoke`, ADR-013).
+    pub async fn invoke(
+        &self,
+        id: &str,
+        invocation: &Invocation,
+        input: &Value,
+    ) -> Result<Value, Problem> {
+        self.registry
+            .invoke(&self.state, id, invocation, input)
+            .await
     }
 
     pub fn pool(&self) -> &PgPool {

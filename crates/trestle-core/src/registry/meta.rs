@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::rejection::PathRejection;
-use axum::extract::{FromRequestParts, Path, Request, State};
+use axum::extract::{FromRef, Path, Request, State};
 use axum::http::HeaderValue;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{MethodRouter, get};
@@ -24,8 +24,9 @@ use serde_json::{Value, json};
 use trestle_protocol::interaction::{PROTOCOL, PROTOCOL_VERSION};
 
 use crate::Problem;
-use crate::identity::BoxFuture;
-use crate::operation::{Operation, Policy};
+use crate::identity::{BoxFuture, Identity};
+use crate::invocation::{FromInvocation, Invocation};
+use crate::operation::{Operation, Policy, RequestContext};
 use crate::registry::resource::AdminCheck;
 
 pub const MANIFEST_PATH: &str = "/_meta/v1/manifest";
@@ -69,17 +70,21 @@ where
     Arc::new(f)
 }
 
-/// Extracts `O`'s context from the request and evaluates admission.
+/// Resolves `O`'s context for the caller and evaluates admission.
 pub(crate) fn availability<S, O>(op: Arc<O>) -> AvailabilityFn<S>
 where
     S: Send + Sync + 'static,
     O: Operation,
-    O::Context: FromRequestParts<S, Rejection = Problem>,
+    O::Context: FromInvocation<S>,
+    Identity: FromRef<S>,
 {
+    let descriptor = Arc::new(O::Context::describe());
     erase(move |parts, state| {
         let op = op.clone();
+        let descriptor = descriptor.clone();
         Box::pin(async move {
-            let ctx = O::Context::from_request_parts(parts, state).await?;
+            let invocation = Invocation::from_http(parts, state, &descriptor).await?;
+            let ctx = O::Context::resolve(&invocation, state).await?;
             Ok(match op.policy().admit(&ctx) {
                 Ok(()) => Availability {
                     available: true,

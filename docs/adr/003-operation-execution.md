@@ -1,6 +1,8 @@
 # ADR-003: Operation execution and scoped persistence
 
-**Status:** Accepted (M1, 2026-09-26) · **Design doc:** §6, §12, I03, I04, I12, I13
+**Status:** Accepted (M1, 2026-09-26) · **Design doc:** §6, §12, I03, I04, I12, I13 ·
+**Amended by:** ADR-012 (output check before commit), ADR-013 (contexts resolve from an
+`Invocation`)
 
 ## Context
 

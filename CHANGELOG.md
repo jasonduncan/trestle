@@ -23,10 +23,35 @@ promise.
   value) is a 500 `internal_error`; a write rolls back. The log names the
   operation, contract, and failing field pointers and codes, never values.
   `execute_dyn` now returns the normalized output. See ADR-012.
+- **Breaking:** operation contexts are built from an `Invocation`, not an
+  HTTP request (ADR-013):
+  - implement `trestle_core::invocation::FromInvocation<S>` instead of
+    `FromRequestParts<S>`, reading the actor with `invocation.actor()?` and
+    the tenant selection with `invocation.tenant()`;
+  - `DynOperation::context_from(&mut Parts, &S)` is now
+    `resolve_context(&Invocation, &S)`;
+  - states used with managed routes need `Identity: FromRef<S>`.
+
+  HTTP reads only what the context's `describe()` declares: credentials when
+  it is `authenticated`, and `Trestle-Tenant` when it lists that header. A
+  context that declares neither ignores them.
+- `TENANT_HEADER` lives in `trestle_core::invocation`;
+  `trestle::intent::TENANT_HEADER` re-exports it.
 
 ### Added
 - `trestle_operation_output_invalid_total{operation}`: results refused
   because they do not satisfy the output contract.
+- Invoking operations without HTTP (ADR-013):
+  - `Invocation::for_actor(..).with_tenant(..)` for trusted callers (jobs,
+    operator commands, tests);
+  - `operation::invoke` / `invoke_dyn`, and `Registry::invoke(state, id,
+    &invocation, &input)` by stable operation ID;
+  - `TestApp::invoke`.
+
+  They resolve the context and run the executor exactly as managed routes
+  do, and are not charged to admission.
+- `invocation::Resolved<C>`: an Axum extractor for hand-written handlers that
+  resolves `C` the same way.
 
 ## [0.2.1] - 2026-10-16
 
