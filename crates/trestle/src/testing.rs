@@ -40,7 +40,7 @@ pub struct TestApp {
     router: Router,
     registry: Registry<State>,
     state: State,
-    tenancy: Option<&'static Tenancy>,
+    tenancy: Option<Tenancy>,
 }
 
 impl TestApp {
@@ -86,7 +86,10 @@ impl TestApp {
 
     /// Creates a tenant of the `[tenancy]` model and returns its ID.
     pub async fn tenant(&self, name: &str) -> Uuid {
-        let tenancy = self.tenancy.expect("trestle.toml declares no [tenancy]");
+        let tenancy = self
+            .tenancy
+            .as_ref()
+            .expect("trestle.toml declares no [tenancy]");
         let id = Uuid::now_v7();
         sqlx::query(&format!(
             "INSERT INTO {} (id, name) VALUES ($1, $2)",
@@ -102,7 +105,10 @@ impl TestApp {
 
     /// Gives `actor` a role from `[roles]` in `tenant`.
     pub async fn grant(&self, tenant: Uuid, actor: Uuid, role: &str) {
-        let tenancy = self.tenancy.expect("trestle.toml declares no [tenancy]");
+        let tenancy = self
+            .tenancy
+            .as_ref()
+            .expect("trestle.toml declares no [tenancy]");
         sqlx::query(&format!(
             "INSERT INTO {} ({}, actor_id, role) VALUES ($1, $2, $3)",
             tenancy.membership_table(),

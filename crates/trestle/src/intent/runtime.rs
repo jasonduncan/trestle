@@ -20,7 +20,7 @@ use trestle_core::Problem;
 use trestle_core::identity::{ActorId, Identity};
 use trestle_core::invocation::Invocation;
 use trestle_core::operation::{
-    BoxFuture, ContextDescriptor, DynConn, DynContext, DynOperation, Mode, OperationInfo,
+    BoxFuture, ContextDescriptor, DynConn, DynContext, DynOperation, Mode, OperationDescriptor,
 };
 use trestle_core::registry::{App as CoreApp, AppBuilder, Http};
 use trestle_historical::schema::{Column, Model};
@@ -34,10 +34,6 @@ pub use trestle_core::invocation::TENANT_HEADER;
 /// Most items a list returns.
 pub const MAX_LIMIT: i64 = 100;
 
-fn leak(s: String) -> &'static str {
-    Box::leak(s.into_boxed_str())
-}
-
 fn internal(message: &str) -> Problem {
     tracing::error!("{message}");
     Problem::internal()
@@ -48,12 +44,12 @@ fn internal(message: &str) -> Problem {
 /// names the model, never a silent `null`.
 #[derive(Debug, Clone)]
 pub struct Row {
-    model: &'static ModelSpec,
+    model: Arc<ModelSpec>,
     data: Map<String, Value>,
 }
 
 impl Row {
-    fn new(model: &'static ModelSpec, data: Map<String, Value>) -> Self {
+    fn new(model: Arc<ModelSpec>, data: Map<String, Value>) -> Self {
         Self { model, data }
     }
 
@@ -141,7 +137,7 @@ struct CtxInner {
     conn: Mutex<Option<DynConn>>,
     actor: ActorId,
     tenant: Option<Uuid>,
-    intent: &'static Resolved,
+    intent: Arc<Resolved>,
     /// False for read operations (GET): their handlers may not mutate.
     writes: bool,
 }
@@ -166,13 +162,14 @@ impl Ctx {
         self.inner.tenant
     }
 
-    fn model(&self, id: &str) -> Result<&'static ModelSpec, Problem> {
+    fn model(&self, id: &str) -> Result<Arc<ModelSpec>, Problem> {
         self.inner
             .intent
             .intent
             .models
             .iter()
             .find(|m| m.id == id)
+            .cloned()
             .ok_or_else(|| internal(&format!("model {id:?} is not declared in trestle.toml")))
     }
 
@@ -190,7 +187,7 @@ impl Ctx {
 
     /// One record, or 404.
     pub async fn get(&self, model: &str, id: Uuid) -> Result<Row, Problem> {
-        let model = self.model(model)?;
+        let model = &self.model(model)?;
         self.with(async |conn, scope| {
             fetch(conn, model, scope, id, false)
                 .await?
@@ -201,7 +198,7 @@ impl Ctx {
 
     /// Records matching `filter` (field equality), newest first.
     pub async fn list(&self, model: &str, filter: Value) -> Result<Vec<Row>, Problem> {
-        let model = self.model(model)?;
+        let model = &self.model(model)?;
         let filter = filter
             .as_object()
             .cloned()
@@ -216,7 +213,7 @@ impl Ctx {
     /// contract, as if they came from a request.
     pub async fn create(&self, model: &str, values: Value) -> Result<Row, Problem> {
         self.check_writable()?;
-        let model = self.model(model)?;
+        let model = &self.model(model)?;
         let contract = create_contract(model);
         let values = contract.validate(&values).map_err(Problem::from)?;
         let values = values.as_object().cloned().unwrap_or_default();
@@ -227,7 +224,7 @@ impl Ctx {
     /// Changes fields of a record (no version check), or 404.
     pub async fn update(&self, model: &str, id: Uuid, values: Value) -> Result<Row, Problem> {
         self.check_writable()?;
-        let model = self.model(model)?;
+        let model = &self.model(model)?;
         let mut instance = values
             .as_object()
             .cloned()
@@ -250,7 +247,7 @@ impl Ctx {
     /// Deletes a record, or 404.
     pub async fn delete(&self, model: &str, id: Uuid) -> Result<Row, Problem> {
         self.check_writable()?;
-        let model = self.model(model)?;
+        let model = &self.model(model)?;
         self.with(async |conn, scope| {
             delete(conn, model, scope, id, None)
                 .await?
@@ -378,7 +375,7 @@ impl Resolved {
 
     /// The apps this intent installs: one per app prefix, plus the tenancy
     /// app.
-    pub fn apps<S>(&'static self) -> Vec<IntentApp<S>> {
+    pub fn apps<S>(self: &Arc<Self>) -> Vec<IntentApp<S>> {
         let mut apps: Vec<String> = self.intent.models.iter().map(|m| m.app.clone()).collect();
         for e in &self.intent.endpoints {
             if let EndpointSpec::Custom { id, .. } = e
@@ -392,17 +389,17 @@ impl Resolved {
         let mut out: Vec<IntentApp<S>> = apps
             .into_iter()
             .map(|app| IntentApp {
-                id: leak(app),
+                id: app,
                 tenancy: false,
-                resolved: self,
+                resolved: self.clone(),
                 _state: PhantomData,
             })
             .collect();
         if let Some(t) = &self.intent.tenancy {
             out.push(IntentApp {
-                id: leak(t.name.clone()),
+                id: t.name.clone(),
                 tenancy: true,
-                resolved: self,
+                resolved: self.clone(),
                 _state: PhantomData,
             });
         }
@@ -412,9 +409,9 @@ impl Resolved {
 
 /// The models and endpoints of one app in the intent.
 pub struct IntentApp<S> {
-    id: &'static str,
+    id: String,
     tenancy: bool,
-    resolved: &'static Resolved,
+    resolved: Arc<Resolved>,
     _state: PhantomData<fn() -> S>,
 }
 
@@ -424,8 +421,8 @@ where
     PgPool: FromRef<S>,
     Identity: FromRef<S>,
 {
-    fn id(&self) -> &'static str {
-        self.id
+    fn id(&self) -> &str {
+        &self.id
     }
 
     fn register(&self, app: &mut AppBuilder<S>) {
@@ -463,7 +460,7 @@ where
             return;
         }
         if let Some(t) = &intent.tenancy {
-            app.requires(leak(t.name.clone()));
+            app.requires(t.name.as_str());
         }
         for model in intent.models.iter().filter(|m| m.app == self.id) {
             app.model(model_of(model, intent));
@@ -488,7 +485,7 @@ where
                     for op in ops {
                         let permission = if op.writes() { write } else { read };
                         let (built, http) =
-                            crud_operation::<S>(self.resolved, spec, endpoint, *op, permission);
+                            crud_operation::<S>(&self.resolved, spec, endpoint, *op, permission);
                         app.dyn_operation(built, Some(http));
                     }
                 }
@@ -501,7 +498,7 @@ where
                     handler,
                     input,
                 } => {
-                    if id.split_once('.').map(|(a, _)| a) != Some(self.id) {
+                    if id.split_once('.').map(|(a, _)| a) != Some(self.id.as_str()) {
                         continue;
                     }
                     let spec = intent
@@ -522,18 +519,15 @@ where
                         Mode::Write
                     };
                     let op = IntentOp::<S> {
-                        info: OperationInfo {
-                            id: leak(id.clone()),
-                            version: "1",
-                            mode,
-                            audiences: &[Audience::Product],
-                            summary: leak(format!("{id} (handler {})", handler.name)),
-                        },
+                        info: OperationDescriptor::new(id.as_str(), "1", mode)
+                            .audiences(&[Audience::Product])
+                            .summary(format!("{id} (handler {})", handler.name)),
+                        policy: policy_id(permission),
                         permission: permission.clone(),
-                        input: Box::leak(Box::new(contract)),
+                        input: contract,
                         output: representation(spec),
-                        model: spec,
-                        resolved: self.resolved,
+                        model: spec.clone(),
+                        resolved: self.resolved.clone(),
                         kind: Kind::Handler(handler.name.clone()),
                         _state: PhantomData,
                     };
@@ -681,7 +675,7 @@ fn field_contract(f: &FieldSpec, required: bool) -> Field {
     field
 }
 
-fn representation(model: &ModelSpec) -> &'static ContractDoc {
+fn representation(model: &ModelSpec) -> Arc<ContractDoc> {
     let mut doc = ContractDoc::output(&model.id, "1").field(Field::uuid("id"));
     for f in &model.fields {
         let mut field = field_contract(f, true);
@@ -693,7 +687,11 @@ fn representation(model: &ModelSpec) -> &'static ContractDoc {
     let doc = doc
         .field(Field::integer("version"))
         .field(Field::text("created_at"));
-    Box::leak(Box::new(doc))
+    Arc::new(doc)
+}
+
+fn policy_id(permission: &str) -> String {
+    format!("intent.permission.{permission}")
 }
 
 fn create_contract(model: &ModelSpec) -> ContractDoc {
@@ -721,19 +719,20 @@ enum Kind {
 }
 
 struct IntentOp<S> {
-    info: OperationInfo,
+    info: OperationDescriptor,
+    policy: String,
     permission: String,
-    input: &'static ContractDoc,
-    output: &'static ContractDoc,
-    model: &'static ModelSpec,
-    resolved: &'static Resolved,
+    input: ContractDoc,
+    output: Arc<ContractDoc>,
+    model: Arc<ModelSpec>,
+    resolved: Arc<Resolved>,
     kind: Kind,
     _state: PhantomData<fn() -> S>,
 }
 
 fn crud_operation<S>(
-    resolved: &'static Resolved,
-    model: &'static ModelSpec,
+    resolved: &Arc<Resolved>,
+    model: &Arc<ModelSpec>,
     endpoint: &EndpointSpec,
     op: Crud,
     permission: &str,
@@ -755,7 +754,7 @@ where
     let collection = model.path();
     let item = format!("{collection}/{{id}}");
     let rep = representation(model);
-    let (input, output, http, summary): (ContractDoc, &'static ContractDoc, Http, String) =
+    let (input, output, http, summary): (ContractDoc, Arc<ContractDoc>, Http, String) =
         match op {
             Crud::List => {
                 let mut doc = ContractDoc::input(&format!("{}.list", model.id), "1");
@@ -765,23 +764,23 @@ where
                 }
                 doc = doc.field(Field::integer("limit").range(1, MAX_LIMIT).optional());
                 let page = ContractDoc::output(&format!("{}.page", model.id), "1")
-                    .field(Field::items("items", rep, MAX_LIMIT as u32));
+                    .field(Field::items("items", &rep, MAX_LIMIT as u32));
                 (
                     doc,
-                    Box::leak(Box::new(page)),
+                    Arc::new(page),
                     Http::get(collection.clone()),
                     format!("List {}.", model.id),
                 )
             }
             Crud::Get => (
                 ContractDoc::input(&format!("{}.get", model.id), "1").field(Field::uuid("id")),
-                rep,
+                rep.clone(),
                 Http::get(item.clone()).etag("version"),
                 format!("Get one {}.", model.id),
             ),
             Crud::Create => (
                 create_contract(model),
-                rep,
+                rep.clone(),
                 Http::post(collection.clone())
                     .created(item.clone())
                     .etag("version"),
@@ -789,7 +788,7 @@ where
             ),
             Crud::Update => (
                 update_contract(model, true),
-                rep,
+                rep.clone(),
                 Http::patch(item.clone())
                     .if_match("expected_version")
                     .etag("version"),
@@ -799,7 +798,7 @@ where
                 ContractDoc::input(&format!("{}.delete", model.id), "1")
                     .field(Field::uuid("id"))
                     .field(Field::digits("expected_version")),
-                rep,
+                rep.clone(),
                 Http::delete(item.clone())
                     .if_match("expected_version")
                     .no_content(),
@@ -811,18 +810,19 @@ where
         .map(|(k, v)| (k.clone(), v.name.clone()))
         .collect();
     let built = IntentOp::<S> {
-        info: OperationInfo {
-            id: leak(format!("{}.{}", model.id, op.as_str())),
-            version: "1",
-            mode: if op.writes() { Mode::Write } else { Mode::Read },
-            audiences: &[Audience::Product],
-            summary: leak(summary),
-        },
+        info: OperationDescriptor::new(
+            format!("{}.{}", model.id, op.as_str()),
+            "1",
+            if op.writes() { Mode::Write } else { Mode::Read },
+        )
+        .audiences(&[Audience::Product])
+        .summary(summary),
+        policy: policy_id(permission),
         permission: permission.to_owned(),
-        input: Box::leak(Box::new(input)),
+        input,
         output,
-        model,
-        resolved,
+        model: model.clone(),
+        resolved: resolved.clone(),
         kind: Kind::Crud(op, filter.clone(), order.clone(), hooks),
         _state: PhantomData,
     };
@@ -882,12 +882,12 @@ where
     PgPool: FromRef<S>,
     Identity: FromRef<S>,
 {
-    fn info(&self) -> OperationInfo {
-        self.info
+    fn info(&self) -> &OperationDescriptor {
+        &self.info
     }
 
-    fn policy_id(&self) -> &'static str {
-        leak(format!("intent.permission.{}", self.permission))
+    fn policy_id(&self) -> &str {
+        &self.policy
     }
 
     fn context(&self) -> ContextDescriptor {
@@ -903,12 +903,12 @@ where
         }
     }
 
-    fn input(&self) -> &'static ContractDoc {
-        self.input
+    fn input(&self) -> &ContractDoc {
+        &self.input
     }
 
-    fn output(&self) -> &'static ContractDoc {
-        self.output
+    fn output(&self) -> &ContractDoc {
+        &self.output
     }
 
     fn resolve_context<'a>(
@@ -934,7 +934,7 @@ where
             let pool = PgPool::from_ref(state);
             let mut conn = pool.acquire().await?;
             // Unknown tenants and tenants without membership look the same.
-            let role = membership_role(&mut conn, self.resolved, tenant, actor, false)
+            let role = membership_role(&mut conn, &self.resolved, tenant, actor, false)
                 .await?
                 .ok_or_else(|| Problem::forbidden("tenant_not_permitted"))?;
             Ok(Arc::new(IntentContext {
@@ -964,7 +964,7 @@ where
             let Some(tenant) = ctx.tenant else {
                 return Ok(());
             };
-            let role = membership_role(conn, self.resolved, tenant, ctx.actor, true)
+            let role = membership_role(conn, &self.resolved, tenant, ctx.actor, true)
                 .await?
                 .ok_or_else(|| Problem::forbidden("tenant_not_permitted"))?;
             if self.permits(Some(&role)) {
@@ -991,7 +991,7 @@ where
                     conn: Mutex::new(Some(conn)),
                     actor,
                     tenant,
-                    intent: self.resolved,
+                    intent: self.resolved.clone(),
                     writes: self.info.mode == Mode::Write,
                 }),
             };
@@ -1035,7 +1035,7 @@ impl<S> IntentOp<S> {
     }
 
     async fn dispatch(&self, ctx: &Ctx, input: Value) -> Result<Value, Problem> {
-        let model = self.model;
+        let model = &self.model;
         let Value::Object(mut input) = input else {
             return Err(Problem::malformed(
                 "invalid_body",
@@ -1104,7 +1104,7 @@ impl<S> IntentOp<S> {
                         Ok(row.to_json())
                     }
                     Crud::Create => {
-                        let mut row = Row::new(model, input);
+                        let mut row = Row::new(model.clone(), input);
                         row = self.hook(ctx, hooks, "validate", row).await?;
                         row = self.hook(ctx, hooks, "before_create", row).await?;
                         let created = ctx
@@ -1185,11 +1185,11 @@ fn representation_sql(model: &ModelSpec) -> String {
     format!("jsonb_build_object({})::text", parts.join(", "))
 }
 
-fn parse_rows(model: &'static ModelSpec, texts: Vec<String>) -> Result<Vec<Row>, Problem> {
+fn parse_rows(model: &Arc<ModelSpec>, texts: Vec<String>) -> Result<Vec<Row>, Problem> {
     texts
         .into_iter()
         .map(|t| match serde_json::from_str::<Value>(&t) {
-            Ok(Value::Object(map)) => Ok(Row::new(model, map)),
+            Ok(Value::Object(map)) => Ok(Row::new(model.clone(), map)),
             _ => Err(internal("row did not render as an object")),
         })
         .collect()
@@ -1197,7 +1197,7 @@ fn parse_rows(model: &'static ModelSpec, texts: Vec<String>) -> Result<Vec<Row>,
 
 async fn fetch(
     conn: &mut PgConnection,
-    model: &'static ModelSpec,
+    model: &Arc<ModelSpec>,
     scope: &Scope,
     id: Uuid,
     lock: bool,
@@ -1222,7 +1222,7 @@ async fn fetch(
 
 async fn list(
     conn: &mut PgConnection,
-    model: &'static ModelSpec,
+    model: &Arc<ModelSpec>,
     scope: &Scope,
     filter: &Map<String, Value>,
     order: (&str, bool),
@@ -1270,7 +1270,7 @@ fn writable(model: &ModelSpec, values: &Map<String, Value>) -> Vec<String> {
 
 async fn insert(
     conn: &mut PgConnection,
-    model: &'static ModelSpec,
+    model: &Arc<ModelSpec>,
     scope: &Scope,
     mut values: Map<String, Value>,
 ) -> Result<Row, Problem> {
@@ -1300,7 +1300,7 @@ async fn insert(
 
 async fn update(
     conn: &mut PgConnection,
-    model: &'static ModelSpec,
+    model: &Arc<ModelSpec>,
     scope: &Scope,
     id: Uuid,
     values: Map<String, Value>,
@@ -1343,7 +1343,7 @@ async fn update(
 
 async fn delete(
     conn: &mut PgConnection,
-    model: &'static ModelSpec,
+    model: &Arc<ModelSpec>,
     scope: &Scope,
     id: Uuid,
     expected_version: Option<i64>,

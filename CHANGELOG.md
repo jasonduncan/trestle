@@ -37,6 +37,25 @@ promise.
   context that declares neither ignores them.
 - `TENANT_HEADER` lives in `trestle_core::invocation`;
   `trestle::intent::TENANT_HEADER` re-exports it.
+- The registry owns what it assembles, so applications built from runtime
+  data need no `'static` strings (ADR-014):
+  - `RegisteredOperation` holds an `OperationDescriptor` and
+    `Arc<str>`/`Arc<ContractDoc>` fields, and so do `AppInfo`, `RouteKind`,
+    `RegisteredResource` and `CommandContext::name`;
+  - `App::id` returns `&str`;
+  - `AppBuilder::requires`/`resource`, `Project::new` and `Project::named`
+    accept owned or borrowed strings.
+
+  Typed operations are unchanged (`const INFO: OperationInfo`).
+  **Breaking** for `DynOperation` implementors: `info()` returns
+  `&OperationDescriptor`, and `policy_id()`, `input()` and `output()` borrow
+  from the operation.
+
+### Fixed
+- The `trestle.toml` runtime no longer leaks memory: every assembly leaked
+  about 17 KB for the notes example (operation IDs, contracts, the parsed
+  intent), and every `policy_id()` call leaked a string. The intent is now
+  shared and freed with the registry.
 
 ### Added
 - `trestle_operation_output_invalid_total{operation}`: results refused

@@ -172,8 +172,8 @@ impl<S> Registry<S> {
             .filter(|o| o.info.audiences.contains(&audience))
         {
             let Some(binding) = &op.binding else { continue };
-            contracts.insert(op.input.id.clone(), op.input.clone());
-            contracts.insert(op.output.id.clone(), op.output.clone());
+            contracts.insert(op.input.id.clone(), (*op.input).clone());
+            contracts.insert(op.output.id.clone(), (*op.output).clone());
             let input = type_name(&op.input.id);
             let output = if binding.no_content {
                 "void".to_owned()
@@ -198,7 +198,7 @@ impl<S> Registry<S> {
                 op.info.version,
                 binding.method,
                 binding.path,
-                function_name(op.info.id),
+                function_name(&op.info.id),
                 binding.method,
                 binding.path,
                 path.join(", "),

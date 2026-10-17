@@ -109,7 +109,7 @@ fn retained_revisions_are_recorded_and_still_compatible() {
                 published.form.id, published.revision
             ));
         }
-        let current = registry.operation(&published.form.operation).unwrap().input;
+        let current = &registry.operation(&published.form.operation).unwrap().input;
         for retained in &published.retained {
             let Some(old) = recorded.get(retained.revision) else {
                 problems.push(format!(

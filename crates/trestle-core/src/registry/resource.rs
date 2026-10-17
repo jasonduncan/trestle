@@ -128,16 +128,16 @@ pub(crate) struct AdminProfile<S> {
 }
 
 pub struct RegisteredResource<S> {
-    pub app: &'static str,
-    pub id: &'static str,
-    pub path: &'static str,
-    pub list: Option<&'static str>,
-    pub create: Option<&'static str>,
-    pub retrieve: Option<&'static str>,
-    pub update: Option<&'static str>,
-    pub delete: Option<&'static str>,
+    pub app: Arc<str>,
+    pub id: Arc<str>,
+    pub path: Arc<str>,
+    pub list: Option<Arc<str>>,
+    pub create: Option<Arc<str>>,
+    pub retrieve: Option<Arc<str>>,
+    pub update: Option<Arc<str>>,
+    pub delete: Option<Arc<str>>,
     /// (action name, operation ID)
-    pub actions: Vec<(String, &'static str)>,
+    pub actions: Vec<(String, Arc<str>)>,
     pub(crate) admin: Option<AdminProfile<S>>,
 }
 
@@ -165,11 +165,11 @@ where
         &mut self.builder.resources[self.index]
     }
 
-    fn path(&self) -> &'static str {
-        self.builder.resources[self.index].path
+    fn path(&self) -> Arc<str> {
+        self.builder.resources[self.index].path.clone()
     }
 
-    fn register<O>(&mut self, op: O, http: Http) -> &'static str
+    fn register<O>(&mut self, op: O, http: Http) -> Arc<str>
     where
         O: Operation,
         O::Context: FromInvocation<S>,
@@ -181,7 +181,7 @@ where
             http
         };
         self.builder.operation(op).http(http);
-        O::INFO.id
+        Arc::from(O::INFO.id)
     }
 
     /// `GET {path}`: a page of items (output `Page<T>`).
@@ -192,7 +192,7 @@ where
         Identity: FromRef<S>,
     {
         let path = self.path();
-        let id = self.register(op, Http::get(path));
+        let id = self.register(op, Http::get(&*path));
         self.resource().list = Some(id);
         self
     }
@@ -205,7 +205,7 @@ where
         Identity: FromRef<S>,
     {
         let path = self.path();
-        let id = self.register(op, Http::post(path).created(format!("{path}/{{id}}")));
+        let id = self.register(op, Http::post(&*path).created(format!("{path}/{{id}}")));
         self.resource().create = Some(id);
         self
     }
@@ -250,7 +250,7 @@ where
             .if_match(EXPECTED_VERSION_FIELD)
             .no_content();
         self.builder.operation(op).http(http);
-        self.resource().delete = Some(O::INFO.id);
+        self.resource().delete = Some(Arc::from(O::INFO.id));
         self
     }
 
