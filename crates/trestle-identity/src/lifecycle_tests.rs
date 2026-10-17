@@ -378,33 +378,44 @@ async fn every_failed_sign_in_makes_the_same_write() {
 #[tokio::test]
 async fn sign_in_attempts_are_limited_per_account_from_any_address() {
     let env = Env::new().await;
+    assert_eq!(PasswordPolicy::default().account_attempts_per_minute, 10.0);
+    // The bucket refills continuously: at the default 10/min, one attempt
+    // comes back every 6s, and ten full-cost Argon2id verifications can take
+    // that long on a small CI runner. Three a minute (one back every 20s)
+    // keeps the attempts well inside one refill.
+    const LIMIT: usize = 3;
+    let passwords = Passwords::new(
+        env.pool.clone(),
+        PasswordPolicy {
+            account_attempts_per_minute: LIMIT as f64,
+            ..PasswordPolicy::default()
+        },
+        None,
+    );
     env.account("target@example.com", &weak_hash(OLD)).await;
-    // Ten attempts a minute per account by default; lockout (5 failures)
-    // would refuse with login_failed, so use the right password here.
-    for i in 0..10 {
+    // Lockout (5 failures) would refuse with login_failed, so use the right
+    // password here.
+    for i in 0..LIMIT {
         assert!(
-            env.passwords
+            passwords
                 .login_session(&env.sessions, "target@example.com", OLD.into())
                 .await
                 .is_ok(),
             "attempt {i} allowed"
         );
     }
-    let refused = env
-        .passwords
+    let refused = passwords
         .login_session(&env.sessions, " Target@Example.com ", OLD.into())
         .await
         .unwrap_err();
     assert_eq!(refused.status(), http::StatusCode::TOO_MANY_REQUESTS);
     // Unknown accounts are limited the same way, so the limit reveals nothing.
-    for _ in 0..10 {
-        let _ = env
-            .passwords
+    for _ in 0..LIMIT {
+        let _ = passwords
             .login_session(&env.sessions, "nobody@example.com", OLD.into())
             .await;
     }
-    let unknown = env
-        .passwords
+    let unknown = passwords
         .login_session(&env.sessions, "nobody@example.com", OLD.into())
         .await
         .unwrap_err();
@@ -412,7 +423,7 @@ async fn sign_in_attempts_are_limited_per_account_from_any_address() {
     // Other accounts are unaffected.
     env.account("other@example.com", &weak_hash(OLD)).await;
     assert!(
-        env.passwords
+        passwords
             .login_session(&env.sessions, "other@example.com", OLD.into())
             .await
             .is_ok()
