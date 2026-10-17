@@ -1,7 +1,7 @@
 # ADR-009: Durable execution (jobs and outbox)
 
-**Status:** Deferred (M5, 2026-09-26): not introduced · **Design doc:** §6.3,
-§15.1–§15.2, §18 M5
+**Status:** Deferred (M5, 2026-09-26): not introduced · **Reopened by:** ADR-015
+(Proposed, 2026-10-17) · **Design doc:** §6.3, §15.1–§15.2, §18 M5
 
 ## Context
 

@@ -47,6 +47,8 @@ promise.
     accept owned or borrowed strings.
 
   Typed operations are unchanged (`const INFO: OperationInfo`).
+  `CommandContext::registry` is an `Arc<Registry<S>>` (was `Rc`), so a
+  worker can share it.
   **Breaking** for `DynOperation` implementors: `info()` returns
   `&OperationDescriptor`, and `policy_id()`, `input()` and `output()` borrow
   from the operation.
@@ -58,6 +60,18 @@ promise.
   shared and freed with the registry.
 
 ### Added
+- Durable jobs and a transactional outbox (ADR-015, guide: `docs/guide/jobs.md`):
+  - `trestle_core::jobs::JobsApp` installs the `trestle_jobs` table;
+  - `jobs::enqueue(conn, NewJob::operation(..) | NewJob::handler(..))` runs
+    in the operation's transaction;
+  - `AppBuilder::job(kind, handler)`;
+  - `Worker` with fenced claims, leases, retries with backoff, bounded
+    attempts and a bounded drain;
+  - `jobs::status` and `jobs::purge_finished`.
+
+  Operation jobs are re-authorized on every attempt. `serve --jobs`
+  (`TRESTLE_JOBS`, `TRESTLE_JOB_CONCURRENCY`) runs a worker in the server
+  process.
 - `trestle_operation_output_invalid_total{operation}`: results refused
   because they do not satisfy the output contract.
 - Invoking operations without HTTP (ADR-013):

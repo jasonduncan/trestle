@@ -29,7 +29,7 @@ and is not self-granted. Open items before a pilot:
 choose how people sign in (password accounts are built; an OIDC provider is optional and only
 mock-tested), send through the real SMTP relay, get external security review (§12.4), and
 validate the edge config (`deploy/Caddyfile`) on a real host. Do not claim general
-maturity or benchmark leadership. ADRs: 001–014 (009 records jobs/outbox as deferred).
+maturity or benchmark leadership. ADRs: 001–015 (015 reopens 009: jobs and outbox).
 
 ## Non-negotiables
 - Installing a model publishes nothing (I01). Endpoints, forms and writable fields are explicit.
@@ -75,6 +75,10 @@ maturity or benchmark leadership. ADRs: 001–014 (009 records jobs/outbox as de
   what `describe()` declares, so a context that needs a header must declare it there.
   `Invocation::for_actor` is for trusted callers (jobs, commands, tests); never build one from
   request data. Hand-written handlers extract `Resolved<C>`.
+- After-commit work is a job (ADR-015): `jobs::enqueue` on the operation's own connection, never
+  `tokio::spawn`. Handlers are at least once: idempotent, passing `job.idempotency_key()` to
+  providers. Database work in a handler goes through `job.invoke` (re-authorized). Job inputs
+  are stored in plain text: no credentials, tokens or link secrets in them.
 - Assembly never leaks (ADR-014): no `Box::leak` on a registration path. Runtime-built apps
   register owned data (`OperationDescriptor`, `Arc<str>`, `Arc<ContractDoc>`);
   `crates/trestle/tests/assembly_memory.rs` fails if repeated assembly grows the heap.

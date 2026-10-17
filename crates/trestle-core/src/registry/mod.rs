@@ -43,6 +43,7 @@ use crate::Problem;
 use crate::health::{self, LIVE_PATH, READY_PATH};
 use crate::identity::Identity;
 use crate::invocation::{FromInvocation, Invocation};
+use crate::jobs::JobHandler;
 use crate::operation::{
     BoxFuture, ContextDescriptor, DynOperation, Operation, OperationDescriptor, Policy,
     RequestContext, invoke, invoke_dyn,
@@ -79,6 +80,14 @@ pub struct AppBuilder<S> {
     forms: Vec<RegisteredForm>,
     resources: Vec<RegisteredResource<S>>,
     unmanaged: Vec<UnmanagedRoute<S>>,
+    jobs: Vec<RegisteredJob<S>>,
+}
+
+/// A handler for jobs of one kind (ADR-015).
+pub struct RegisteredJob<S> {
+    pub app: Arc<str>,
+    pub kind: Arc<str>,
+    handler: Arc<dyn JobHandler<S>>,
 }
 
 impl<S> AppBuilder<S> {
@@ -93,7 +102,20 @@ impl<S> AppBuilder<S> {
             forms: Vec::new(),
             resources: Vec::new(),
             unmanaged: Vec::new(),
+            jobs: Vec::new(),
         }
+    }
+
+    /// Registers the handler for jobs of `kind` (`app.kind`), enqueued with
+    /// [`crate::jobs::NewJob::handler`]. Registration is pure: nothing runs
+    /// until a worker claims a job.
+    pub fn job(&mut self, kind: impl Into<Arc<str>>, handler: impl JobHandler<S>) -> &mut Self {
+        self.jobs.push(RegisteredJob {
+            app: self.app.clone(),
+            kind: kind.into(),
+            handler: Arc::new(handler),
+        });
+        self
     }
 
     /// Starts a resource at `path` (e.g. `/api/v1/lessons`). Verbs are
@@ -508,6 +530,7 @@ impl<S: 'static> Project<S> {
         let published = publish_forms(&builders, &mut issues);
         let desired = check_models(&builders, &mut issues);
         check_resources(&builders, &mut issues);
+        check_jobs(&builders, &mut issues);
 
         let mut step_names = HashSet::new();
         for builder in &builders {
@@ -565,6 +588,7 @@ impl<S: 'static> Project<S> {
             resources: Vec::new(),
             unmanaged: Vec::new(),
             schema: Vec::new(),
+            jobs: Vec::new(),
         };
         for index in order {
             let builder = slots[index].take().expect("each app appears once in order");
@@ -589,6 +613,7 @@ impl<S: 'static> Project<S> {
             registry.forms.append(&mut published[index]);
             registry.resources.extend(builder.resources);
             registry.unmanaged.extend(builder.unmanaged);
+            registry.jobs.extend(builder.jobs);
         }
         Ok(registry)
     }
@@ -1120,6 +1145,24 @@ fn check_resources<S>(builders: &[AppBuilder<S>], issues: &mut Vec<String>) {
     }
 }
 
+fn check_jobs<S>(builders: &[AppBuilder<S>], issues: &mut Vec<String>) {
+    let mut kinds = HashSet::new();
+    for builder in builders {
+        for job in &builder.jobs {
+            let kind: &str = &job.kind;
+            if !valid_stable_id(kind) || owner(kind) != &*builder.app {
+                issues.push(format!(
+                    "job kind {kind:?} must be a stable ID namespaced to app {}",
+                    builder.app
+                ));
+            }
+            if !kinds.insert(kind) {
+                issues.push(format!("job kind {kind} is registered twice"));
+            }
+        }
+    }
+}
+
 fn check_routes<S>(builders: &[AppBuilder<S>], issues: &mut Vec<String>) {
     let mut taken: Vec<(String, String, String)> = vec![
         ("GET".into(), LIVE_PATH.into(), "system".into()),
@@ -1185,9 +1228,23 @@ pub struct Registry<S> {
     resources: Vec<RegisteredResource<S>>,
     unmanaged: Vec<UnmanagedRoute<S>>,
     schema: Vec<MigrationRef>,
+    jobs: Vec<RegisteredJob<S>>,
 }
 
 impl<S> Registry<S> {
+    /// The handler registered for job `kind`.
+    pub fn job_handler(&self, kind: &str) -> Option<&dyn JobHandler<S>> {
+        self.jobs
+            .iter()
+            .find(|j| &*j.kind == kind)
+            .map(|j| &*j.handler)
+    }
+
+    /// Every registered job handler, in lifecycle order.
+    pub fn jobs(&self) -> &[RegisteredJob<S>] {
+        &self.jobs
+    }
+
     pub fn name(&self) -> &str {
         &self.name
     }

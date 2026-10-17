@@ -19,6 +19,7 @@ use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
 use trestle_core::admission::{Admission, AdmissionConfig};
 use trestle_core::http::Perimeter;
 use trestle_core::identity::{DevTokenIdentity, Identity, IdentityAdapter};
+use trestle_core::jobs::{Worker, WorkerConfig};
 use trestle_core::registry::Registry;
 use trestle_core::{metrics, pagination};
 use trestle_identity::bearer::BearerIdentity;
@@ -74,6 +75,14 @@ pub struct ServeConfig {
     /// Server-side limit for any one SQL statement.
     #[arg(long, env = "TRESTLE_STATEMENT_TIMEOUT_MS", default_value_t = 10_000)]
     pub statement_timeout_ms: u64,
+
+    /// Also run a job worker in this process (ADR-015). Needs
+    /// `trestle::core::jobs::JobsApp` installed and its migration applied.
+    #[arg(long, env = "TRESTLE_JOBS")]
+    pub jobs: bool,
+    /// Jobs the worker runs at once.
+    #[arg(long, env = "TRESTLE_JOB_CONCURRENCY", default_value_t = 8)]
+    pub job_concurrency: usize,
 
     /// Signs list cursors (at least 32 bytes). Required in production.
     #[arg(long, env = "TRESTLE_CURSOR_KEY", hide_env_values = true)]
@@ -132,6 +141,8 @@ impl ServeConfig {
             trust_peer_address: false,
             pool_size: 10,
             statement_timeout_ms: 10_000,
+            jobs: false,
+            job_concurrency: 8,
             cursor_key: None,
             session_key: None,
             oidc_issuer: None,
@@ -388,7 +399,7 @@ fn local_database(options: &PgConnectOptions) -> bool {
 /// `extension` adds project-specific settings and builds the project's
 /// state; its problems are reported together with the built-in ones.
 pub async fn serve<S, X>(
-    registry: &Registry<S>,
+    registry: Arc<Registry<S>>,
     env: Environment,
     database: PgConnectOptions,
     config: ServeConfig,
@@ -402,6 +413,16 @@ where
 {
     let mut problems = config.problems(env, &database);
     problems.extend(extension.problems());
+    if config.jobs && registry.desired_schema().model("jobs.job").is_none() {
+        problems.push(
+            "TRESTLE_JOBS needs the job table: install trestle::core::jobs::JobsApp and run \
+             makemigrations"
+                .into(),
+        );
+    }
+    if config.jobs && config.job_concurrency == 0 {
+        problems.push("TRESTLE_JOB_CONCURRENCY must be at least 1".into());
+    }
     if !problems.is_empty() {
         return Err(format!(
             "refusing to start ({env:?}):\n  - {}",
@@ -446,8 +467,8 @@ where
         env,
     })?;
     let app = crate::router_with(
-        registry,
-        state,
+        &registry,
+        state.clone(),
         Perimeter {
             admission: Some(admission.clone()),
         },
@@ -469,14 +490,44 @@ where
     let listener = tokio::net::TcpListener::bind(config.bind)
         .await
         .map_err(|e| format!("bind {}: {e}", config.bind))?;
+
+    // One signal stops both: HTTP stops accepting, the worker stops claiming
+    // and drains.
+    let (stop, stopped) = tokio::sync::watch::channel(false);
+    tokio::spawn(async move {
+        shutdown().await;
+        let _ = stop.send(true);
+    });
+    let until_stopped = |mut stopped: tokio::sync::watch::Receiver<bool>| async move {
+        let _ = stopped.wait_for(|s| *s).await;
+    };
+    let worker = config.jobs.then(|| {
+        let worker = Worker::new(
+            registry.clone(),
+            state,
+            WorkerConfig {
+                concurrency: config.job_concurrency,
+                ..WorkerConfig::default()
+            },
+        );
+        tracing::info!(concurrency = config.job_concurrency, "job worker running");
+        tokio::spawn(worker.run(until_stopped(stopped.clone())))
+    });
+
     tracing::info!(bind = %config.bind, env = ?env, "serving");
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown())
+    .with_graceful_shutdown(until_stopped(stopped))
     .await
     .map_err(|e| e.to_string())?;
+    if let Some(worker) = worker {
+        match worker.await {
+            Ok(pass) => tracing::info!(?pass, "job worker stopped"),
+            Err(err) => tracing::error!(error = %err, "job worker panicked"),
+        }
+    }
     pool.close().await;
     Ok(())
 }
@@ -565,6 +616,37 @@ mod tests {
         config.public_origin = vec!["https://app.example.com".into()];
         config.client_address_header = Some("x-real-ip".into());
         config
+    }
+
+    #[tokio::test]
+    async fn jobs_refuse_to_start_without_the_job_table() {
+        let start = |project: trestle_core::registry::Project<crate::State>| async {
+            let mut config = ServeConfig::for_tests();
+            config.jobs = true;
+            let registry = Arc::new(project.assemble().unwrap());
+            serve(
+                registry,
+                Environment::Development,
+                local(),
+                config,
+                crate::project::NoExtension::default(),
+                "t",
+            )
+            .await
+            .unwrap_err()
+        };
+        let without = start(trestle_core::registry::Project::new("t", "0")).await;
+        assert!(
+            without.contains("TRESTLE_JOBS needs the job table"),
+            "{without}"
+        );
+        // With the table installed the check passes; startup then fails on
+        // the (unreachable) database instead.
+        let with = start(
+            trestle_core::registry::Project::new("t", "0").install(trestle_core::jobs::JobsApp),
+        )
+        .await;
+        assert!(!with.contains("TRESTLE_JOBS"), "{with}");
     }
 
     #[test]

@@ -10,7 +10,6 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::process::ExitCode;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -88,7 +87,7 @@ impl Subcommand for NoCommands {
 /// What a project command gets: the assembled registry and the global
 /// settings. Never print [`CommandContext::database`]; it holds credentials.
 pub struct CommandContext<S> {
-    pub registry: Rc<Registry<S>>,
+    pub registry: Arc<Registry<S>>,
     pub env: Environment,
     /// The project's display name (`Project::named`).
     pub name: Arc<str>,
@@ -457,7 +456,7 @@ where
         let usage = |e: clap::Error| Failure::new(exit::USAGE, e.to_string());
         let globals = Globals::from_arg_matches(matches).map_err(usage)?;
         let (registry, runtime) = self.split();
-        let registry = Rc::new(registry.map_err(|e| e.to_string())?);
+        let registry = Arc::new(registry.map_err(|e| e.to_string())?);
         let ctx = CommandContext {
             registry,
             env: globals.env,
@@ -843,7 +842,7 @@ where
             }
             let options = database()?;
             schema_verified(&options, history()?, bin).await?;
-            Ok(serve::serve(registry, env, options, config, extension, bin).await?)
+            Ok(serve::serve(ctx.registry.clone(), env, options, config, extension, bin).await?)
         }
         BuiltIn::Identity { action } => match action {
             IdentityCommand::ActorId { issuer, subject } => {
