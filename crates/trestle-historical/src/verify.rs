@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use sqlx::PgConnection;
 
-use crate::schema::SchemaState;
+use crate::schema::{ColumnType, SchemaState};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Verification {
@@ -31,7 +31,11 @@ pub async fn verify(
     expected: &SchemaState,
 ) -> Result<Verification, sqlx::Error> {
     let columns: Vec<(String, String, String, String)> = sqlx::query_as(
-        "SELECT table_name::text, column_name::text, data_type::text, is_nullable::text
+        "SELECT table_name::text, column_name::text,
+                CASE WHEN data_type = 'numeric' AND numeric_precision IS NOT NULL
+                     THEN format('numeric(%s,%s)', numeric_precision, numeric_scale)
+                     ELSE data_type::text END,
+                is_nullable::text
          FROM information_schema.columns WHERE table_schema = current_schema()",
     )
     .fetch_all(&mut *conn)
@@ -89,12 +93,16 @@ pub async fn verify(
                     field.id, field.column
                 )),
                 Some((ty, nullable)) => {
-                    if *ty != field.ty.catalog_name() {
+                    let expected = match field.ty {
+                        ColumnType::Numeric { precision, scale } => {
+                            format!("numeric({precision},{scale})")
+                        }
+                        other => other.catalog_name().to_owned(),
+                    };
+                    if *ty != expected {
                         report.mismatches.push(format!(
-                            "{}: {table}.{} is {ty}, expected {}",
-                            field.id,
-                            field.column,
-                            field.ty.catalog_name()
+                            "{}: {table}.{} is {ty}, expected {expected}",
+                            field.id, field.column
                         ));
                     }
                     if *nullable != field.nullable {

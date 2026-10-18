@@ -109,7 +109,19 @@ promise.
     which require `forms.decimal@1` or `forms.temporal@1`.
   - **SDK:** they are `string` in the generated TypeScript.
 
+- Columns and `trestle.toml` fields for the scalar types (ADR-023):
+  - **Columns:** `Column::decimal(key, precision, scale)` (`numeric(p,s)`),
+    `Column::date`, `Column::duration` (`interval`), and `timestamptz`.
+  - **`verify`** compares numeric precision and scale.
+  - **`HistoricalTx`** reads and writes all four in their contract forms;
+    it used to refuse `timestamptz`.
+  - **`trestle.toml`:** fields may be `decimal` (`precision`, `scale`),
+    `date`, `instant` and `duration`. CRUD servers return them as strings,
+    with instants in UTC.
+
 ### Changed
+- **Breaking:** `ColumnType` has `Numeric`, `Date` and `Interval` variants,
+  and `ColumnType::sql()` returns `Cow<'static, str>`.
 - **Breaking:** `DataStep::run` is a `DataRun` (`Once` or `Batched`).
   Build one-shot steps with `DataStep::once(name, source, f)`, or write
   `run: DataRun::Once(f)`. Every `migrate` run adds the `checkpoint` column
