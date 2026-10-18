@@ -1,7 +1,8 @@
 //! ADR-024: `trestle.toml` relations and cursor paging. A `ref` field is a
 //! foreign key whose writes must name a row in the caller's tenant; a
 //! referenced row cannot be deleted from under it; lists page with signed
-//! cursors, as Rust lists do. Needs PostgreSQL.
+//! cursors, as Rust lists do. ADR-032: a ref may name another app's model.
+//! Needs PostgreSQL.
 
 use std::sync::Arc;
 
@@ -63,6 +64,16 @@ fn crm() -> trestle::Project {
     trestle::project().intent_str("trestle.toml", CRM)
 }
 
+/// ADR-032: the same project with deals in a `sales` app, referring to
+/// `crm` accounts, and a create form with a relation picker.
+fn split() -> String {
+    CRM.replace(r#"id = "crm.deal""#, r#"id = "sales.deal""#)
+        .replace(
+            "model = \"crm.deal\"\ncrud = [\"list\", \"get\", \"create\", \"update\"]",
+            "model = \"sales.deal\"\ncrud = [\"list\", \"get\", \"create\", \"update\"]\nforms = true",
+        )
+}
+
 struct Server {
     app: Router,
     db: TestDatabase,
@@ -72,7 +83,11 @@ struct Server {
 
 impl Server {
     async fn start() -> Self {
-        let registry = crm().assemble().unwrap();
+        Self::start_with(crm()).await
+    }
+
+    async fn start_with(project: trestle::Project) -> Self {
+        let registry = project.assemble().unwrap_or_else(|e| panic!("{e}"));
         let db = TestDatabase::create().await;
         let pool = db.pool().await;
         let plan = diff(
@@ -221,6 +236,76 @@ fn refs_and_orders_are_checked() {
         .unwrap()
         .problems;
     assert!(has(p, "is optional; order by a required field"));
+}
+
+#[test]
+fn a_ref_may_name_another_apps_model() {
+    let text = split();
+    assert!(text.contains(r#"model = "sales.deal""#) && text.contains("forms = true"));
+    let registry = trestle::project()
+        .intent_str("trestle.toml", &text)
+        .assemble()
+        .unwrap_or_else(|e| panic!("{e}"));
+    let deal = registry.desired_schema().model("sales.deal").unwrap();
+    let account = deal.field("sales.deal.account").unwrap();
+    assert_eq!(account.references.as_deref(), Some("crm.account"));
+    let apps: Vec<&str> = registry.apps().iter().map(|a| &*a.id).collect();
+    let at = |id: &str| apps.iter().position(|a| *a == id).unwrap();
+    assert!(at("crm") < at("sales"), "{apps:?}");
+    let sales = &registry.apps()[at("sales")];
+    assert!(sales.requires.iter().any(|r| &**r == "crm"));
+    assert!(registry.form("sales.deal.create.form").is_some());
+}
+
+#[test]
+fn refs_between_apps_go_one_way() {
+    let text = split().replace(
+        r#"fields = [{ id = "name", type = "text", max = 100 }]"#,
+        r#"fields = [
+  { id = "name", type = "text", max = 100 },
+  { id = "best", type = "ref", to = "sales.deal", optional = true },
+]"#,
+    );
+    let problems = trestle::intent::parse("trestle.toml", &text)
+        .err()
+        .map(|e| e.problems)
+        .unwrap_or_default();
+    assert!(
+        problems.iter().any(|p| p.contains(
+            "apps refer to each other's models in a circle (crm → sales → crm); refs between apps go one way"
+        )),
+        "{problems:#?}"
+    );
+}
+
+#[tokio::test]
+async fn a_ref_to_another_apps_model_names_a_row_in_the_callers_tenant() {
+    let server = Server::start_with(trestle::project().intent_str("trestle.toml", &split())).await;
+    let ours = server.account("Acme", false).await;
+    let theirs = server.account("Globex", true).await;
+    let (status, deal, _) = server
+        .call(
+            "POST",
+            "/api/v1/deals",
+            false,
+            Some(json!({ "title": "Big", "account": ours })),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{deal}");
+    let (status, refused, _) = server
+        .call(
+            "POST",
+            "/api/v1/deals",
+            false,
+            Some(json!({ "title": "x", "account": theirs })),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    assert_eq!(refused["errors"][0]["pointer"], "/account");
+    assert_eq!(refused["errors"][0]["code"], "not_found");
+    server.db.drop().await;
 }
 
 #[tokio::test]

@@ -713,6 +713,29 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
         }
     }
 
+    // Refs make one app need another (ADR-032), so they can't go round in
+    // a circle: migrations and lifecycle need an order.
+    let mut needs: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    let app_of: BTreeMap<&str, &str> = models
+        .iter()
+        .map(|m| (m.id.as_str(), m.app.as_str()))
+        .collect();
+    for model in &models {
+        for to in model.fields.iter().filter_map(|f| f.to.as_deref()) {
+            if let Some(&app) = app_of.get(to)
+                && app != model.app
+            {
+                needs.entry(model.app.as_str()).or_default().insert(app);
+            }
+        }
+    }
+    if let Some(cycle) = app_cycle(&needs) {
+        problems.push(format!(
+            "{file}: apps refer to each other's models in a circle ({}); refs between apps go one way",
+            cycle.join(" → ")
+        ));
+    }
+
     let known_permission = |p: &str| p == AUTHENTICATED || permissions.contains(p);
     let check_permission = |p: &Spanned<String>, problems: &mut Vec<String>| {
         let name = p.get_ref();
@@ -1354,6 +1377,38 @@ fn path_params(path: &str) -> Vec<&str> {
 
 /// Whether a TOML constant is a value of this field (defaults, action
 /// `set` and `when`).
+/// A circle of apps that need each other, starting and ending at the
+/// same app, if there is one.
+fn app_cycle<'a>(needs: &BTreeMap<&'a str, BTreeSet<&'a str>>) -> Option<Vec<&'a str>> {
+    fn visit<'a>(
+        app: &'a str,
+        needs: &BTreeMap<&'a str, BTreeSet<&'a str>>,
+        path: &mut Vec<&'a str>,
+        done: &mut BTreeSet<&'a str>,
+    ) -> Option<Vec<&'a str>> {
+        if let Some(i) = path.iter().position(|a| *a == app) {
+            let mut cycle = path[i..].to_vec();
+            cycle.push(app);
+            return Some(cycle);
+        }
+        if !done.insert(app) {
+            return None;
+        }
+        path.push(app);
+        for next in needs.get(app).into_iter().flatten() {
+            if let Some(cycle) = visit(next, needs, path, done) {
+                return Some(cycle);
+            }
+        }
+        path.pop();
+        None
+    }
+    let mut done = BTreeSet::new();
+    needs
+        .keys()
+        .find_map(|app| visit(app, needs, &mut Vec::new(), &mut done))
+}
+
 fn fits(ty: FieldType, values: &[String], precision: u8, scale: u8, v: &toml::Value) -> bool {
     use trestle_core::protocol::scalar;
     match (ty, v) {
