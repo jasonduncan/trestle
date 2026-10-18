@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-pub use data::{DataStep, HistoricalTx};
+pub use data::{BatchFn, DataFn, DataRun, DataStep, HistoricalTx};
 pub use ledger::{LedgerRow, LedgerStatus, exists as ledger_exists, load as ledger_rows, missing};
 pub use runner::{
     Outstanding, Plan, PlanEntry, PlanState, RunConfig, RunEvent, drift, migrate, migrate_with,
@@ -366,6 +366,11 @@ impl Migration {
         }
         let marked = self.sql.lines().any(|l| l.trim() == STEP_MARKER);
         if options.atomic {
+            if self.data.is_some_and(|d| d.is_batched()) {
+                problems.push(format!(
+                    "{key}: a batched data step commits batch by batch; its migration needs \"atomic\": false"
+                ));
+            }
             if marked {
                 problems.push(format!(
                     "{key}: `{STEP_MARKER}` lines are only for migrations with \"atomic\": false"
@@ -373,12 +378,21 @@ impl Migration {
             }
             return problems;
         }
-        if self.data.is_some() {
-            problems.push(format!(
-                "{key}: a non-atomic migration cannot have a data step; put the data step in its own atomic migration"
-            ));
-        }
         let steps = self.steps();
+        match &self.data {
+            Some(step) if step.is_batched() => {
+                if !steps.is_empty() {
+                    problems.push(format!(
+                        "{key}: a batched data step runs alone; put its SQL in its own migration"
+                    ));
+                }
+                return problems;
+            }
+            Some(_) => problems.push(format!(
+                "{key}: a non-atomic migration cannot have a data step; put the data step in its own atomic migration, or make it batched"
+            )),
+            None => {}
+        }
         if steps.is_empty() {
             problems.push(format!(
                 "{key}: a non-atomic migration needs at least one step"

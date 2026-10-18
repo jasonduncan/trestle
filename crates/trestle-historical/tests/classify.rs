@@ -179,7 +179,7 @@ fn generated_sql_is_auto_and_edits_need_approval() {
     with_data.data = Some(DataStep {
         name: "fill",
         source: "",
-        run: |_| Box::pin(async { Ok(()) }),
+        run: trestle_historical::DataRun::Once(|_| Box::pin(async { Ok(()) })),
     });
     assert_eq!(classify_one(&with_data), [Reason::DataStep]);
     // No manifest: nothing to check the SQL against.

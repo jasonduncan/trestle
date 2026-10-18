@@ -3,7 +3,7 @@
 use sqlx::postgres::PgConnectOptions;
 use sqlx::{Connection, Executor, PgConnection};
 
-use crate::data::HistoricalTx;
+use crate::data::{BatchFn, DataRun, HistoricalTx};
 use crate::fence;
 use crate::ledger::{self, LedgerRow, LedgerStatus};
 use crate::schema::SchemaState;
@@ -264,14 +264,14 @@ async fn run_locked(
         let migration = set.get(key).expect("plan entries are drawn from the set");
         emit(RunEvent::Started(key));
         let backup = config.backup_ref.as_deref();
+        let state = states.as_ref().and_then(|states| {
+            let index = set.iter().position(|m| m.key() == key)?;
+            states.get(index)
+        });
         let result = if migration.options().atomic {
-            let state = states.as_ref().and_then(|states| {
-                let index = set.iter().position(|m| m.key() == key)?;
-                states.get(index)
-            });
             apply(conn, migration, state, backup).await
         } else {
-            apply_steps(conn, migration, step, backup).await
+            apply_steps(conn, migration, step, backup, state).await
         };
         if let Err(e) = result {
             emit(RunEvent::Failed {
@@ -358,7 +358,13 @@ async fn apply(
         let outcome = match state {
             Some(state) => {
                 let mut historical = HistoricalTx::new(&mut tx, state, migration.key().to_string());
-                (step.run)(&mut historical).await
+                match step.run {
+                    DataRun::Once(run) => run(&mut historical).await,
+                    DataRun::Batched(_) => Err(HistoryError::State(format!(
+                        "{} has a batched data step but is atomic",
+                        migration.key()
+                    ))),
+                }
             }
             None => Err(HistoryError::State(format!(
                 "{} needs replayed history",
@@ -424,6 +430,7 @@ async fn apply_steps(
     migration: &Migration,
     start: i32,
     backup_ref: Option<&str>,
+    state: Option<&SchemaState>,
 ) -> Result<(), HistoryError> {
     let steps = migration.steps();
     tracing::info!(migration = %migration.key(), steps = steps.len(), start, "applying non-atomic migration");
@@ -462,13 +469,24 @@ async fn apply_steps(
     }
     // Fenced before the first step, in its own transaction: older builds
     // stop writing before any of this migration's work begins.
+    let batched = match migration.data.map(|d| d.run) {
+        Some(DataRun::Batched(run)) => Some(run),
+        _ => None,
+    };
     let result = match raise_fence(conn, migration, &options).await {
-        Ok(()) => run_steps(conn, migration, &steps, start).await,
-        Err(e) => Err((start, e)),
+        Ok(()) => match batched {
+            Some(run) => run_batches(conn, migration, run, start, state).await,
+            None => run_steps(conn, migration, &steps, start)
+                .await
+                .map_err(|(n, e)| (n, describe(&e))),
+        },
+        Err(e) => Err((start, describe(&e))),
     };
     set_config(conn, "lock_timeout", DDL_LOCK_TIMEOUT).await?;
     set_config(conn, "statement_timeout", STATEMENT_TIMEOUT).await?;
-    let (step, err) = match result {
+    let (step, message) = match result {
+        // The last batch marked itself applied in its own transaction.
+        Ok(()) if batched.is_some() => return Ok(()),
         Ok(()) => {
             let n = i32::try_from(steps.len()).unwrap_or(i32::MAX);
             ledger::mark_step(conn, migration, n).await?;
@@ -477,7 +495,6 @@ async fn apply_steps(
         }
         Err(e) => e,
     };
-    let message = describe(&err);
     ledger::mark_partial(conn, migration, step, &message).await?;
     tracing::error!(migration = %migration.key(), step = step + 1, error = %message, "non-atomic migration stopped");
     Err(HistoryError::Partial {
@@ -499,6 +516,65 @@ async fn raise_fence(
     fence::lock(&mut tx).await?;
     fence::record(&mut tx, migration).await?;
     tx.commit().await
+}
+
+/// Runs a batched data step from batch `start` (0-based) on, each batch in
+/// its own transaction that also records its checkpoint and count: a batch
+/// and its progress commit together or not at all.
+async fn run_batches(
+    conn: &mut PgConnection,
+    migration: &Migration,
+    run: BatchFn,
+    start: i32,
+    state: Option<&SchemaState>,
+) -> Result<(), (i32, String)> {
+    let key = migration.key().to_string();
+    let Some(state) = state else {
+        return Err((start, format!("{key} needs replayed history")));
+    };
+    let mut checkpoint = ledger::checkpoint(conn, migration)
+        .await
+        .map_err(|e| (start, describe(&e)))?;
+    let mut batches = start;
+    loop {
+        let fail = |e: sqlx::Error| (batches, describe(&e));
+        let mut tx = conn.begin().await.map_err(fail)?;
+        let next = {
+            let mut historical = HistoricalTx::new(&mut tx, state, key.clone());
+            run(&mut historical, checkpoint.as_ref()).await
+        };
+        let next = match next {
+            Ok(next) if next.is_some() && next == checkpoint => {
+                tx.rollback().await.map_err(fail)?;
+                return Err((
+                    batches,
+                    "the batch returned the checkpoint it was given, so it would never finish"
+                        .into(),
+                ));
+            }
+            Ok(next) => next,
+            Err(e) => {
+                tx.rollback().await.map_err(fail)?;
+                return Err((batches, e.to_string().chars().take(500).collect()));
+            }
+        };
+        let done = batches + 1;
+        ledger::mark_checkpoint(&mut tx, migration, done, next.as_ref())
+            .await
+            .map_err(fail)?;
+        if next.is_none() {
+            ledger::mark_applied(&mut tx, migration)
+                .await
+                .map_err(fail)?;
+            tx.commit().await.map_err(fail)?;
+            tracing::info!(migration = %key, batches = done, "batched data step finished");
+            return Ok(());
+        }
+        tx.commit().await.map_err(fail)?;
+        tracing::info!(migration = %key, batch = done, "batch committed");
+        batches = done;
+        checkpoint = next;
+    }
 }
 
 async fn run_steps(

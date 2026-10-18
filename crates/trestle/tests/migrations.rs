@@ -40,7 +40,7 @@ fn seed_notes() -> DataStep {
     DataStep {
         name: "seed_notes",
         source: include_str!("migrations.rs"),
-        run: run_seed,
+        run: trestle::historical::DataRun::Once(run_seed),
     }
 }
 

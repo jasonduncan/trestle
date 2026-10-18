@@ -41,7 +41,8 @@ Rules. `check` and the runner both enforce them:
   - other `CONCURRENTLY` statements
   - `ALTER TABLE ... VALIDATE CONSTRAINT`
 - Any other DDL goes in its own atomic migration.
-- A non-atomic migration can't have a data step.
+- A non-atomic migration can't have a one-shot data step. A batched data
+  step runs alone in its own non-atomic migration (see below).
 - Timeouts per step default to `lock_timeout` 5s and no `statement_timeout`
   (index builds take a while). The manifest can override both.
 
@@ -62,6 +63,41 @@ How a run proceeds:
 
 Non-atomic migrations always need approval in automated deploys. See the
 reconciler contract.
+
+## Batched data steps (resumable backfills)
+
+A data step normally runs once, inside its migration's transaction. For a
+large table, use a batched step instead. Each batch commits on its own
+together with a checkpoint, and a rerun resumes after the last committed
+batch (ADR-020):
+
+```rust
+fn fill_slugs<'a>(tx: &'a mut HistoricalTx<'_>, after: Option<&'a Value>) -> BatchFuture<'a> {
+    Box::pin(async move {
+        let rows = tx.batch("lessons.lesson", &["title"], after, 500).await?;
+        for row in &rows {
+            let slug = slugify(row["title"].as_str().unwrap_or_default());
+            tx.update("lessons.lesson", &row["id"], &[("slug", json!(slug))]).await?;
+        }
+        Ok(rows.last().map(|r| r["id"].clone())) // None: nothing left
+    })
+}
+
+pub fn fill_slugs_step() -> DataStep {
+    DataStep::batched("fill_slugs", include_str!("fill_slugs.rs"), fill_slugs)
+}
+```
+
+- **Creating it:** `makemigrations --empty --batched --app lessons --data fill_slugs <name>`
+  writes the data-only migration with `"atomic": false`. A batched step
+  runs alone, with no SQL statements in its migration.
+- **Each batch** writes its rows and records its checkpoint in one
+  transaction. A failure rolls back only that batch and leaves the
+  migration `partial`. Fix the cause and run `migrate` again: it continues
+  from the checkpoint, and no row is processed twice.
+- **Batches see each other's commits,** and writers' commits too. Keep each
+  row's change idempotent, or select rows by their state
+  (`WHERE slug IS NULL`).
 
 ## Preconditions (`"preconditions"`)
 

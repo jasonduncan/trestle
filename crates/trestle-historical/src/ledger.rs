@@ -80,6 +80,19 @@ pub(crate) async fn ensure(conn: &mut PgConnection) -> Result<(), sqlx::Error> {
         (&mut *tx).execute(UPGRADE_LEDGER).await?;
         tx.commit().await?;
     }
+    // Batched data steps (ADR-020) record where they stopped.
+    let checkpointed: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.columns
+         WHERE table_schema = current_schema() AND table_name = 'trestle_migrations'
+           AND column_name = 'checkpoint')",
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    if !checkpointed {
+        (&mut *conn)
+            .execute("ALTER TABLE trestle_migrations ADD COLUMN IF NOT EXISTS checkpoint text")
+            .await?;
+    }
     (&mut *conn).execute(crate::fence::CREATE).await?;
     Ok(())
 }
@@ -183,6 +196,40 @@ pub(crate) async fn mark_partial(
     .bind(migration.id)
     .bind(step)
     .bind(message)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// Where a batched data step stopped: the last committed batch's
+/// checkpoint, as JSON.
+pub(crate) async fn checkpoint(
+    conn: &mut PgConnection,
+    migration: &Migration,
+) -> Result<Option<serde_json::Value>, sqlx::Error> {
+    let text: Option<Option<String>> =
+        sqlx::query_scalar("SELECT checkpoint FROM trestle_migrations WHERE app = $1 AND id = $2")
+            .bind(migration.app)
+            .bind(migration.id)
+            .fetch_optional(conn)
+            .await?;
+    Ok(text.flatten().and_then(|t| serde_json::from_str(&t).ok()))
+}
+
+/// Records a committed batch, inside that batch's transaction.
+pub(crate) async fn mark_checkpoint(
+    conn: &mut PgConnection,
+    migration: &Migration,
+    batches: i32,
+    checkpoint: Option<&serde_json::Value>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE trestle_migrations SET step = $3, checkpoint = $4 WHERE app = $1 AND id = $2",
+    )
+    .bind(migration.app)
+    .bind(migration.id)
+    .bind(batches)
+    .bind(checkpoint.map(|c| c.to_string()))
     .execute(conn)
     .await?;
     Ok(())
