@@ -23,6 +23,7 @@ use trestle_core::operation::{
     BoxFuture, ContextDescriptor, DynConn, DynContext, DynOperation, Effects, Mode,
     OperationDescriptor,
 };
+use trestle_core::pagination::{decode_cursor, encode_cursor};
 use trestle_core::registry::{App as CoreApp, AppBuilder, Http};
 use trestle_historical::schema::{Column, Model};
 use trestle_protocol::{Audience, ContractDoc, Field};
@@ -205,7 +206,16 @@ impl Ctx {
             .cloned()
             .ok_or_else(|| internal("a list filter must be a JSON object"))?;
         self.with(async |conn, scope| {
-            list(conn, model, scope, &filter, ("created_at", true), MAX_LIMIT).await
+            list(
+                conn,
+                model,
+                scope,
+                &filter,
+                ("created_at", true),
+                MAX_LIMIT,
+                None,
+            )
+            .await
         })
         .await
     }
@@ -576,6 +586,12 @@ fn model_of(spec: &ModelSpec, intent: &Intent) -> Model {
             FieldType::Date => Column::date(&f.id),
             FieldType::Instant => Column::timestamptz(&f.id),
             FieldType::Duration => Column::duration(&f.id),
+            FieldType::Ref => {
+                // Writes check the row is in the caller's tenant; the
+                // foreign key keeps it from disappearing (ADR-024).
+                model = model.index(&format!("{}_{}_idx", spec.table, f.id), &[&f.id]);
+                Column::uuid(&f.id).references(f.to.as_deref().unwrap_or_default())
+            }
         };
         match f.ty {
             FieldType::Text if f.min.is_some() || f.max.is_some() => {
@@ -674,6 +690,7 @@ fn field_contract(f: &FieldSpec, required: bool) -> Field {
         FieldType::Date => Field::date(&f.id),
         FieldType::Instant => Field::instant(&f.id),
         FieldType::Duration => Field::duration(&f.id),
+        FieldType::Ref => Field::uuid(&f.id),
     };
     if !required {
         field = field.optional();
@@ -763,57 +780,59 @@ where
     let collection = model.path();
     let item = format!("{collection}/{{id}}");
     let rep = representation(model);
-    let (input, output, http, summary): (ContractDoc, Arc<ContractDoc>, Http, String) =
-        match op {
-            Crud::List => {
-                let mut doc = ContractDoc::input(&format!("{}.list", model.id), "1");
-                for name in filter {
-                    let f = model.field(name).expect("validated");
-                    doc = doc.field(field_contract(f, false));
-                }
-                doc = doc.field(Field::integer("limit").range(1, MAX_LIMIT).optional());
-                let page = ContractDoc::output(&format!("{}.page", model.id), "1")
-                    .field(Field::items("items", &rep, MAX_LIMIT as u32));
-                (
-                    doc,
-                    Arc::new(page),
-                    Http::get(collection.clone()),
-                    format!("List {}.", model.id),
-                )
+    let (input, output, http, summary): (ContractDoc, Arc<ContractDoc>, Http, String) = match op {
+        Crud::List => {
+            let mut doc = ContractDoc::input(&format!("{}.list", model.id), "1");
+            for name in filter {
+                let f = model.field(name).expect("validated");
+                doc = doc.field(field_contract(f, false));
             }
-            Crud::Get => (
-                ContractDoc::input(&format!("{}.get", model.id), "1").field(Field::uuid("id")),
-                rep.clone(),
-                Http::get(item.clone()).etag("version"),
-                format!("Get one {}.", model.id),
-            ),
-            Crud::Create => (
-                create_contract(model),
-                rep.clone(),
-                Http::post(collection.clone())
-                    .created(item.clone())
-                    .etag("version"),
-                format!("Create a {}.", model.id),
-            ),
-            Crud::Update => (
-                update_contract(model, true),
-                rep.clone(),
-                Http::patch(item.clone())
-                    .if_match("expected_version")
-                    .etag("version"),
-                format!("Change a {}.", model.id),
-            ),
-            Crud::Delete => (
-                ContractDoc::input(&format!("{}.delete", model.id), "1")
-                    .field(Field::uuid("id"))
-                    .field(Field::digits("expected_version")),
-                rep.clone(),
-                Http::delete(item.clone())
-                    .if_match("expected_version")
-                    .no_content(),
-                format!("Delete a {}.", model.id),
-            ),
-        };
+            doc = doc
+                .field(Field::integer("limit").range(1, MAX_LIMIT).optional())
+                .field(Field::text("cursor").chars(1, 1024).optional());
+            let page = ContractDoc::output(&format!("{}.page", model.id), "1")
+                .field(Field::items("items", &rep, MAX_LIMIT as u32))
+                .field(Field::text("next_cursor").nullable());
+            (
+                doc,
+                Arc::new(page),
+                Http::get(collection.clone()),
+                format!("List {}.", model.id),
+            )
+        }
+        Crud::Get => (
+            ContractDoc::input(&format!("{}.get", model.id), "1").field(Field::uuid("id")),
+            rep.clone(),
+            Http::get(item.clone()).etag("version"),
+            format!("Get one {}.", model.id),
+        ),
+        Crud::Create => (
+            create_contract(model),
+            rep.clone(),
+            Http::post(collection.clone())
+                .created(item.clone())
+                .etag("version"),
+            format!("Create a {}.", model.id),
+        ),
+        Crud::Update => (
+            update_contract(model, true),
+            rep.clone(),
+            Http::patch(item.clone())
+                .if_match("expected_version")
+                .etag("version"),
+            format!("Change a {}.", model.id),
+        ),
+        Crud::Delete => (
+            ContractDoc::input(&format!("{}.delete", model.id), "1")
+                .field(Field::uuid("id"))
+                .field(Field::digits("expected_version")),
+            rep.clone(),
+            Http::delete(item.clone())
+                .if_match("expected_version")
+                .no_content(),
+            format!("Delete a {}.", model.id),
+        ),
+    };
     // Generated CRUD touches only its model. A hook is Rust code that may
     // do anything, so a write that runs one declares nothing (ADR-018).
     let hooked = match op {
@@ -1103,12 +1122,28 @@ impl<S> IntentOp<S> {
                 }
                 match op {
                     Crud::List => {
-                        let limit = input.remove("limit").and_then(|v| v.as_i64()).unwrap_or(50);
+                        let limit = input
+                            .remove("limit")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(50)
+                            .clamp(1, MAX_LIMIT);
+                        let cursor = input.remove("cursor");
                         let filter: Map<String, Value> = input
                             .into_iter()
                             .filter(|(k, _)| filter.contains(k))
                             .collect();
-                        let rows = ctx
+                        // A cursor is valid only for exactly this query.
+                        let shape = json!({
+                            "op": format!("{}.list", model.id),
+                            "limit": limit,
+                            "filter": filter,
+                            "order": [order.0, order.1],
+                        });
+                        let after = match cursor.as_ref().and_then(Value::as_str) {
+                            Some(c) => Some(position(&decode_cursor(&shape, c)?)?),
+                            None => None,
+                        };
+                        let mut rows = ctx
                             .with(async |conn, scope| {
                                 list(
                                     conn,
@@ -1116,12 +1151,25 @@ impl<S> IntentOp<S> {
                                     scope,
                                     &filter,
                                     (order.0.as_str(), order.1),
-                                    limit,
+                                    limit + 1,
+                                    after.as_ref(),
                                 )
                                 .await
                             })
                             .await?;
-                        Ok(json!({ "items": rows.iter().map(Row::to_json).collect::<Vec<_>>() }))
+                        let next = if rows.len() as i64 > limit {
+                            rows.truncate(limit as usize);
+                            rows.last().map(|last| {
+                                let row = last.to_json();
+                                encode_cursor(&shape, &json!([row[order.0.as_str()], row["id"]]))
+                            })
+                        } else {
+                            None
+                        };
+                        Ok(json!({
+                            "items": rows.iter().map(Row::to_json).collect::<Vec<_>>(),
+                            "next_cursor": next,
+                        }))
                     }
                     Crud::Get => {
                         let id = id.ok_or_else(Problem::not_found)?;
@@ -1229,7 +1277,7 @@ fn column_type(f: &FieldSpec) -> trestle_historical::schema::ColumnType {
         FieldType::Duration => ColumnType::Interval,
         FieldType::Int => ColumnType::BigInt,
         FieldType::Bool => ColumnType::Boolean,
-        FieldType::Uuid => ColumnType::Uuid,
+        FieldType::Uuid | FieldType::Ref => ColumnType::Uuid,
         FieldType::Text | FieldType::Enum => ColumnType::Text,
     }
 }
@@ -1269,6 +1317,19 @@ async fn fetch(
     Ok(parse_rows(model, text.into_iter().collect())?.pop())
 }
 
+/// `[order key, id]` from a cursor.
+fn position(value: &Value) -> Result<(Value, Uuid), Problem> {
+    let invalid = || Problem::malformed("invalid_cursor", "The cursor is not valid.");
+    let id = value[1]
+        .as_str()
+        .and_then(|s| Uuid::parse_str(s).ok())
+        .ok_or_else(invalid)?;
+    match &value[0] {
+        Value::Null => Err(invalid()),
+        key => Ok((key.clone(), id)),
+    }
+}
+
 async fn list(
     conn: &mut PgConnection,
     model: &Arc<ModelSpec>,
@@ -1276,10 +1337,26 @@ async fn list(
     filter: &Map<String, Value>,
     order: (&str, bool),
     limit: i64,
+    after: Option<&(Value, Uuid)>,
 ) -> Result<Vec<Row>, Problem> {
     let mut conditions = Vec::new();
+    let mut next = 2;
     if let Some((col, _)) = &scope.tenant {
-        conditions.push(format!("t.{col} = $2"));
+        conditions.push(format!("t.{col} = ${next}"));
+        next += 1;
+    }
+    if after.is_some() {
+        // Row comparison: strictly past the previous page's last row.
+        let ty = match model.field(order.0) {
+            Some(f) => f.ty.sql(),
+            None => "timestamptz",
+        };
+        let op = if order.1 { "<" } else { ">" };
+        conditions.push(format!(
+            "(t.{}, t.id) {op} (${next}::{ty}, ${})",
+            order.0,
+            next + 1
+        ));
     }
     for (name, _) in filter.iter() {
         let f = model
@@ -1298,12 +1375,19 @@ async fn list(
         representation_sql(model),
         model.table,
         order.0,
-        limit.clamp(1, MAX_LIMIT)
+        limit.clamp(1, MAX_LIMIT + 1)
     );
     let mut q =
         sqlx::query_scalar::<_, String>(&sql).bind(Value::Object(filter.clone()).to_string());
     if let Some((_, t)) = &scope.tenant {
         q = q.bind(*t);
+    }
+    if let Some((key, id)) = after {
+        let key = match key {
+            Value::String(text) => text.clone(),
+            other => other.to_string(),
+        };
+        q = q.bind(key).bind(*id);
     }
     parse_rows(model, q.fetch_all(conn).await?)
 }
@@ -1317,12 +1401,56 @@ fn writable(model: &ModelSpec, values: &Map<String, Value>) -> Vec<String> {
         .collect()
 }
 
+/// Every `ref` value names a row of its model in the caller's tenant. The
+/// row is locked `FOR KEY SHARE` until the write commits, so it cannot be
+/// deleted in between; another tenant's row is reported like a missing one.
+async fn check_references(
+    conn: &mut PgConnection,
+    model: &ModelSpec,
+    scope: &Scope,
+    values: &Map<String, Value>,
+) -> Result<(), Problem> {
+    let mut errors = Vec::new();
+    for f in &model.fields {
+        let (Some(to), Some(table)) = (&f.to, &f.to_table) else {
+            continue;
+        };
+        let Some(Value::String(text)) = values.get(&f.id) else {
+            continue;
+        };
+        let id = Uuid::parse_str(text).map_err(|_| internal("ref value is not a UUID"))?;
+        let (tenant_sql, tenant) = match &scope.tenant {
+            Some((col, t)) => (format!(" AND {col} = $2"), Some(*t)),
+            None => (String::new(), None),
+        };
+        let sql = format!("SELECT 1 FROM {table} WHERE id = $1{tenant_sql} FOR KEY SHARE");
+        let mut q = sqlx::query_scalar::<_, i32>(&sql).bind(id);
+        if let Some(t) = tenant {
+            q = q.bind(t);
+        }
+        if q.fetch_optional(&mut *conn).await?.is_none() {
+            let label = to.split_once('.').map_or(to.as_str(), |(_, n)| n);
+            errors.push(trestle_core::FieldError::new(
+                format!("/{}", f.id),
+                "not_found",
+                format!("No {label} has this ID."),
+            ));
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(Problem::validation(errors))
+    }
+}
+
 async fn insert(
     conn: &mut PgConnection,
     model: &Arc<ModelSpec>,
     scope: &Scope,
     mut values: Map<String, Value>,
 ) -> Result<Row, Problem> {
+    check_references(conn, model, scope, &values).await?;
     let mut cols = vec!["id".to_owned()];
     values.insert("id".into(), json!(Uuid::now_v7()));
     if let Some((col, t)) = &scope.tenant {
@@ -1355,6 +1483,7 @@ async fn update(
     values: Map<String, Value>,
     expected_version: Option<i64>,
 ) -> Result<Option<Row>, Problem> {
+    check_references(conn, model, scope, &values).await?;
     let cols = writable(model, &values);
     let mut set = vec!["version = t.version + 1".to_owned()];
     if !cols.is_empty() {
@@ -1416,6 +1545,15 @@ async fn delete(
         .bind(tenant)
         .bind(expected_version.unwrap_or_default())
         .fetch_optional(conn)
-        .await?;
+        .await
+        .map_err(|e| {
+            // foreign_key_violation: another row's ref points here.
+            if e.as_database_error().and_then(|d| d.code()).as_deref() == Some("23503") {
+                Problem::conflict("still_referenced")
+                    .with_detail("Other records refer to this one; change or remove them first.")
+            } else {
+                Problem::from(e)
+            }
+        })?;
     Ok(parse_rows(model, text.into_iter().collect())?.pop())
 }

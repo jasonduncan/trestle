@@ -164,6 +164,9 @@ struct FieldSection {
     precision: Option<u8>,
     #[serde(default)]
     scale: Option<u8>,
+    /// For `ref` fields: the model referred to.
+    #[serde(default)]
+    to: Option<Spanned<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -239,6 +242,8 @@ pub enum FieldType {
     Date,
     Instant,
     Duration,
+    /// The ID of another model's row in the same tenant (`to = "<model>"`).
+    Ref,
 }
 
 impl FieldType {
@@ -247,7 +252,7 @@ impl FieldType {
             FieldType::Text | FieldType::Enum => "text",
             FieldType::Int => "bigint",
             FieldType::Bool => "boolean",
-            FieldType::Uuid => "uuid",
+            FieldType::Uuid | FieldType::Ref => "uuid",
             FieldType::Decimal => "numeric",
             FieldType::Date => "date",
             FieldType::Instant => "timestamptz",
@@ -268,6 +273,9 @@ pub struct FieldSpec {
     /// Decimal fields: total digits, and digits after the point.
     pub precision: u8,
     pub scale: u8,
+    /// Ref fields: the model referred to, and its table.
+    pub to: Option<String>,
+    pub to_table: Option<String>,
 }
 
 impl FieldSpec {
@@ -552,6 +560,32 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
             unique,
         }));
     }
+    // References resolve once every model is known.
+    let targets: BTreeMap<String, String> = models
+        .iter()
+        .map(|m| (m.id.clone(), m.table.clone()))
+        .collect();
+    for model in &mut models {
+        let model = Arc::make_mut(model);
+        let raw_model = raw.models.iter().find(|m| *m.id.get_ref() == model.id);
+        for field in &mut model.fields {
+            let Some(to) = &field.to else { continue };
+            match targets.get(to) {
+                Some(table) => field.to_table = Some(table.clone()),
+                None => {
+                    let at = raw_model
+                        .and_then(|m| m.fields.iter().find(|f| *f.id.get_ref() == field.id))
+                        .and_then(|f| f.to.as_ref())
+                        .map(|t| lines.at(t))
+                        .unwrap_or_default();
+                    problems.push(format!(
+                        "{at}: field {:?} refers to {to:?}, which is not a model in this file",
+                        field.id
+                    ));
+                }
+            }
+        }
+    }
 
     let known_permission = |p: &str| p == AUTHENTICATED || permissions.contains(p);
     let check_permission = |p: &Spanned<String>, problems: &mut Vec<String>| {
@@ -796,12 +830,19 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
                     Some(n) => (true, n),
                     None => (false, text.as_str()),
                 };
-                if name != "created_at" && model.field(name).is_none() {
-                    problems.push(format!(
+                match model.field(name) {
+                    None if name != "created_at" => problems.push(format!(
                         "{}: order field {name:?} is not created_at or a field of {}",
                         lines.at(o),
                         model.id
-                    ));
+                    )),
+                    // Pages continue after the last row's key; a null key
+                    // has no place in that order.
+                    Some(f) if f.optional => problems.push(format!(
+                        "{}: order field {name:?} is optional; order by a required field or created_at",
+                        lines.at(o)
+                    )),
+                    _ => {}
                 }
                 (name.to_owned(), desc)
             }
@@ -881,9 +922,10 @@ fn field(lines: &Lines<'_>, f: &FieldSection, problems: &mut Vec<String>) -> Opt
         "date" => FieldType::Date,
         "instant" => FieldType::Instant,
         "duration" => FieldType::Duration,
+        "ref" => FieldType::Ref,
         other => {
             problems.push(format!(
-                "{}: unknown type {other:?}; use text, int, bool, uuid, enum, decimal, date, instant or duration",
+                "{}: unknown type {other:?}; use text, int, bool, uuid, enum, decimal, date, instant, duration or ref",
                 lines.at(&f.ty)
             ));
             return None;
@@ -898,6 +940,14 @@ fn field(lines: &Lines<'_>, f: &FieldSection, problems: &mut Vec<String>) -> Opt
         }
     } else if f.precision.is_some() || f.scale.is_some() {
         problems.push(format!("{at}: precision and scale are for decimal fields"));
+    }
+    match (ty, &f.to) {
+        (FieldType::Ref, None) => {
+            problems.push(format!("{at}: a ref field needs to = \"<model id>\""));
+        }
+        (FieldType::Ref, Some(_)) => {}
+        (_, Some(_)) => problems.push(format!("{at}: to = ... is for ref fields")),
+        (_, None) => {}
     }
     if (f.min.is_some() || f.max.is_some()) && !matches!(ty, FieldType::Text | FieldType::Int) {
         problems.push(format!("{at}: min/max apply to text and int fields only"));
@@ -951,5 +1001,7 @@ fn field(lines: &Lines<'_>, f: &FieldSection, problems: &mut Vec<String>) -> Opt
         values: f.values.clone(),
         precision,
         scale,
+        to: f.to.as_ref().map(|t| t.get_ref().clone()),
+        to_table: None,
     })
 }

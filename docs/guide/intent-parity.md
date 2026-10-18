@@ -32,11 +32,12 @@ decision for later:
 |---|---|---|
 | Operation IDs | `units.list`, `units.create`, `units.get` | `units.unit.list`, `.create`, `.get` |
 | `version` in responses | string of digits (`"1"`) | integer |
-| List paging | signed keyset cursor | `limit` only |
+| List paging | signed keyset cursor | signed keyset cursor (ADR-024) |
 | Audit | records an audit event on create | none (it would need an `after_create` hook) |
 | Admin profile | product and admin audiences | product only |
 | Error message wording | "...already exists in this school." | "A unit with this name already exists." |
 
 Pilot's other apps (lessons, audit) use features the intent format
-doesn't have yet: relations, domain actions and forms. They stay Rust apps,
-which the design expects (§3.4).
+doesn't have yet: domain actions and forms. Relations (`type = "ref"`, with
+tenant-checked writes) arrived in ADR-024. They stay Rust apps, which the
+design expects (§3.4).

@@ -29,7 +29,7 @@ and is not self-granted. Open items before a pilot:
 choose how people sign in (password accounts are built; an OIDC provider is optional and only
 mock-tested), send through the real SMTP relay, get external security review (§12.4), and
 validate the edge config (`deploy/Caddyfile`) on a real host. Do not claim general
-maturity or benchmark leadership. ADRs: 001–023 (015 reopens 009: jobs and outbox).
+maturity or benchmark leadership. ADRs: 001–024 (015 reopens 009: jobs and outbox).
 
 ## Non-negotiables
 - Installing a model publishes nothing (I01). Endpoints, forms and writable fields are explicit.
@@ -69,6 +69,8 @@ maturity or benchmark leadership. ADRs: 001–023 (015 reopens 009: jobs and out
   bounded batch per call, checkpoint returned, idempotent per row; its progress must stay in
   the batch's own transaction.
 - Reads use `trestle_core::query::select(scope, ..)`; there is no unscoped variant on purpose.
+- Intent `ref` writes check the target row is in the caller's tenant (`check_references`, ADR-024)
+  and report another tenant's row exactly like a missing one; never add a write path around it.
 - Resources are bindings over operations you wrote; CRUD is opt-in, transitions are explicit
   `.action(..)`s. Update/delete return the retrieve representation (If-Match checks it).
   Admin metadata grants nothing: every admin button calls the same operation, which authorizes.
