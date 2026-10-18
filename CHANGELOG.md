@@ -119,7 +119,19 @@ promise.
     `date`, `instant` and `duration`. CRUD servers return them as strings,
     with instants in UTC.
 
+- `trestle.toml` relations and paging (ADR-024):
+  - **References:** `type = "ref", to = "<model id>"` fields are indexed
+    foreign keys. Every create and update checks that a non-null ref names
+    a row of that model in the caller's tenant, and locks it
+    `FOR KEY SHARE`. Otherwise the write is a 422 `not_found` on the field.
+  - **Deletes:** deleting a referenced row is 409 `still_referenced`.
+  - **Paging:** lists take a signed `cursor` and return `next_cursor`, like
+    Rust lists.
+
 ### Changed
+- **Breaking (intent format):** an endpoint's `order` must name a required
+  field or `created_at`. Intent list contracts gain `cursor`, and pages
+  gain `next_cursor`.
 - **Breaking:** `ColumnType` has `Numeric`, `Date` and `Interval` variants,
   and `ColumnType::sql()` returns `Cow<'static, str>`.
 - **Breaking:** `DataStep::run` is a `DataRun` (`Once` or `Batched`).
