@@ -14,6 +14,8 @@ promise.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-18
+
 ### Added
 - The intent as a value (ADR-030):
   - `trestle::intent::IntentDoc` (with `ProjectDoc`, `TenancyDoc`, `ModelDoc`,
@@ -434,7 +436,8 @@ The first release.
   `auto`. Anything else needs `--approve <digest>`.
 - `serve` refuses to start on schema drift or a partly applied migration.
 
-[Unreleased]: https://github.com/jasonduncan/trestle/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/jasonduncan/trestle/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/jasonduncan/trestle/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/jasonduncan/trestle/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/jasonduncan/trestle/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/jasonduncan/trestle/compare/v0.2.0...v0.2.1
