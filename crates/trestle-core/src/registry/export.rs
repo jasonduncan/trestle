@@ -379,6 +379,7 @@ impl<S> Registry<S> {
             "output": contract(&op.output),
             "http": binding,
             "forms": forms,
+            "effects": op.info.effects.as_deref(),
         }))
     }
 }

@@ -191,6 +191,7 @@ impl NewJob {
 /// Writes `job` on `conn`, normally the executor's transaction inside an
 /// operation's `run`: the job exists only if that transaction commits.
 pub async fn enqueue(conn: &mut PgConnection, job: NewJob) -> Result<JobId, Problem> {
+    crate::effects::check_emit(&job.name)?;
     let input = job.input.to_string();
     if input.len() > MAX_INPUT_BYTES {
         tracing::error!(job = %job.name, bytes = input.len(), "job input is too large");

@@ -29,6 +29,8 @@ use sqlx::pool::PoolConnection;
 use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 use trestle_protocol::{Audience, Contract, ContractDoc};
 
+use crate::effects::{self, Emits};
+pub use crate::effects::{Effects, EffectsInfo};
 use crate::input::decode;
 use crate::invocation::{FromInvocation, Invocation};
 use crate::{Problem, db};
@@ -74,6 +76,8 @@ pub struct OperationDescriptor {
     pub mode: Mode,
     pub audiences: Arc<[Audience]>,
     pub summary: Arc<str>,
+    /// Declared effects (ADR-018); `None` declares nothing.
+    pub effects: Option<Arc<Effects>>,
 }
 
 impl OperationDescriptor {
@@ -84,7 +88,13 @@ impl OperationDescriptor {
             mode,
             audiences: Arc::new([]),
             summary: Arc::from(""),
+            effects: None,
         }
+    }
+
+    pub fn effects(mut self, effects: Effects) -> Self {
+        self.effects = Some(Arc::new(effects));
+        self
     }
 
     pub fn audiences(mut self, audiences: &[Audience]) -> Self {
@@ -96,6 +106,17 @@ impl OperationDescriptor {
         self.summary = summary.into();
         self
     }
+}
+
+/// The running write's declared emits, borrowed from its `const`.
+fn typed_emits<O: Operation>() -> Option<Emits> {
+    O::EFFECTS.map(|e| Emits::Static(O::INFO.id, e.emits))
+}
+
+fn dyn_emits(info: &OperationDescriptor) -> Option<Emits> {
+    info.effects
+        .clone()
+        .map(|e| Emits::Owned(info.id.clone(), e))
 }
 
 impl From<OperationInfo> for OperationDescriptor {
@@ -286,6 +307,11 @@ pub trait Operation: Send + Sync + 'static {
 
     const INFO: OperationInfo;
 
+    /// What it reads, writes, enqueues and calls out to (ADR-018). `None`
+    /// declares nothing and is unchecked; a declared write may enqueue only
+    /// what it lists in `emits`.
+    const EFFECTS: Option<EffectsInfo> = None;
+
     fn policy(&self) -> &Self::Policy;
 
     /// The behavior. For `Mode::Write`, `conn` is the executor's transaction;
@@ -392,9 +418,18 @@ pub async fn execute_validated<O: Operation>(
         match info.mode {
             Mode::Read => {
                 let waiting = std::time::Instant::now();
-                let mut conn = pool.acquire().await?;
-                observe_pool_wait(waiting);
-                let output = op.run(&mut conn, ctx, input).await?;
+                let output = if db::read_only_reads() {
+                    let mut tx = db::begin_read(pool).await?;
+                    observe_pool_wait(waiting);
+                    // Dropping `tx` queues its ROLLBACK, which the pool
+                    // sends with its usual check when the connection
+                    // comes back.
+                    op.run(&mut tx, ctx, input).await?
+                } else {
+                    let mut conn = pool.acquire().await?;
+                    observe_pool_wait(waiting);
+                    op.run(&mut conn, ctx, input).await?
+                };
                 check_typed_output::<O>(&output)?;
                 Ok(output)
             }
@@ -403,7 +438,8 @@ pub async fn execute_validated<O: Operation>(
                 let mut tx = crate::fence::begin(pool).await?;
                 observe_pool_wait(waiting);
                 op.policy().recheck(&mut tx, ctx).await?;
-                let output = op.run(&mut tx, ctx, input).await?;
+                let output =
+                    effects::scoped(typed_emits::<O>(), op.run(&mut tx, ctx, input)).await?;
                 // Returning early drops `tx`, which rolls it back.
                 check_typed_output::<O>(&output)?;
                 db::commit(tx).await?;
@@ -485,7 +521,8 @@ pub async fn execute_keyed<O: Operation>(
                 })
             }
             crate::idempotency::Claim::Fresh => {
-                let output = op.run(&mut tx, ctx, input).await?;
+                let output =
+                    effects::scoped(typed_emits::<O>(), op.run(&mut tx, ctx, input)).await?;
                 check_typed_output::<O>(&output)?;
                 let body = serde_json::to_string(&output).map_err(|err| {
                     tracing::error!(operation = info.id, error = %err, "output does not serialize");
@@ -537,7 +574,11 @@ pub async fn execute_dyn_keyed<S: 'static>(
                 replayed: true,
             });
         }
-        let (conn, result) = op.clone().run(DynConn::Write(tx), ctx, input).await;
+        let (conn, result) = effects::scoped(
+            dyn_emits(info),
+            op.clone().run(DynConn::Write(tx), ctx, input),
+        )
+        .await;
         let output = result?;
         let DynConn::Write(mut tx) = conn else {
             tracing::error!(operation = &*info.id, "write ran without its transaction");
@@ -608,6 +649,9 @@ pub type DynContext = Arc<dyn Any + Send + Sync>;
 pub enum DynConn {
     /// `Mode::Read`: a pooled connection, no transaction.
     Read(PoolConnection<Postgres>),
+    /// `Mode::Read` with read-only reads on ([`db::read_only_reads`]): a
+    /// read-only transaction, so writes fail.
+    ReadOnly(Transaction<'static, Postgres>),
     /// `Mode::Write`: the executor's transaction.
     Write(Transaction<'static, Postgres>),
 }
@@ -616,7 +660,7 @@ impl DynConn {
     pub fn conn(&mut self) -> &mut PgConnection {
         match self {
             DynConn::Read(conn) => conn,
-            DynConn::Write(tx) => tx,
+            DynConn::ReadOnly(tx) | DynConn::Write(tx) => tx,
         }
     }
 }
@@ -679,9 +723,13 @@ pub async fn execute_dyn<S: 'static>(
         match info.mode {
             Mode::Read => {
                 let waiting = std::time::Instant::now();
-                let conn = pool.acquire().await?;
+                let conn = if db::read_only_reads() {
+                    DynConn::ReadOnly(db::begin_read(pool).await?)
+                } else {
+                    DynConn::Read(pool.acquire().await?)
+                };
                 observe_pool_wait(waiting);
-                let (_, result) = op.clone().run(DynConn::Read(conn), ctx, input).await;
+                let (_, result) = op.clone().run(conn, ctx, input).await;
                 check_output(&info.id, op.output(), &result?)
             }
             Mode::Write => {
@@ -689,7 +737,11 @@ pub async fn execute_dyn<S: 'static>(
                 let mut tx = crate::fence::begin(pool).await?;
                 observe_pool_wait(waiting);
                 op.recheck(&mut tx, &ctx).await?;
-                let (conn, result) = op.clone().run(DynConn::Write(tx), ctx, input).await;
+                let (conn, result) = effects::scoped(
+                    dyn_emits(info),
+                    op.clone().run(DynConn::Write(tx), ctx, input),
+                )
+                .await;
                 let output = result?;
                 match conn {
                     DynConn::Write(tx) => {
@@ -698,7 +750,7 @@ pub async fn execute_dyn<S: 'static>(
                         db::commit(tx).await?;
                         Ok(output)
                     }
-                    DynConn::Read(_) => {
+                    DynConn::Read(_) | DynConn::ReadOnly(_) => {
                         tracing::error!(operation = &*info.id, "write ran without its transaction");
                         Err(Problem::internal())
                     }

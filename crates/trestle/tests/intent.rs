@@ -189,6 +189,32 @@ fn the_intent_feeds_the_registry() {
     );
     let openapi = registry.openapi(trestle::protocol::Audience::Product);
     assert!(openapi["paths"]["/api/v1/notes/{id}/pin"]["post"].is_object());
+
+    // Generated CRUD declares its model (ADR-018), except where a hook
+    // (Rust code) runs: `validate` runs on create and update.
+    let effects = |id: &str| {
+        registry
+            .inspect_operation(id)
+            .unwrap()
+            .get("effects")
+            .cloned()
+            .unwrap()
+    };
+    assert_eq!(
+        effects("notes.note.list")["reads"],
+        serde_json::json!(["notes.note"])
+    );
+    assert_eq!(
+        effects("notes.note.get")["reads"],
+        serde_json::json!(["notes.note"])
+    );
+    assert_eq!(
+        effects("notes.note.delete")["writes"],
+        serde_json::json!(["notes.note"])
+    );
+    for hooked in ["notes.note.create", "notes.note.update", "notes.pin"] {
+        assert!(effects(hooked).is_null(), "{hooked}");
+    }
 }
 
 struct Server {

@@ -206,7 +206,10 @@ impl<S> AppBuilder<S> {
         };
         let entry = RegisteredOperation {
             app: self.app.clone(),
-            info: O::INFO.into(),
+            info: match O::EFFECTS {
+                Some(effects) => OperationDescriptor::from(O::INFO).effects(effects.into()),
+                None => O::INFO.into(),
+            },
             policy: Arc::from(op.policy().id()),
             context: O::Context::describe(),
             input: Arc::new(O::Input::contract().clone()),
@@ -585,6 +588,7 @@ impl<S: 'static> Project<S> {
         }
         check_resources(&builders, &mut issues);
         check_jobs(&builders, &mut issues);
+        check_effects(&builders, desired.as_ref(), &mut issues);
 
         let mut step_names = HashSet::new();
         for builder in &builders {
@@ -1218,6 +1222,56 @@ fn check_jobs<S>(builders: &[AppBuilder<S>], issues: &mut Vec<String>) {
             if !kinds.insert(kind) {
                 issues.push(format!("job kind {kind} is registered twice"));
             }
+        }
+    }
+}
+
+/// Declared effects name things that exist, and a read declares no
+/// writes or emits (ADR-018).
+fn check_effects<S>(
+    builders: &[AppBuilder<S>],
+    desired: Option<&SchemaState>,
+    issues: &mut Vec<String>,
+) {
+    let operations: Vec<&RegisteredOperation<S>> =
+        builders.iter().flat_map(|b| &b.operations).collect();
+    let jobs: HashSet<&str> = builders
+        .iter()
+        .flat_map(|b| &b.jobs)
+        .map(|j| &*j.kind)
+        .collect();
+    for op in &operations {
+        let Some(effects) = &op.info.effects else {
+            continue;
+        };
+        let id = &op.info.id;
+        if op.info.mode == crate::operation::Mode::Read
+            && !(effects.writes.is_empty() && effects.emits.is_empty())
+        {
+            issues.push(format!(
+                "operation {id} is a read; it cannot declare writes or emits"
+            ));
+        }
+        // Without models (an invalid set) there is nothing to check against.
+        if let Some(desired) = desired {
+            for model in effects.reads.iter().chain(&effects.writes) {
+                if desired.model(model).is_none() {
+                    issues.push(format!(
+                        "operation {id} declares an effect on model {model}, which no installed app declares"
+                    ));
+                }
+            }
+        }
+        for job in &effects.emits {
+            let known = jobs.contains(&**job) || operations.iter().any(|o| o.info.id == *job);
+            if !known {
+                issues.push(format!(
+                    "operation {id} emits {job}, which is neither a registered operation nor a job kind"
+                ));
+            }
+        }
+        if effects.egress.iter().any(|e| e.trim().is_empty()) {
+            issues.push(format!("operation {id} declares an empty egress"));
         }
     }
 }
