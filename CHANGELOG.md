@@ -77,7 +77,22 @@ promise.
     deleted. A step that would fail is `blocked`. All of it is measured
     read-only with a 5 s timeout.
 
+- Batched data steps (ADR-020): `DataStep::batched(name, source, run)`
+  runs a `BatchFn` one bounded batch at a time.
+  - **Transactions:** each batch commits in its own transaction together
+    with its checkpoint, in the ledger's new `checkpoint` column.
+  - **Failure and rerun:** a failure rolls back only that batch and leaves
+    the migration `partial`. A rerun resumes after the last committed batch,
+    so every row is processed exactly once.
+  - **Creating one:** `makemigrations --empty --batched`, or
+    `artifact::empty_batched`, writes the data-only `"atomic": false`
+    migration.
+
 ### Changed
+- **Breaking:** `DataStep::run` is a `DataRun` (`Once` or `Batched`).
+  Build one-shot steps with `DataStep::once(name, source, f)`, or write
+  `run: DataRun::Once(f)`. Every `migrate` run adds the `checkpoint` column
+  to an existing ledger.
 - **Breaking (behavior):** `migrate` checks that the catalog matches
   applied history before applying anything, and exits 6 (`HistoryError::Drift`)
   if it doesn't. `--allow-drift` (`RunConfig::allow_drift`) overrides it.

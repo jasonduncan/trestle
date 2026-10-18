@@ -27,6 +27,25 @@ use crate::schema::{ColumnType, FieldState, ModelState, SchemaState};
 pub type DataFuture<'a> = Pin<Box<dyn Future<Output = Result<(), HistoryError>> + Send + 'a>>;
 pub type DataFn = for<'a, 'c> fn(&'a mut HistoricalTx<'c>) -> DataFuture<'a>;
 
+pub type BatchFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Option<Value>, HistoryError>> + Send + 'a>>;
+/// One batch of a resumable data step (ADR-020). It gets the checkpoint the
+/// previous batch returned (`None` the first time), does one bounded batch,
+/// and returns the next checkpoint, or `None` when nothing is left. Each
+/// batch runs in its own transaction, which also records its checkpoint, so
+/// a rerun after a failure resumes after the last committed batch.
+pub type BatchFn = for<'a, 'c> fn(&'a mut HistoricalTx<'c>, Option<&'a Value>) -> BatchFuture<'a>;
+
+/// How a data step runs.
+#[derive(Clone, Copy)]
+pub enum DataRun {
+    /// Once, inside its atomic migration's transaction.
+    Once(DataFn),
+    /// Batch by batch, each committed with its checkpoint, in a data-only
+    /// migration with `"atomic": false`.
+    Batched(BatchFn),
+}
+
 /// A named, frozen data step. `source` is the text of the module that
 /// implements it (via `include_str!`); it is part of the migration digest,
 /// so editing an applied data step is detected like editing applied SQL.
@@ -34,7 +53,31 @@ pub type DataFn = for<'a, 'c> fn(&'a mut HistoricalTx<'c>) -> DataFuture<'a>;
 pub struct DataStep {
     pub name: &'static str,
     pub source: &'static str,
-    pub run: DataFn,
+    pub run: DataRun,
+}
+
+impl DataStep {
+    /// Runs once, in its migration's transaction.
+    pub const fn once(name: &'static str, source: &'static str, run: DataFn) -> Self {
+        Self {
+            name,
+            source,
+            run: DataRun::Once(run),
+        }
+    }
+
+    /// Runs in committed, resumable batches ([`BatchFn`]).
+    pub const fn batched(name: &'static str, source: &'static str, run: BatchFn) -> Self {
+        Self {
+            name,
+            source,
+            run: DataRun::Batched(run),
+        }
+    }
+
+    pub fn is_batched(&self) -> bool {
+        matches!(self.run, DataRun::Batched(_))
+    }
 }
 
 impl fmt::Debug for DataStep {

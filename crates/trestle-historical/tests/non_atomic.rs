@@ -92,7 +92,7 @@ fn check_rules_for_non_atomic_migrations() {
     with_data.data = Some(trestle_historical::DataStep {
         name: "fill",
         source: "",
-        run: |_| Box::pin(async { Ok(()) }),
+        run: trestle_historical::DataRun::Once(|_| Box::pin(async { Ok(()) })),
     });
     assert!(
         with_data

@@ -165,6 +165,27 @@ pub fn empty(
     name: &str,
     data: &str,
 ) -> Result<Artifact, HistoryError> {
+    data_only(set, app, name, data, false)
+}
+
+/// The same for a batched data step (ADR-020): `"atomic": false`, so each
+/// batch commits with its checkpoint.
+pub fn empty_batched(
+    set: &MigrationSet,
+    app: &str,
+    name: &str,
+    data: &str,
+) -> Result<Artifact, HistoryError> {
+    data_only(set, app, name, data, true)
+}
+
+fn data_only(
+    set: &MigrationSet,
+    app: &str,
+    name: &str,
+    data: &str,
+    batched: bool,
+) -> Result<Artifact, HistoryError> {
     let name = slug(name)?;
     let data = slug(data)?;
     let id = format!("{:04}_{name}", set.next_number(app));
@@ -177,8 +198,12 @@ pub fn empty(
             operations: Vec::new(),
             data: Some(data),
             approved_destructive: Vec::new(),
-            notes: vec!["data only: changes no managed state".into()],
-            atomic: true,
+            notes: vec![if batched {
+                "data only, in committed batches: changes no managed state".into()
+            } else {
+                "data only: changes no managed state".into()
+            }],
+            atomic: !batched,
             lock_timeout: None,
             statement_timeout: None,
             fence: false,

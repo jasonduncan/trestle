@@ -633,6 +633,10 @@ enum BuiltIn<X: Args> {
         /// Create a data-only migration in --app that runs data step --data.
         #[arg(long, requires_all = ["app", "data"])]
         empty: bool,
+        /// With --empty: the data step is batched (`DataStep::batched`), so
+        /// the migration commits batch by batch and resumes (ADR-020).
+        #[arg(long, requires = "empty")]
+        batched: bool,
         #[arg(long)]
         app: Option<String>,
         #[arg(long)]
@@ -985,6 +989,7 @@ where
             allow_destructive,
             filled,
             empty,
+            batched,
             app,
             data,
             dir,
@@ -993,13 +998,23 @@ where
             if empty {
                 let set = history()?;
                 let (app, data) = (app.unwrap_or_default(), data.unwrap_or_default());
-                let artifact =
-                    artifact::empty(&set, &app, &name, &data).map_err(|e| e.to_string())?;
+                let artifact = if batched {
+                    artifact::empty_batched(&set, &app, &name, &data)
+                } else {
+                    artifact::empty(&set, &app, &name, &data)
+                }
+                .map_err(|e| e.to_string())?;
                 for path in artifact::write(&dir, &[artifact]).map_err(|e| e.to_string())? {
                     println!("wrote {path}");
                 }
+                let constructor = if batched {
+                    "DataStep::batched"
+                } else {
+                    "DataStep::once"
+                };
                 println!(
-                    "Now add the data step `pub fn {data}() -> DataStep` to the project's migrations."
+                    "Now add the data step `pub fn {data}() -> DataStep` (built with \
+                     `{constructor}`) to the project's migrations."
                 );
                 return Ok(());
             }

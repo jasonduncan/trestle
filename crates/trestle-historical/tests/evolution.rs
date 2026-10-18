@@ -17,7 +17,7 @@ use std::collections::BTreeSet;
 use serde_json::{Value, json};
 use sqlx::PgConnection;
 use trestle_historical::artifact::{self, Artifact};
-use trestle_historical::data::{DataFuture, DataStep, HistoricalTx};
+use trestle_historical::data::{DataFuture, DataRun, DataStep, HistoricalTx};
 use trestle_historical::planner::{PlanOptions, diff};
 use trestle_historical::schema::{Column, Model, desired};
 use trestle_historical::testing::TestDatabase;
@@ -93,7 +93,7 @@ fn backfill_slugs<'a>(tx: &'a mut HistoricalTx<'_>) -> DataFuture<'a> {
 const BACKFILL: DataStep = DataStep {
     name: "backfill_slugs",
     source: include_str!("evolution.rs"),
-    run: backfill_slugs,
+    run: DataRun::Once(backfill_slugs),
 };
 
 fn release_a() -> Vec<Model> {
@@ -344,7 +344,7 @@ async fn a_failing_data_step_rolls_back_its_migration() {
     let (mut all, _) = history();
     all.truncate(3);
     all[2].data = Some(DataStep {
-        run: fail,
+        run: DataRun::Once(fail),
         ..BACKFILL
     });
     let db = TestDatabase::create().await;

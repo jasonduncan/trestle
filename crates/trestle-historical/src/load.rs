@@ -326,7 +326,7 @@ mod tests {
         DataStep {
             name,
             source: "fn step() {}",
-            run,
+            run: crate::DataRun::Once(run),
         }
     }
 
