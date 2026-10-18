@@ -147,6 +147,38 @@ struct CtxInner {
 }
 
 impl Ctx {
+    /// Runs `f` with a handle on a `DynOperation`'s own connection, scoped
+    /// to the caller resolved by [`Permission::resolve`] (ADR-031), and
+    /// hands the connection back for [`DynOperation::run`] to return. The
+    /// handle writes only on a write transaction ([`DynConn::Write`]).
+    pub async fn run<T>(
+        resolved: &Arc<Resolved>,
+        conn: DynConn,
+        ctx: &DynContext,
+        f: impl AsyncFnOnce(Ctx) -> Result<T, Problem>,
+    ) -> (DynConn, Result<T, Problem>) {
+        let (actor, tenant) = match ctx_of(ctx) {
+            Ok(c) => (c.actor, c.tenant),
+            Err(p) => return (conn, Err(p)),
+        };
+        let writes = matches!(conn, DynConn::Write(_));
+        let handle = Ctx {
+            inner: Arc::new(CtxInner {
+                conn: Mutex::new(Some(conn)),
+                actor,
+                tenant,
+                intent: resolved.clone(),
+                writes,
+            }),
+        };
+        let result = f(handle.clone()).await;
+        let conn = handle.inner.conn.lock().await.take();
+        match conn {
+            Some(conn) => (conn, result),
+            None => unreachable!("the connection is only taken here"),
+        }
+    }
+
     fn check_writable(&self) -> Result<(), Problem> {
         if self.inner.writes {
             Ok(())
@@ -613,11 +645,7 @@ where
                     }
                     resource.admin_dyn(
                         view,
-                        Arc::new(IntentPolicy {
-                            id: policy_id(&admin.permission),
-                            permission: admin.permission.clone(),
-                            resolved: self.resolved.clone(),
-                        }),
+                        Arc::new(Permission::declared(&self.resolved, &admin.permission)),
                     );
                 }
                 EndpointSpec::Custom {
@@ -653,8 +681,7 @@ where
                         info: OperationDescriptor::new(id.as_str(), "1", mode)
                             .audiences(&[Audience::Product])
                             .summary(format!("{id} (handler {})", handler.name)),
-                        policy: policy_id(permission),
-                        permission: permission.clone(),
+                        permission: Permission::declared(&self.resolved, permission),
                         input: contract,
                         output: representation(spec),
                         model: spec.clone(),
@@ -984,8 +1011,7 @@ struct Action {
 
 struct IntentOp<S> {
     info: OperationDescriptor,
-    policy: String,
-    permission: String,
+    permission: Permission,
     input: ContractDoc,
     output: Arc<ContractDoc>,
     model: Arc<ModelSpec>,
@@ -1035,8 +1061,7 @@ where
             .audiences(audiences)
             .summary(format!("{id}: an action on {model}"))
             .effects(Effects::new().writes(model.as_str())),
-        policy: policy_id(permission),
-        permission: permission.clone(),
+        permission: Permission::declared(resolved, permission),
         input: contract,
         output: representation(spec),
         model: spec.clone(),
@@ -1148,8 +1173,7 @@ where
     }
     let built = IntentOp::<S> {
         info,
-        policy: policy_id(permission),
-        permission: permission.to_owned(),
+        permission: Permission::declared(resolved, permission),
         input,
         output,
         model: model.clone(),
@@ -1258,15 +1282,101 @@ where
     }) as DynContext)
 }
 
-/// Who sees a model in the admin shell (`[[admin]] permission`, ADR-029).
-/// It shows; it does not grant: each button's operation checks its own.
-struct IntentPolicy {
+/// A permission from `[roles]`, checked the way intent operations check it
+/// (ADR-031): the caller's actor, their role in the selected tenant (a
+/// tenant without membership is refused like an unknown one), and the
+/// role's permissions. Rust operations in an intent project use it as their
+/// policy, and it is the `DynPolicy` behind `[[admin]]` (ADR-029), where it
+/// shows a view and grants nothing.
+#[derive(Clone)]
+pub struct Permission {
     id: String,
     permission: String,
     resolved: Arc<Resolved>,
 }
 
-impl<S> DynPolicy<S> for IntentPolicy
+impl Permission {
+    /// `permission` as the intent grants it: [`AUTHENTICATED`], or a
+    /// permission some role in `[roles]` holds.
+    pub fn new(resolved: &Arc<Resolved>, permission: &str) -> Result<Self, String> {
+        let granted = permission == AUTHENTICATED
+            || resolved
+                .intent
+                .roles
+                .values()
+                .any(|perms| perms.contains(permission));
+        if granted {
+            Ok(Self::declared(resolved, permission))
+        } else {
+            Err(format!(
+                "permission {permission:?} is not granted by any role in {}",
+                resolved.file
+            ))
+        }
+    }
+
+    /// A permission the intent file names, already checked when it was read.
+    fn declared(resolved: &Arc<Resolved>, permission: &str) -> Self {
+        Self {
+            id: policy_id(permission),
+            permission: permission.to_owned(),
+            resolved: resolved.clone(),
+        }
+    }
+
+    /// The policy ID: `intent.permission.<permission>`.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// What the check reads from a request: the actor, and the tenant
+    /// header with `[tenancy]`.
+    pub fn context(&self) -> ContextDescriptor {
+        context_of(&self.resolved)
+    }
+
+    /// The caller's actor, tenant and role there, for [`Permission::admit`],
+    /// [`Permission::recheck`] and [`Ctx::run`].
+    pub async fn resolve<S>(
+        &self,
+        invocation: &Invocation,
+        state: &S,
+    ) -> Result<DynContext, Problem>
+    where
+        PgPool: FromRef<S>,
+    {
+        resolve(&self.resolved, invocation, state).await
+    }
+
+    /// Whether the resolved caller holds the permission.
+    pub fn admit(&self, ctx: &DynContext) -> Result<(), Problem> {
+        let ctx = ctx_of(ctx)?;
+        if permits(&self.resolved, &self.permission, ctx.role.as_deref()) {
+            Ok(())
+        } else {
+            Err(Problem::forbidden("permission_denied"))
+        }
+    }
+
+    /// The same check inside a write's transaction, on the membership as it
+    /// is now (locked `FOR SHARE` until commit).
+    pub async fn recheck(&self, conn: &mut PgConnection, ctx: &DynContext) -> Result<(), Problem> {
+        let ctx = ctx_of(ctx)?;
+        let Some(tenant) = ctx.tenant else {
+            return Ok(());
+        };
+        let role = membership_role(conn, &self.resolved, tenant, ctx.actor, true)
+            .await?
+            .ok_or_else(|| Problem::forbidden("tenant_not_permitted"))?;
+        if permits(&self.resolved, &self.permission, Some(&role)) {
+            Ok(())
+        } else {
+            Err(Problem::forbidden("permission_denied"))
+        }
+    }
+}
+
+impl<S> DynPolicy<S> for Permission
 where
     S: Send + Sync + 'static,
     PgPool: FromRef<S>,
@@ -1276,7 +1386,7 @@ where
     }
 
     fn context(&self) -> ContextDescriptor {
-        context_of(&self.resolved)
+        Permission::context(self)
     }
 
     fn resolve_context<'a>(
@@ -1284,16 +1394,11 @@ where
         invocation: &'a Invocation,
         state: &'a S,
     ) -> BoxFuture<'a, Result<DynContext, Problem>> {
-        Box::pin(resolve(&self.resolved, invocation, state))
+        Box::pin(self.resolve(invocation, state))
     }
 
     fn admit(&self, ctx: &DynContext) -> Result<(), Problem> {
-        let ctx = ctx_of(ctx)?;
-        if permits(&self.resolved, &self.permission, ctx.role.as_deref()) {
-            Ok(())
-        } else {
-            Err(Problem::forbidden("permission_denied"))
-        }
+        Permission::admit(self, ctx)
     }
 }
 
@@ -1308,7 +1413,7 @@ where
     }
 
     fn policy_id(&self) -> &str {
-        &self.policy
+        self.permission.id()
     }
 
     fn context(&self) -> ContextDescriptor {
@@ -1332,12 +1437,7 @@ where
     }
 
     fn admit(&self, ctx: &DynContext) -> Result<(), Problem> {
-        let ctx = ctx_of(ctx)?;
-        if permits(&self.resolved, &self.permission, ctx.role.as_deref()) {
-            Ok(())
-        } else {
-            Err(Problem::forbidden("permission_denied"))
-        }
+        self.permission.admit(ctx)
     }
 
     fn recheck<'a>(
@@ -1345,20 +1445,7 @@ where
         conn: &'a mut PgConnection,
         ctx: &'a DynContext,
     ) -> BoxFuture<'a, Result<(), Problem>> {
-        Box::pin(async move {
-            let ctx = ctx_of(ctx)?;
-            let Some(tenant) = ctx.tenant else {
-                return Ok(());
-            };
-            let role = membership_role(conn, &self.resolved, tenant, ctx.actor, true)
-                .await?
-                .ok_or_else(|| Problem::forbidden("tenant_not_permitted"))?;
-            if permits(&self.resolved, &self.permission, Some(&role)) {
-                Ok(())
-            } else {
-                Err(Problem::forbidden("permission_denied"))
-            }
-        })
+        Box::pin(self.permission.recheck(conn, ctx))
     }
 
     fn run(
@@ -1368,25 +1455,11 @@ where
         input: Value,
     ) -> BoxFuture<'static, (DynConn, Result<Value, Problem>)> {
         Box::pin(async move {
-            let (actor, tenant) = match ctx_of(&ctx) {
-                Ok(c) => (c.actor, c.tenant),
-                Err(p) => return (conn, Err(p)),
-            };
-            let handle = Ctx {
-                inner: Arc::new(CtxInner {
-                    conn: Mutex::new(Some(conn)),
-                    actor,
-                    tenant,
-                    intent: self.resolved.clone(),
-                    writes: self.info.mode == Mode::Write,
-                }),
-            };
-            let result = self.dispatch(&handle, input).await;
-            let conn = handle.inner.conn.lock().await.take();
-            match conn {
-                Some(conn) => (conn, result),
-                None => unreachable!("the connection is only taken here"),
-            }
+            let resolved = self.resolved.clone();
+            Ctx::run(&resolved, conn, &ctx, async |handle| {
+                self.dispatch(&handle, input).await
+            })
+            .await
         })
     }
 }

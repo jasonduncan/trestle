@@ -13,7 +13,8 @@ pub use toml;
 
 pub use doc::{AdminDoc, EndpointDoc, FieldDoc, IntentDoc, ModelDoc, ProjectDoc, TenancyDoc};
 pub use runtime::{
-    Ctx, HandlerFn, Handlers, HookFn, Input, IntentApp, MAX_LIMIT, Resolved, Row, TENANT_HEADER,
+    Ctx, HandlerFn, Handlers, HookFn, Input, IntentApp, MAX_LIMIT, Permission, Resolved, Row,
+    TENANT_HEADER,
 };
 pub use spec::{AUTHENTICATED, AuthSection, Intent, IntentError, Oidc, OidcProvider, parse};
 

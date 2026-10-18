@@ -25,6 +25,23 @@ promise.
     rendering, with handlers, hooks, migrations and tenancy;
   - `trestle::intent::toml` re-exports the `toml` crate for `default`, `set`
     and `when` values.
+- Rust operations in intent projects (ADR-031):
+  - `trestle::intent::Permission` checks a `[roles]` permission the way
+    generated operations do: `resolve`, `admit`, and `recheck` in the
+    transaction; it is also a `DynPolicy`;
+  - `Ctx::run(&resolved, conn, &ctx, f)` gives a `DynOperation` the intent's
+    scoped data handle on its own connection, writable only in a write
+    transaction;
+  - `Project::intent_app(|resolved| app)` installs an app built from the
+    linked intent;
+  - generated operations and `[[admin]]` use the same `Permission` and
+    `Ctx::run`.
+
+### Tests
+- A runtime-built write is now covered under the schema fence
+  (`trestle-core/tests/fence.rs`), with a stale context rechecked in its
+  transaction, and behind `ResourceOp` and `admin_dyn`
+  (`tests/intent_permission.rs`).
 
 ## [0.4.0] - 2026-10-17
 

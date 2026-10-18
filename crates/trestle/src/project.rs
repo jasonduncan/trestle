@@ -142,8 +142,12 @@ pub struct Project<S = State, X = NoExtension, C = NoCommands> {
     commands: Option<Handler<S, C>>,
     intent: IntentSource,
     handlers: Handlers,
+    intent_apps: Vec<IntentAppFn<S>>,
     _extension: std::marker::PhantomData<fn() -> X>,
 }
+
+/// Builds an app from the project's linked intent ([`Project::intent_app`]).
+type IntentAppFn<S> = Box<dyn FnOnce(&Arc<Resolved>) -> Box<dyn CoreApp<S>>>;
 
 impl Project<State, NoExtension, NoCommands> {
     /// Installs an app on the default state.
@@ -172,6 +176,7 @@ impl<S: Clone + Send + Sync + 'static> Project<S, NoExtension, NoCommands> {
             commands: None,
             intent: IntentSource::Default,
             handlers: Handlers::default(),
+            intent_apps: Vec::new(),
             _extension: std::marker::PhantomData,
         }
     }
@@ -190,6 +195,20 @@ impl<S: 'static, X, C> Project<S, X, C> {
     /// Installs an app written against `AppOf<S>`.
     pub fn install_app(mut self, app: impl CoreApp<S>) -> Self {
         self.apps.push(Box::new(app));
+        self
+    }
+
+    /// Installs an app built from the project's intent once it is linked
+    /// (ADR-031): Rust operations over the intent's models that check its
+    /// roles with [`Permission`](crate::intent::Permission) and use its data
+    /// with [`Ctx::run`](crate::intent::Ctx::run). Assembly fails if the
+    /// project has no intent.
+    pub fn intent_app<A>(mut self, build: impl FnOnce(&Arc<Resolved>) -> A + 'static) -> Self
+    where
+        A: CoreApp<S> + 'static,
+    {
+        self.intent_apps
+            .push(Box::new(move |resolved| Box::new(build(resolved))));
         self
     }
 
@@ -303,6 +322,7 @@ impl<S: 'static, X, C> Project<S, X, C> {
             commands: self.commands,
             intent: self.intent,
             handlers: self.handlers,
+            intent_apps: self.intent_apps,
             _extension: std::marker::PhantomData,
         }
     }
@@ -332,6 +352,7 @@ impl<S: 'static, X, C> Project<S, X, C> {
             commands: Some(Box::new(move |c, ctx| Box::pin(handler(c, ctx)))),
             intent: self.intent,
             handlers: self.handlers,
+            intent_apps: self.intent_apps,
             _extension: std::marker::PhantomData,
         }
     }
@@ -386,6 +407,12 @@ where
                             .to_owned(),
                     );
                 }
+                if !self.intent_apps.is_empty() {
+                    intent_problems.push(
+                        "an intent app is installed but there is no trestle.toml to build it from"
+                            .to_owned(),
+                    );
+                }
             }
             Ok(Some((file, intent))) => match Resolved::link(intent, &file, self.handlers) {
                 Ok(r) => {
@@ -395,6 +422,9 @@ where
                     }
                     for app in r.apps::<S>() {
                         apps.push(Box::new(app));
+                    }
+                    for build in self.intent_apps {
+                        apps.push(build(&r));
                     }
                     resolved = Some(r);
                 }
