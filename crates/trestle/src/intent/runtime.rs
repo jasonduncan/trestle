@@ -26,7 +26,7 @@ use trestle_core::operation::{
 use trestle_core::pagination::{decode_cursor, encode_cursor};
 use trestle_core::registry::{App as CoreApp, AppBuilder, Http};
 use trestle_historical::schema::{Column, Model};
-use trestle_protocol::{Audience, ContractDoc, Field};
+use trestle_protocol::{Audience, ContractDoc, Field, FormPresentation, Widget};
 use uuid::Uuid;
 
 use super::spec::{
@@ -486,6 +486,7 @@ where
                     ops,
                     read,
                     write,
+                    forms,
                     ..
                 } => {
                     let spec = intent
@@ -495,6 +496,28 @@ where
                         .expect("validated");
                     if spec.app != self.id {
                         continue;
+                    }
+                    if *forms {
+                        let fields: Vec<&str> = spec.fields.iter().map(|f| f.id.as_str()).collect();
+                        let name = noun(model);
+                        if ops.contains(&Crud::Create) {
+                            let form = FormPresentation::for_operation(
+                                &format!("{model}.create.form"),
+                                &format!("{model}.create"),
+                            )
+                            .title(&format!("New {name}"))
+                            .submit("Create");
+                            app.form(form_fields(form, spec, intent, &fields));
+                        }
+                        if ops.contains(&Crud::Update) {
+                            let form = FormPresentation::for_operation(
+                                &format!("{model}.update.form"),
+                                &format!("{model}.update"),
+                            )
+                            .title(&format!("Edit {name}"))
+                            .submit("Save");
+                            app.form(form_fields(form, spec, intent, &fields));
+                        }
                     }
                     for op in ops {
                         let permission = if op.writes() { write } else { read };
@@ -556,6 +579,7 @@ where
                     set,
                     when,
                     accept,
+                    forms,
                 } => {
                     if id.split_once('.').map(|(a, _)| a) != Some(self.id.as_str()) {
                         continue;
@@ -593,10 +617,74 @@ where
                         .if_match("expected_version")
                         .etag("version");
                     app.dyn_operation(Arc::new(op), Some(http));
+                    if *forms {
+                        let verb = words(id.rsplit('.').next().unwrap_or(id));
+                        let form = FormPresentation::for_operation(&format!("{id}.form"), id)
+                            .title(&format!("{verb} {}", noun(model)))
+                            .submit(&verb);
+                        let fields: Vec<&str> = accept.iter().map(String::as_str).collect();
+                        app.form(form_fields(form, spec, intent, &fields));
+                    }
                 }
             }
         }
     }
+}
+
+/// `closed_at` → `Closed at`.
+fn words(id: &str) -> String {
+    let text = id.replace('_', " ");
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map(|c| c.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
+}
+
+/// `crm.deal` → `deal`.
+fn noun(model: &str) -> String {
+    model.rsplit('.').next().unwrap_or(model).replace('_', " ")
+}
+
+/// A generated form's fields, in the order given, each with the widget its
+/// type implies (ADR-026). Optional plain `uuid` fields have no widget and
+/// are left out; required ones are refused when the file is read.
+fn form_fields(
+    mut form: FormPresentation,
+    model: &ModelSpec,
+    intent: &Intent,
+    fields: &[&str],
+) -> FormPresentation {
+    for name in fields {
+        let Some(f) = model.field(name) else { continue };
+        let pointer = format!("/{}", f.id);
+        let label = f.label.clone().unwrap_or_else(|| words(&f.id));
+        let widget = match f.ty {
+            FieldType::Text if f.max.is_none_or(|m| m > 200) => Widget::Textarea,
+            FieldType::Text => Widget::Text,
+            FieldType::Int => Widget::Integer,
+            FieldType::Bool => Widget::Checkbox,
+            FieldType::Enum => Widget::Select,
+            FieldType::Decimal => Widget::Decimal,
+            FieldType::Date => Widget::Date,
+            FieldType::Instant => Widget::DateTime,
+            FieldType::Duration => Widget::Duration,
+            FieldType::Uuid => continue,
+            FieldType::Ref => {
+                let to = f.to.as_deref().unwrap_or_default();
+                let shown = intent
+                    .models
+                    .iter()
+                    .find(|m| m.id == to)
+                    .and_then(|m| m.label.clone())
+                    .unwrap_or_default();
+                form = form.relation(&pointer, &label, &format!("{to}.list"), &shown);
+                continue;
+            }
+        };
+        form = form.field(&pointer, widget, &label);
+    }
+    form
 }
 
 fn path_params(path: &str) -> Vec<String> {

@@ -142,6 +142,9 @@ struct ModelSection {
     /// Field sets that must be unique (per tenant when [tenancy] is set).
     #[serde(default)]
     unique: Vec<Spanned<Vec<String>>>,
+    /// The field that names a row in relation pickers (ADR-026).
+    #[serde(default)]
+    label: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -167,6 +170,9 @@ struct FieldSection {
     /// For `ref` fields: the model referred to.
     #[serde(default)]
     to: Option<Spanned<String>>,
+    /// What a generated form calls the field.
+    #[serde(default)]
+    label: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -196,6 +202,9 @@ struct EndpointSection {
     when: BTreeMap<String, Vec<toml::Value>>,
     #[serde(default)]
     accept: Vec<String>,
+    /// Publish generated forms for this endpoint's writes (ADR-026).
+    #[serde(default)]
+    forms: bool,
 }
 
 /// A validated intent file.
@@ -284,6 +293,8 @@ pub struct FieldSpec {
     /// Ref fields: the model referred to, and its table.
     pub to: Option<String>,
     pub to_table: Option<String>,
+    /// Form label; defaults to the ID in words.
+    pub label: Option<String>,
 }
 
 impl FieldSpec {
@@ -302,6 +313,8 @@ pub struct ModelSpec {
     pub fields: Vec<FieldSpec>,
     /// Unique field sets, scoped per tenant, with their constraint names.
     pub unique: Vec<UniqueSpec>,
+    /// The field relation pickers show for a row of this model.
+    pub label: Option<String>,
 }
 
 /// `unique = [["name"]]` on a model.
@@ -371,6 +384,7 @@ pub enum EndpointSpec {
         /// Column and descending.
         order: (String, bool),
         hooks: BTreeMap<String, Named>,
+        forms: bool,
     },
     Custom {
         id: String,
@@ -393,6 +407,7 @@ pub enum EndpointSpec {
         when: Vec<(String, Vec<serde_json::Value>)>,
         /// Fields the caller may supply, copied onto the row.
         accept: Vec<String>,
+        forms: bool,
     },
 }
 
@@ -581,12 +596,29 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
                 fields: names.clone(),
             });
         }
+        let label = match &m.label {
+            Some(l)
+                if !fields
+                    .iter()
+                    .any(|f: &FieldSpec| &f.id == l && f.ty == FieldType::Text) =>
+            {
+                problems.push(format!("{at}: label {l:?} must name a text field of {id}"));
+                None
+            }
+            Some(l) => Some(l.clone()),
+            // The first text field, if any.
+            None => fields
+                .iter()
+                .find(|f| f.ty == FieldType::Text)
+                .map(|f| f.id.clone()),
+        };
         models.push(Arc::new(ModelSpec {
             id: id.clone(),
             app: app.to_owned(),
             table,
             fields,
             unique,
+            label,
         }));
     }
     // References resolve once every model is known.
@@ -654,6 +686,7 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
                 (!e.filter.is_empty(), "filter"),
                 (e.order.is_some(), "order"),
                 (!e.hooks.is_empty(), "hooks"),
+                (e.forms && e.handler.is_some(), "forms"),
             ] {
                 if present {
                     problems.push(format!(
@@ -924,8 +957,10 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
             filter,
             order,
             hooks,
+            forms: e.forms,
         });
     }
+    check_forms(file, &models, &endpoints, &mut problems);
 
     if let Some(oidc) = &raw.auth.oidc
         && let Err(e) = oidc.provider()
@@ -945,6 +980,73 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
         })
     } else {
         Err(IntentError { problems })
+    }
+}
+
+/// A generated form needs a widget for every field it shows: plain `uuid`
+/// fields have none (make them `ref`s), and a `ref` picks from its model's
+/// list endpoint by that model's label field.
+fn check_forms(
+    file: &str,
+    models: &[Arc<ModelSpec>],
+    endpoints: &[EndpointSpec],
+    problems: &mut Vec<String>,
+) {
+    let listed = |model: &str| {
+        endpoints.iter().any(|e| {
+            matches!(e, EndpointSpec::Crud { model: m, ops, .. } if m == model && ops.contains(&Crud::List))
+        })
+    };
+    for e in endpoints {
+        let (model, fields, what): (&str, Vec<&str>, String) = match e {
+            EndpointSpec::Crud {
+                model,
+                ops,
+                forms: true,
+                ..
+            } if ops.contains(&Crud::Create) || ops.contains(&Crud::Update) => {
+                let Some(m) = models.iter().find(|m| m.id == *model) else {
+                    continue;
+                };
+                (
+                    model,
+                    m.fields.iter().map(|f| f.id.as_str()).collect(),
+                    format!("forms of {model}"),
+                )
+            }
+            EndpointSpec::Action {
+                id,
+                model,
+                accept,
+                forms: true,
+                ..
+            } => (
+                model,
+                accept.iter().map(String::as_str).collect(),
+                format!("the form of {id}"),
+            ),
+            _ => continue,
+        };
+        let Some(m) = models.iter().find(|m| m.id == *model) else {
+            continue;
+        };
+        for name in fields {
+            let Some(f) = m.field(name) else { continue };
+            match (f.ty, &f.to) {
+                (FieldType::Uuid, _) if !f.optional => problems.push(format!(
+                    "{file}: {what} cannot show uuid field {name}; make it a ref (type = \"ref\", to = ...)"
+                )),
+                (FieldType::Ref, Some(to)) => {
+                    let target = models.iter().find(|t| t.id == *to);
+                    if !listed(to) || target.is_none_or(|t| t.label.is_none()) {
+                        problems.push(format!(
+                            "{file}: {what} picks {name} from {to}, which needs a list endpoint and a text label field"
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 }
 
@@ -1034,6 +1136,7 @@ fn action_spec(
         set,
         when,
         accept: e.accept.clone(),
+        forms: e.forms,
     })
 }
 
@@ -1152,5 +1255,6 @@ fn field(lines: &Lines<'_>, f: &FieldSection, problems: &mut Vec<String>) -> Opt
         scale,
         to: f.to.as_ref().map(|t| t.get_ref().clone()),
         to_table: None,
+        label: f.label.clone(),
     })
 }
