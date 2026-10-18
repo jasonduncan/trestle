@@ -29,7 +29,9 @@ use trestle_historical::schema::{Column, Model};
 use trestle_protocol::{Audience, ContractDoc, Field};
 use uuid::Uuid;
 
-use super::spec::{AUTHENTICATED, Crud, EndpointSpec, FieldSpec, FieldType, Intent, ModelSpec};
+use super::spec::{
+    AUTHENTICATED, Crud, EndpointSpec, FieldSpec, FieldType, Intent, ModelSpec, SetValue,
+};
 
 /// Header that selects the tenant to act in. Grants nothing by itself.
 pub use trestle_core::invocation::TENANT_HEADER;
@@ -342,6 +344,7 @@ impl Resolved {
                         ));
                     }
                 }
+                EndpointSpec::Action { .. } => {}
                 EndpointSpec::Crud { model, hooks, .. } => {
                     for (point, hook) in hooks {
                         used_hooks.push(hook.name.clone());
@@ -389,7 +392,7 @@ impl Resolved {
     pub fn apps<S>(self: &Arc<Self>) -> Vec<IntentApp<S>> {
         let mut apps: Vec<String> = self.intent.models.iter().map(|m| m.app.clone()).collect();
         for e in &self.intent.endpoints {
-            if let EndpointSpec::Custom { id, .. } = e
+            if let EndpointSpec::Custom { id, .. } | EndpointSpec::Action { id, .. } = e
                 && let Some((app, _)) = id.split_once('.')
             {
                 apps.push(app.to_owned());
@@ -543,6 +546,52 @@ where
                         _state: PhantomData,
                     };
                     let http = Http::new(method.clone(), path.clone());
+                    app.dyn_operation(Arc::new(op), Some(http));
+                }
+                EndpointSpec::Action {
+                    id,
+                    model,
+                    path,
+                    permission,
+                    set,
+                    when,
+                    accept,
+                } => {
+                    if id.split_once('.').map(|(a, _)| a) != Some(self.id.as_str()) {
+                        continue;
+                    }
+                    let spec = intent
+                        .models
+                        .iter()
+                        .find(|m| m.id == *model)
+                        .expect("validated");
+                    let mut contract = ContractDoc::input(id, "1").field(Field::uuid("id"));
+                    for name in accept {
+                        let f = spec.field(name).expect("validated");
+                        contract = contract.field(field_contract(f, false));
+                    }
+                    let contract = contract.field(Field::digits("expected_version"));
+                    let op = IntentOp::<S> {
+                        info: OperationDescriptor::new(id.as_str(), "1", Mode::Write)
+                            .audiences(&[Audience::Product])
+                            .summary(format!("{id}: an action on {model}"))
+                            .effects(Effects::new().writes(model.as_str())),
+                        policy: policy_id(permission),
+                        permission: permission.clone(),
+                        input: contract,
+                        output: representation(spec),
+                        model: spec.clone(),
+                        resolved: self.resolved.clone(),
+                        kind: Kind::Action(Arc::new(Action {
+                            set: set.clone(),
+                            when: when.clone(),
+                            accept: accept.clone(),
+                        })),
+                        _state: PhantomData,
+                    };
+                    let http = Http::post(path.clone())
+                        .if_match("expected_version")
+                        .etag("version");
                     app.dyn_operation(Arc::new(op), Some(http));
                 }
             }
@@ -742,6 +791,14 @@ fn update_contract(model: &ModelSpec, versioned: bool) -> ContractDoc {
 enum Kind {
     Crud(Crud, Vec<String>, (String, bool), BTreeMap<String, String>),
     Handler(String),
+    Action(Arc<Action>),
+}
+
+/// A declared state transition (ADR-025).
+struct Action {
+    set: Vec<(String, SetValue)>,
+    when: Vec<(String, Vec<Value>)>,
+    accept: Vec<String>,
 }
 
 struct IntentOp<S> {
@@ -1090,6 +1147,69 @@ impl<S> IntentOp<S> {
             ));
         };
         match &self.kind {
+            Kind::Action(action) => {
+                let id = input
+                    .remove("id")
+                    .and_then(|v| v.as_str().and_then(|s| s.parse::<Uuid>().ok()))
+                    .ok_or_else(Problem::not_found)?;
+                let version = match input.remove("expected_version") {
+                    None | Some(Value::Null) => return Err(Problem::precondition_required()),
+                    Some(v) => v
+                        .as_str()
+                        .and_then(|s| s.parse::<i64>().ok())
+                        .ok_or_else(|| {
+                            Problem::malformed(
+                                "invalid_version",
+                                "The version in If-Match is not a valid version.",
+                            )
+                        })?,
+                };
+                let model = &self.model;
+                let row = ctx
+                    .with(async |conn, scope| {
+                        let current = fetch(conn, model, scope, id, true)
+                            .await?
+                            .ok_or_else(Problem::not_found)?
+                            .to_json();
+                        if current["version"].as_i64() != Some(version) {
+                            return Err(Problem::precondition_failed());
+                        }
+                        for (field, allowed) in &action.when {
+                            if !allowed.contains(&current[field.as_str()]) {
+                                let list: Vec<String> =
+                                    allowed.iter().map(Value::to_string).collect();
+                                return Err(Problem::conflict("invalid_state").with_detail(
+                                    &format!("This needs {field} to be {}.", list.join(" or ")),
+                                ));
+                            }
+                        }
+                        let mut values: Map<String, Value> = input
+                            .iter()
+                            .filter(|(k, _)| action.accept.contains(k))
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect();
+                        for (field, value) in &action.set {
+                            let value = match value {
+                                SetValue::Value(v) => v.clone(),
+                                SetValue::Now => {
+                                    let now: String = sqlx::query_scalar(&format!(
+                                        "SELECT {}",
+                                        trestle_historical::sql::iso_instant("now()")
+                                    ))
+                                    .fetch_one(&mut *conn)
+                                    .await?;
+                                    Value::String(now)
+                                }
+                            };
+                            values.insert(field.clone(), value);
+                        }
+                        update(conn, model, scope, id, values, Some(version))
+                            .await?
+                            .ok_or_else(Problem::precondition_failed)
+                    })
+                    .await?;
+                Ok(row.to_json())
+            }
             Kind::Handler(name) => {
                 let handler = self
                     .resolved

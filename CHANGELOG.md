@@ -128,6 +128,15 @@ promise.
   - **Paging:** lists take a signed `cursor` and return `next_cursor`, like
     Rust lists.
 
+- `trestle.toml` domain actions (ADR-025): an endpoint with `set`, `when`
+  or `accept` (and no handler) is a `POST …/{id}/<verb>` transition.
+  - **Order of checks:** it locks the row in the caller's tenant, then
+    requires `If-Match`, then requires a `when` state (409 `invalid_state`
+    otherwise).
+  - **Writes:** `set` constants (`"now"` for instants) and the accepted
+    fields.
+  - **Response:** the row, with an `ETag`.
+
 ### Changed
 - **Breaking (intent format):** an endpoint's `order` must name a required
   field or `created_at`. Intent list contracts gain `cursor`, and pages

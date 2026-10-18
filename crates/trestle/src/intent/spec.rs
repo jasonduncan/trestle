@@ -188,6 +188,14 @@ struct EndpointSection {
     handler: Option<Spanned<String>>,
     #[serde(default)]
     input: Vec<FieldSection>,
+    /// Domain actions: fields the action sets, the states it may start
+    /// from, and fields the caller may supply.
+    #[serde(default)]
+    set: BTreeMap<String, toml::Value>,
+    #[serde(default)]
+    when: BTreeMap<String, Vec<toml::Value>>,
+    #[serde(default)]
+    accept: Vec<String>,
 }
 
 /// A validated intent file.
@@ -373,6 +381,27 @@ pub enum EndpointSpec {
         handler: Named,
         input: Vec<FieldSpec>,
     },
+    /// A state transition on one row, declared without Rust (ADR-025).
+    Action {
+        id: String,
+        model: String,
+        path: String,
+        permission: String,
+        /// Field → value written; `Now` for the transaction's time.
+        set: Vec<(String, SetValue)>,
+        /// Field → the values it may hold for the action to run.
+        when: Vec<(String, Vec<serde_json::Value>)>,
+        /// Fields the caller may supply, copied onto the row.
+        accept: Vec<String>,
+    },
+}
+
+/// What an action writes into a field.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SetValue {
+    Value(serde_json::Value),
+    /// `"now"` on an instant field.
+    Now,
 }
 
 /// A handler or hook name and where the file names it.
@@ -615,8 +644,9 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
             .map(|m| lines.at(m))
             .or_else(|| e.id.as_ref().map(|i| lines.at(i)))
             .unwrap_or_else(|| format!("{file}: endpoint #{}", index + 1));
-        if let Some(handler) = &e.handler {
-            // A custom endpoint written in Rust.
+        let action = !e.set.is_empty() || !e.when.is_empty() || !e.accept.is_empty();
+        if e.handler.is_some() || action {
+            // A custom endpoint: Rust (handler) or a declared action.
             for (present, key) in [
                 (!e.crud.is_empty(), "crud"),
                 (e.read.is_some(), "read"),
@@ -630,6 +660,12 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
                         "{where_}: {key:?} is for CRUD endpoints; a handler endpoint takes id, path, permission, handler, model and input"
                     ));
                 }
+            }
+            if e.handler.is_some() && action {
+                problems.push(format!(
+                    "{where_}: an endpoint is either a handler or an action (set, when, accept), not both"
+                ));
+                continue;
             }
             let Some(id) = &e.id else {
                 problems.push(format!(
@@ -714,6 +750,21 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
                 continue;
             };
             let permission = check_permission(permission, &mut problems);
+            let Some(handler) = &e.handler else {
+                let Some(spec) = models.iter().find(|m| m.id == model) else {
+                    continue;
+                };
+                if let Some(action) = action_spec(
+                    &where_,
+                    spec,
+                    e,
+                    (id_text, &method, route, &permission),
+                    &mut problems,
+                ) {
+                    endpoints.push(action);
+                }
+                continue;
+            };
             let mut input = Vec::new();
             for f in &e.input {
                 if let Some(spec) = field(&lines, f, &mut problems) {
@@ -897,6 +948,121 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
     }
 }
 
+/// Checks a declared action and builds it.
+fn action_spec(
+    at: &str,
+    model: &ModelSpec,
+    e: &EndpointSection,
+    (id, method, path, permission): (&str, &http::Method, &str, &str),
+    problems: &mut Vec<String>,
+) -> Option<EndpointSpec> {
+    let before = problems.len();
+    if *method != http::Method::POST || path_params(path) != ["id"] {
+        problems.push(format!(
+            "{at}: action {id:?} is POST on one row: path = \"POST /api/.../{{id}}/<verb>\""
+        ));
+    }
+    if !e.input.is_empty() {
+        problems.push(format!(
+            "{at}: action {id:?} takes accept = [\"field\", ...] (fields of {}), not input",
+            model.id
+        ));
+    }
+    if e.set.is_empty() && e.accept.is_empty() {
+        problems.push(format!(
+            "{at}: action {id:?} changes nothing; give it set or accept"
+        ));
+    }
+    let field = |name: &str, problems: &mut Vec<String>| {
+        let f = model.field(name);
+        if f.is_none() {
+            problems.push(format!("{at}: {name:?} is not a field of {}", model.id));
+        }
+        f
+    };
+    let mut set = Vec::new();
+    for (name, value) in &e.set {
+        let Some(f) = field(name, problems) else {
+            continue;
+        };
+        if f.ty == FieldType::Instant && value.as_str() == Some("now") {
+            set.push((name.clone(), SetValue::Now));
+        } else if f.ty != FieldType::Ref && fits(f.ty, &f.values, f.precision, f.scale, value) {
+            set.push((
+                name.clone(),
+                SetValue::Value(serde_json::to_value(value).ok()?),
+            ));
+        } else {
+            problems.push(format!(
+                "{at}: action {id:?} sets {name} to {value}, which does not fit the field"
+            ));
+        }
+    }
+    let mut when = Vec::new();
+    for (name, values) in &e.when {
+        let Some(f) = field(name, problems) else {
+            continue;
+        };
+        if values.is_empty()
+            || values
+                .iter()
+                .any(|v| !fits(f.ty, &f.values, f.precision, f.scale, v))
+        {
+            problems.push(format!(
+                "{at}: action {id:?}: when.{name} must list values of the field"
+            ));
+            continue;
+        }
+        when.push((
+            name.clone(),
+            values
+                .iter()
+                .filter_map(|v| serde_json::to_value(v).ok())
+                .collect(),
+        ));
+    }
+    for name in &e.accept {
+        if field(name, problems).is_some() && e.set.contains_key(name) {
+            problems.push(format!("{at}: action {id:?} both sets and accepts {name}"));
+        }
+    }
+    (problems.len() == before).then(|| EndpointSpec::Action {
+        id: id.to_owned(),
+        model: model.id.clone(),
+        path: path.to_owned(),
+        permission: permission.to_owned(),
+        set,
+        when,
+        accept: e.accept.clone(),
+    })
+}
+
+fn path_params(path: &str) -> Vec<&str> {
+    path.split('/')
+        .filter_map(|s| s.strip_prefix('{')?.strip_suffix('}'))
+        .collect()
+}
+
+/// Whether a TOML constant is a value of this field (defaults, action
+/// `set` and `when`).
+fn fits(ty: FieldType, values: &[String], precision: u8, scale: u8, v: &toml::Value) -> bool {
+    use trestle_core::protocol::scalar;
+    match (ty, v) {
+        (FieldType::Bool, toml::Value::Boolean(_)) => true,
+        (FieldType::Int, toml::Value::Integer(_)) => true,
+        (FieldType::Text, toml::Value::String(_)) => true,
+        (FieldType::Enum, toml::Value::String(s)) => values.contains(s),
+        (FieldType::Decimal, toml::Value::String(s)) => {
+            (1..=38).contains(&precision)
+                && scale <= precision
+                && scalar::check_decimal(s, precision, scale).is_ok()
+        }
+        (FieldType::Date, toml::Value::String(s)) => scalar::parse_date(s).is_some(),
+        (FieldType::Duration, toml::Value::String(s)) => scalar::parse_duration(s).is_some(),
+        _ => false,
+    }
+}
+
 fn field(lines: &Lines<'_>, f: &FieldSection, problems: &mut Vec<String>) -> Option<FieldSpec> {
     let at = lines.at(&f.id);
     let id = f.id.get_ref();
@@ -964,24 +1130,7 @@ fn field(lines: &Lines<'_>, f: &FieldSection, problems: &mut Vec<String>) -> Opt
     let default = match &f.default {
         None => None,
         Some(v) => {
-            let ok = match (ty, v) {
-                (FieldType::Bool, toml::Value::Boolean(_)) => true,
-                (FieldType::Int, toml::Value::Integer(_)) => true,
-                (FieldType::Text, toml::Value::String(_)) => true,
-                (FieldType::Enum, toml::Value::String(s)) => f.values.contains(s),
-                (FieldType::Decimal, toml::Value::String(s)) => {
-                    trestle_core::protocol::scalar::check_decimal(s, precision, scale).is_ok()
-                        && (1..=38).contains(&precision)
-                        && scale <= precision
-                }
-                (FieldType::Date, toml::Value::String(s)) => {
-                    trestle_core::protocol::scalar::parse_date(s).is_some()
-                }
-                (FieldType::Duration, toml::Value::String(s)) => {
-                    trestle_core::protocol::scalar::parse_duration(s).is_some()
-                }
-                _ => false,
-            };
+            let ok = fits(ty, &f.values, precision, scale, v);
             if !ok {
                 problems.push(format!(
                     "{at}: default {v} does not fit type {:?}",

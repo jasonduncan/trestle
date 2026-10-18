@@ -37,7 +37,8 @@ decision for later:
 | Admin profile | product and admin audiences | product only |
 | Error message wording | "...already exists in this school." | "A unit with this name already exists." |
 
-Pilot's other apps (lessons, audit) use features the intent format
-doesn't have yet: domain actions and forms. Relations (`type = "ref"`, with
-tenant-checked writes) arrived in ADR-024. They stay Rust apps, which the
-design expects (§3.4).
+Pilot's other apps (lessons, audit) use a feature the intent format
+doesn't have yet: forms. Relations (`type = "ref"`, with tenant-checked
+writes) arrived in ADR-024. Domain actions (`set`, `when` and `accept` on an
+endpoint) arrived in ADR-025. The apps stay Rust apps, which the design
+expects (§3.4).
