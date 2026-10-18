@@ -137,6 +137,15 @@ promise.
     fields.
   - **Response:** the row, with an `ETag`.
 
+- Generated forms for `trestle.toml` (ADR-026). `forms = true` on a CRUD
+  endpoint or an action publishes its create, update or action forms.
+  - **Widgets** follow field types, and refs become relation pickers over
+    the target's list.
+  - **Labels** come from `label` on fields, or `label` on models for
+    pickers.
+  - **Checked:** fields that can't be shown are refused when the file is
+    read.
+
 ### Changed
 - **Breaking (intent format):** an endpoint's `order` must name a required
   field or `created_at`. Intent list contracts gain `cursor`, and pages

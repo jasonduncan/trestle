@@ -35,6 +35,7 @@ read = "notes.read"
 write = "notes.write"
 filter = ["pinned"]
 order = "-created_at"
+# forms = true    # publish create/update forms the React renderer can draw
 
 # A transition, declared instead of written in Rust (needs a bool field
 # `archived`): POST /api/v1/notes/{id}/archive with If-Match.
