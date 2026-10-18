@@ -24,7 +24,17 @@ fn outcome(result: Result<Value, Rejection>) -> (Value, Option<Value>) {
 
 #[test]
 fn the_server_and_json_schema_agree_with_every_fixture() {
-    let fixture: Value = serde_json::from_str(FIXTURE).unwrap();
+    agree(FIXTURE);
+}
+
+/// ADR-027: money and references, from `fixtures/contracts/composites.json`.
+#[test]
+fn composites_agree_with_every_fixture() {
+    agree(include_str!("../../../fixtures/contracts/composites.json"));
+}
+
+fn agree(text: &str) {
+    let fixture: Value = serde_json::from_str(text).unwrap();
     let doc = ContractDoc::from_ir(&fixture["ir"]).unwrap();
     assert!(doc.problems().is_empty(), "{:?}", doc.problems());
     assert_eq!(

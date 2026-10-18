@@ -52,6 +52,13 @@ pub fn decimal_pattern(precision: u8, scale: u8) -> String {
     format!("^-?{whole}{fraction}$")
 }
 
+/// An ISO 4217-shaped currency code: three capital letters (ADR-027).
+pub const CURRENCY_PATTERN: &str = "^[A-Z]{3}$";
+
+pub fn is_currency(text: &str) -> bool {
+    text.len() == 3 && text.bytes().all(|b| b.is_ascii_uppercase())
+}
+
 /// `P[nD][T[nH][nM][nS]]` with at least one part. Written without
 /// look-ahead so every JSON Schema engine compiles it.
 pub const DURATION_PATTERN: &str = "^P([0-9]+D(T([0-9]+H([0-9]+M)?([0-9]+S)?|[0-9]+M([0-9]+S)?|[0-9]+S))?|T([0-9]+H([0-9]+M)?([0-9]+S)?|[0-9]+M([0-9]+S)?|[0-9]+S))$";

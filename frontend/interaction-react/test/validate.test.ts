@@ -91,3 +91,50 @@ describe("portable scalar types in the browser", () => {
   });
 });
 
+
+// ADR-027: money and references, from the fixture the Rust test checks
+// against the server and an independent validator.
+const composites = repoJson("fixtures/contracts/composites.json");
+
+describe("money and references in the browser", () => {
+  const input = decodeObjectSchema(composites.schema, "composites");
+
+  it("decodes money from its exact shape, and a reference as a uuid", () => {
+    const byName = Object.fromEntries(input.fields.map((f) => [f.name, f]));
+    expect(byName.price).toMatchObject({ kind: "money", precision: 10, scale: 2, required: true });
+    expect(byName.price?.choices).toBeUndefined();
+    expect(byName.fee).toMatchObject({ kind: "money", precision: 6, scale: 2, nullable: true, choices: ["EUR", "USD"] });
+    expect(byName.account).toMatchObject({ kind: "string", format: "uuid" });
+  });
+
+  for (const testCase of composites.cases) {
+    it(`agrees with the server: ${testCase.name}`, () => {
+      const result = validateInstance(input, testCase.input);
+      if (testCase.expect.status === 201) {
+        expect(result.ok).toBe(true);
+        return;
+      }
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.status).toBe(testCase.expect.status);
+      expect(result.code).toBe(testCase.expect.code);
+      const pairs = result.errors.map((e) => [e.pointer, e.code]).sort();
+      expect(pairs).toEqual([...(testCase.expect.errors ?? [])].sort());
+    });
+  }
+
+  it("refuses objects that are not money", () => {
+    const decode = (schema: unknown) =>
+      decodeObjectSchema({ type: "object", additionalProperties: false, required: [], properties: { x: schema } }, "probe");
+    const money = structuredClone(composites.schema.properties.price);
+    expect(() => decode(money)).not.toThrow();
+    expect(() => decode({ ...money, additionalProperties: true })).toThrow(/unsupported object/);
+    expect(() => decode({ ...money, required: ["amount"] })).toThrow(/unsupported object/);
+    const extra = structuredClone(money);
+    extra.properties.note = { type: "string" };
+    expect(() => decode(extra)).toThrow(/unsupported object/);
+    const loose = structuredClone(money);
+    loose.properties.currency = { type: "string", pattern: "^[a-z]+$" };
+    expect(() => decode(loose)).toThrow(/unsupported currency/);
+  });
+});

@@ -85,6 +85,19 @@ pub enum FieldType {
     /// An exact span, ISO 8601 `P[nD][T[nH][nM][nS]]`: no years or months,
     /// whose length varies.
     Duration,
+    /// A row of another model by ID: a `uuid` on the wire and in JSON
+    /// Schema. The IR records `model` for tools (ADR-027).
+    Reference {
+        model: String,
+    },
+    /// An amount of a currency, `{"amount": "12.50", "currency": "USD"}`:
+    /// the amount a decimal of `precision`/`scale`, the currency three
+    /// capital letters, one of `currencies` when given (ADR-027).
+    Money {
+        precision: u8,
+        scale: u8,
+        currencies: Vec<String>,
+    },
 }
 
 impl FieldType {
@@ -101,6 +114,8 @@ impl FieldType {
             FieldType::Date => "date",
             FieldType::Instant => "instant",
             FieldType::Duration => "duration",
+            FieldType::Reference { .. } => "reference",
+            FieldType::Money { .. } => "money",
         }
     }
 }
@@ -175,6 +190,43 @@ impl Field {
 
     pub fn duration(name: &str) -> Self {
         Self::new(name, FieldType::Duration)
+    }
+
+    /// The ID of a row of `model` (`"crm.account"`).
+    pub fn reference(name: &str, model: &str) -> Self {
+        Self::new(
+            name,
+            FieldType::Reference {
+                model: model.to_owned(),
+            },
+        )
+    }
+
+    /// `{"amount", "currency"}` with an amount of at most `precision`
+    /// digits, `scale` after the point. Any currency code unless
+    /// [`Field::currencies`] narrows it.
+    pub fn money(name: &str, precision: u8, scale: u8) -> Self {
+        Self::new(
+            name,
+            FieldType::Money {
+                precision,
+                scale,
+                currencies: Vec::new(),
+            },
+        )
+    }
+
+    /// The currencies a money field accepts.
+    pub fn currencies(mut self, codes: &[&str]) -> Self {
+        match &mut self.ty {
+            FieldType::Money { currencies, .. } => {
+                *currencies = codes.iter().map(|c| (*c).to_owned()).collect();
+            }
+            _ => self
+                .misuse
+                .push("currencies() applies only to money fields"),
+        }
+        self
     }
 
     /// A list of at most `max_items` objects of `item`'s contract.
@@ -358,10 +410,27 @@ impl ContractDoc {
                     problems.extend(item.problems());
                 }
                 FieldType::Decimal { precision, scale }
-                    if !(1..=38).contains(precision) || scale > precision =>
+                | FieldType::Money {
+                    precision, scale, ..
+                } if !(1..=38).contains(precision) || scale > precision => {
+                    problems.push(format!(
+                        "contract {id}: field {name}: {} needs 1 <= precision <= 38 and scale <= precision",
+                        field.ty.name()
+                    ));
+                }
+                FieldType::Money { currencies, .. }
+                    if currencies
+                        .iter()
+                        .enumerate()
+                        .any(|(i, c)| !scalar::is_currency(c) || currencies[..i].contains(c)) =>
                 {
                     problems.push(format!(
-                        "contract {id}: field {name}: decimal needs 1 <= precision <= 38 and scale <= precision"
+                        "contract {id}: field {name}: currencies must be unique three-letter codes"
+                    ));
+                }
+                FieldType::Reference { model } if !valid_stable_id(model) => {
+                    problems.push(format!(
+                        "contract {id}: field {name}: reference to {model:?}, which is not a model ID"
                     ));
                 }
                 FieldType::Enum { values } => {
@@ -414,6 +483,20 @@ impl ContractDoc {
                     if let FieldType::Items { item, max_items } = &field.ty {
                         if let Some(value) =
                             check_items(item, *max_items, &at, present, &mut shape, &mut invalid)
+                        {
+                            normalized.insert(field.name.clone(), value);
+                        }
+                        continue;
+                    }
+                    if let FieldType::Money {
+                        precision,
+                        scale,
+                        currencies,
+                    } = &field.ty
+                    {
+                        let rules = (*precision, *scale, currencies.as_slice());
+                        if let Some(value) =
+                            check_money(rules, &at, present, &mut shape, &mut invalid)
                         {
                             normalized.insert(field.name.clone(), value);
                         }
@@ -515,6 +598,20 @@ impl ContractDoc {
                         ir["precision"] = json!(precision);
                         ir["scale"] = json!(scale);
                     }
+                    FieldType::Reference { model } => {
+                        ir["model"] = json!(model);
+                    }
+                    FieldType::Money {
+                        precision,
+                        scale,
+                        currencies,
+                    } => {
+                        ir["precision"] = json!(precision);
+                        ir["scale"] = json!(scale);
+                        if !currencies.is_empty() {
+                            ir["currencies"] = json!(currencies);
+                        }
+                    }
                     FieldType::Boolean
                     | FieldType::Uuid
                     | FieldType::Digits
@@ -606,6 +703,34 @@ impl ContractDoc {
                 Some("date") => FieldType::Date,
                 Some("instant") => FieldType::Instant,
                 Some("duration") => FieldType::Duration,
+                Some("reference") => FieldType::Reference {
+                    model: f
+                        .get("model")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| format!("reference field {name} has no model"))?
+                        .to_owned(),
+                },
+                Some("money") => {
+                    let digits = |key: &str| {
+                        f.get(key)
+                            .and_then(Value::as_u64)
+                            .and_then(|n| u8::try_from(n).ok())
+                            .ok_or_else(|| format!("money field {name} has no {key}"))
+                    };
+                    FieldType::Money {
+                        precision: digits("precision")?,
+                        scale: digits("scale")?,
+                        currencies: match f.get("currencies") {
+                            None => Vec::new(),
+                            Some(list) => list
+                                .as_array()
+                                .and_then(|l| {
+                                    l.iter().map(|c| c.as_str().map(str::to_owned)).collect()
+                                })
+                                .ok_or_else(|| format!("money field {name}: bad currencies"))?,
+                        },
+                    }
+                }
                 Some("enum") => FieldType::Enum {
                     values: f
                         .get("values")
@@ -712,6 +837,30 @@ impl ContractDoc {
                         reasons.push(format!("field {name} accepts fewer decimal digits"));
                     }
                 }
+                (
+                    FieldType::Money {
+                        precision: op,
+                        scale: os,
+                        currencies: oc,
+                    },
+                    FieldType::Money {
+                        precision: np,
+                        scale: ns,
+                        currencies: nc,
+                    },
+                ) => {
+                    if np - ns < op - os || ns < os {
+                        reasons.push(format!("field {name} accepts fewer decimal digits"));
+                    }
+                    if !nc.is_empty() && (oc.is_empty() || oc.iter().any(|c| !nc.contains(c))) {
+                        reasons.push(format!("field {name} accepts fewer currencies"));
+                    }
+                }
+                // The same wire value: a uuid, whatever it is known to refer to.
+                (
+                    FieldType::Uuid | FieldType::Reference { .. },
+                    FieldType::Uuid | FieldType::Reference { .. },
+                ) => {}
                 (a, b) if a == b => {}
                 (a, b) => reasons.push(format!(
                     "field {name} changed type from {} to {}",
@@ -752,6 +901,11 @@ impl ContractDoc {
                     FieldType::Date => json!("2026-01-01"),
                     FieldType::Instant => json!("2026-01-01T00:00:00Z"),
                     FieldType::Duration => json!("PT1S"),
+                    FieldType::Reference { .. } => json!("00000000-0000-4000-8000-000000000000"),
+                    FieldType::Money { currencies, .. } => json!({
+                        "amount": "0",
+                        "currency": currencies.first().map_or("USD", String::as_str),
+                    }),
                 };
                 (f.name.clone(), value)
             })
@@ -797,6 +951,27 @@ fn field_schema(field: &Field) -> Value {
         FieldType::Instant => json!({ "type": "string", "format": "date-time" }),
         FieldType::Duration => {
             json!({ "type": "string", "format": "duration", "pattern": scalar::DURATION_PATTERN })
+        }
+        FieldType::Reference { .. } => json!({ "type": "string", "format": "uuid" }),
+        FieldType::Money {
+            precision,
+            scale,
+            currencies,
+        } => {
+            let currency = if currencies.is_empty() {
+                json!({ "type": "string", "pattern": scalar::CURRENCY_PATTERN })
+            } else {
+                json!({ "type": "string", "enum": currencies })
+            };
+            json!({
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["amount", "currency"],
+                "properties": {
+                    "amount": { "type": "string", "pattern": scalar::decimal_pattern(*precision, *scale) },
+                    "currency": currency,
+                },
+            })
         }
     };
     if field.nullable {
@@ -890,7 +1065,7 @@ fn check(ty: &FieldType, at: &str, value: &Value) -> Check {
             Value::Bool(_) => Check::Ok(value.clone()),
             _ => Check::Shape(type_error(at, "boolean")),
         },
-        FieldType::Uuid => match value {
+        FieldType::Uuid | FieldType::Reference { .. } => match value {
             Value::String(text) if is_uuid(text) => Check::Ok(value.clone()),
             Value::String(_) => Check::Invalid(
                 FieldError::new(at, "format", "Enter a valid ID.")
@@ -909,6 +1084,7 @@ fn check(ty: &FieldType, at: &str, value: &Value) -> Check {
             _ => Check::Shape(type_error(at, "string")),
         },
         FieldType::Items { .. } => Check::Shape(type_error(at, "array")),
+        FieldType::Money { .. } => Check::Shape(type_error(at, "object")),
         FieldType::Decimal { precision, scale } => match value {
             Value::String(text) => match scalar::check_decimal(text, *precision, *scale) {
                 Ok(()) => Check::Ok(value.clone()),
@@ -977,6 +1153,93 @@ fn check(ty: &FieldType, at: &str, value: &Value) -> Check {
             _ => Check::Shape(type_error(at, "string")),
         },
     }
+}
+
+/// Validates a money value: its two members, each at its own pointer, then
+/// any other member as unknown.
+fn check_money(
+    (precision, scale, currencies): (u8, u8, &[String]),
+    at: &str,
+    value: &Value,
+    shape: &mut Vec<FieldError>,
+    invalid: &mut Vec<FieldError>,
+) -> Option<Value> {
+    let Value::Object(members) = value else {
+        shape.push(type_error(at, "object"));
+        return None;
+    };
+    let mut normalized = Map::new();
+    let mut ok = true;
+    let mut member = |name: &str, ty: &FieldType| {
+        let here = format!("{at}/{name}");
+        match members.get(name) {
+            None => invalid.push(FieldError::new(here, "required", "This field is required.")),
+            Some(Value::Null) => invalid.push(FieldError::new(
+                here,
+                "not_nullable",
+                "This field cannot be null.",
+            )),
+            Some(present) => match check(ty, &here, present) {
+                Check::Ok(v) => {
+                    normalized.insert(name.to_owned(), v);
+                    return true;
+                }
+                Check::Shape(e) => shape.push(e),
+                Check::Invalid(e) => invalid.push(e),
+            },
+        }
+        false
+    };
+    ok &= member("amount", &FieldType::Decimal { precision, scale });
+    if currencies.is_empty() {
+        let here = format!("{at}/currency");
+        match members.get("currency") {
+            Some(Value::String(code)) if scalar::is_currency(code) => {
+                normalized.insert("currency".into(), json!(code));
+            }
+            Some(Value::String(_)) => {
+                ok = false;
+                invalid.push(
+                    FieldError::new(
+                        here,
+                        "format",
+                        "Enter a three-letter currency code, like USD.",
+                    )
+                    .with_params(json!({ "format": "currency" })),
+                );
+            }
+            _ => {
+                ok &= member(
+                    "currency",
+                    &FieldType::Text {
+                        min_chars: None,
+                        max_chars: None,
+                    },
+                );
+            }
+        }
+    } else {
+        ok &= member(
+            "currency",
+            &FieldType::Enum {
+                values: currencies.to_vec(),
+            },
+        );
+    }
+    let mut unknown: Vec<&String> = members
+        .keys()
+        .filter(|k| *k != "amount" && *k != "currency")
+        .collect();
+    unknown.sort();
+    for key in unknown {
+        ok = false;
+        invalid.push(FieldError::new(
+            format!("{at}{}", pointer(key)),
+            "unknown_field",
+            "This field is not accepted.",
+        ));
+    }
+    ok.then_some(Value::Object(normalized))
 }
 
 /// Validates a list field, prefixing nested pointers with `at/<index>`.

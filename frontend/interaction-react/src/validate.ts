@@ -117,7 +117,56 @@ function check(field: FieldSchema, at: string, value: unknown): Check {
     }
     case "boolean":
       return typeof value === "boolean" ? { ok: value } : { shape: typeError(at, "boolean") };
+    case "money":
+      // Money reports per member; see checkMoney.
+      return { shape: typeError(at, "object") };
   }
+}
+
+/** Mirrors the server's `check_money`: each member at its own pointer. */
+function checkMoney(field: FieldSchema, at: string, value: unknown, shape: FieldError[], invalid: FieldError[]): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    shape.push(typeError(at, "object"));
+    return undefined;
+  }
+  const members = value as Record<string, unknown>;
+  let ok = true;
+  const member = (name: string, schema: FieldSchema) => {
+    const here = `${at}/${name}`;
+    if (!Object.hasOwn(members, name)) {
+      invalid.push({ pointer: here, code: "required", message: "This field is required." });
+      return false;
+    }
+    if (members[name] === null) {
+      invalid.push({ pointer: here, code: "not_nullable", message: "This field cannot be null." });
+      return false;
+    }
+    const result = check(schema, here, members[name]);
+    if ("ok" in result) return true;
+    if ("shape" in result) shape.push(result.shape);
+    else invalid.push(result.invalid);
+    return false;
+  };
+  const base = { name: "", required: true, nullable: false } as const;
+  ok = member("amount", { ...base, kind: "string", format: "decimal", precision: field.precision, scale: field.scale }) && ok;
+  if (field.choices) {
+    ok = member("currency", { ...base, kind: "string", choices: field.choices }) && ok;
+  } else if (typeof members.currency === "string" && !/^[A-Z]{3}$/.test(members.currency)) {
+    ok = false;
+    invalid.push({
+      pointer: `${at}/currency`,
+      code: "format",
+      message: "Enter a three-letter currency code, like USD.",
+      params: { format: "currency" },
+    });
+  } else {
+    ok = member("currency", { ...base, kind: "string" }) && ok;
+  }
+  for (const key of Object.keys(members).filter((k) => k !== "amount" && k !== "currency").sort()) {
+    ok = false;
+    invalid.push({ pointer: `${at}${pointer(key)}`, code: "unknown_field", message: "This field is not accepted." });
+  }
+  return ok ? { amount: members.amount, currency: members.currency } : undefined;
 }
 
 export function validateInstance(schema: ObjectSchema, instance: unknown): Validation {
@@ -139,6 +188,11 @@ export function validateInstance(schema: ObjectSchema, instance: unknown): Valid
     if (present === null) {
       if (field.nullable) value[field.name] = null;
       else invalid.push({ pointer: at, code: "not_nullable", message: "This field cannot be null." });
+      continue;
+    }
+    if (field.kind === "money") {
+      const money = checkMoney(field, at, present, shape, invalid);
+      if (money !== undefined) value[field.name] = money;
       continue;
     }
     const result = check(field, at, present);

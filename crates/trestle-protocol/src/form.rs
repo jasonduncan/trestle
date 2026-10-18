@@ -29,6 +29,8 @@ pub enum Widget {
     DateTime,
     /// A duration such as `PT30M`. Needs `forms.temporal@1`.
     Duration,
+    /// An amount and its currency (ADR-027). Needs `forms.money@1`.
+    Money,
 }
 
 impl Widget {
@@ -44,6 +46,7 @@ impl Widget {
             Widget::Date => "date",
             Widget::DateTime => "datetime",
             Widget::Duration => "duration",
+            Widget::Money => "money",
         }
     }
 
@@ -53,6 +56,7 @@ impl Widget {
             Widget::Relation => Some("forms.relation@1"),
             Widget::Decimal => Some("forms.decimal@1"),
             Widget::Date | Widget::DateTime | Widget::Duration => Some("forms.temporal@1"),
+            Widget::Money => Some("forms.money@1"),
             _ => None,
         }
     }
@@ -64,7 +68,11 @@ impl Widget {
                 | (Widget::Integer, FieldType::Integer { .. })
                 | (Widget::Checkbox, FieldType::Boolean)
                 | (Widget::Select, FieldType::Enum { .. })
-                | (Widget::Relation, FieldType::Uuid)
+                | (
+                    Widget::Relation,
+                    FieldType::Uuid | FieldType::Reference { .. }
+                )
+                | (Widget::Money, FieldType::Money { .. })
                 | (Widget::Decimal, FieldType::Decimal { .. })
                 | (Widget::Date, FieldType::Date)
                 | (Widget::DateTime, FieldType::Instant)

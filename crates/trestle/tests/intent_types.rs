@@ -36,6 +36,7 @@ fields = [
   { id = "due",       type = "date", optional = true },
   { id = "placed_at", type = "instant", optional = true },
   { id = "length",    type = "duration", default = "PT30M" },
+  { id = "total",     type = "money", precision = 12, scale = 2, currencies = ["EUR", "USD"], optional = true },
 ]
 
 [[endpoints]]
@@ -157,6 +158,10 @@ fn the_intent_declares_columns_and_contracts_of_each_type() {
     assert_eq!(ty("due").as_deref(), Some("date"));
     assert_eq!(ty("placed_at").as_deref(), Some("timestamptz"));
     assert_eq!(ty("length").as_deref(), Some("interval"));
+    // Money is two columns (ADR-027).
+    assert_eq!(ty("total_amount").as_deref(), Some("numeric(12,2)"));
+    assert_eq!(ty("total_currency").as_deref(), Some("text"));
+    assert!(model.field("orders.order.total").is_none());
     let create = registry.inspect_operation("orders.order.create").unwrap();
     let schema = &create["input"]["schema"]["properties"];
     assert_eq!(
@@ -164,6 +169,11 @@ fn the_intent_declares_columns_and_contracts_of_each_type() {
         "^-?(0|[1-9][0-9]{0,7})(\\.[0-9]{1,2})?$"
     );
     assert_eq!(schema["placed_at"]["format"], "date-time");
+    assert_eq!(schema["total"]["type"], json!(["object", "null"]));
+    assert_eq!(
+        schema["total"]["properties"]["currency"]["enum"],
+        json!(["EUR", "USD"])
+    );
 }
 
 #[test]
@@ -253,6 +263,43 @@ async fn crud_keeps_every_value_in_its_contract_form() {
         .await;
     assert_eq!(none["items"].as_array().map(Vec::len), Some(0), "{none}");
 
+    // Money round-trips as one object over two columns.
+    let (status, priced, etag) = server
+        .call(
+            "POST",
+            "/api/v1/orders",
+            Some(json!({ "title": "Priced", "amount": "1", "total": { "amount": "10.50", "currency": "EUR" } })),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{priced}");
+    assert_eq!(
+        priced["total"],
+        json!({ "amount": "10.50", "currency": "EUR" })
+    );
+    let priced_id = priced["id"].as_str().unwrap();
+    let (status, cleared, _) = server
+        .call(
+            "PATCH",
+            &format!("/api/v1/orders/{priced_id}"),
+            Some(json!({ "total": null })),
+            etag.as_deref(),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{cleared}");
+    assert_eq!(cleared["total"], Value::Null);
+    let (status, refused, _) = server
+        .call(
+            "POST",
+            "/api/v1/orders",
+            Some(json!({ "title": "x", "amount": "1", "total": { "amount": "1", "currency": "GBP" } })),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    assert_eq!(refused["errors"][0]["pointer"], "/total/currency");
+    assert_eq!(refused["errors"][0]["code"], "choice");
+
     let (status, refused, _) = server
         .call(
             "POST",
@@ -273,4 +320,57 @@ async fn crud_keeps_every_value_in_its_contract_form() {
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(refused["errors"][0]["code"], "decimal_digits");
     server.db.drop().await;
+}
+
+#[test]
+fn money_fields_are_checked() {
+    let problems = |field: &str, endpoint: &str| {
+        let text = ORDERS
+            .replace(
+                r#"  { id = "title",     type = "text", max = 100 },"#,
+                &format!("  {field},\n  {{ id = \"title\", type = \"text\", max = 100 }},"),
+            )
+            .replace(r#"filter = ["due"]"#, endpoint);
+        trestle::intent::parse("trestle.toml", &text)
+            .err()
+            .map(|e| e.problems)
+            .unwrap_or_default()
+    };
+    let has = |p: Vec<String>, text: &str| p.iter().any(|m| m.contains(text));
+    let money = r#"{ id = "fee", type = "money", precision = 6, scale = 2 }"#;
+    assert!(problems(money, r#"filter = ["due"]"#).is_empty());
+    assert!(has(
+        problems(money, r#"filter = ["fee"]"#),
+        "cannot be a filter"
+    ));
+    assert!(has(problems(money, r#"order = "fee""#), "is money"));
+    assert!(has(
+        problems(
+            r#"{ id = "fee", type = "money", precision = 6, currencies = ["usd"] }"#,
+            r#"filter = ["due"]"#
+        ),
+        "three-letter codes"
+    ));
+    assert!(has(
+        problems(
+            r#"{ id = "fee", type = "text", currencies = ["USD"] }"#,
+            r#"filter = ["due"]"#
+        ),
+        "for money fields"
+    ));
+    assert!(has(
+        problems(
+            r#"{ id = "fee", type = "money", precision = 6, default = "1" }"#,
+            r#"filter = ["due"]"#
+        ),
+        "take no default"
+    ));
+    assert!(has(
+        problems(
+            r#"{ id = "fee", type = "money", precision = 6 },
+  { id = "fee_amount", type = "int" }"#,
+            r#"filter = ["due"]"#
+        ),
+        "collides with the storage of money field"
+    ));
 }

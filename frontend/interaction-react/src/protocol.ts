@@ -19,6 +19,7 @@ export const SUPPORTED_FEATURES: ReadonlySet<string> = new Set([
   "http.precondition@1",
   "forms.decimal@1",
   "forms.temporal@1",
+  "forms.money@1",
 ]);
 
 /** Same numbers as `trestle_protocol::limits` (§8.5). */
@@ -51,7 +52,7 @@ function decimalDigits(pattern: string): { precision: number; scale: number } | 
   return decimalPattern(precision, scale) === pattern && precision >= 1 && precision <= 38 ? { precision, scale } : undefined;
 }
 
-export type FieldKind = "string" | "integer" | "boolean";
+export type FieldKind = "string" | "integer" | "boolean" | "money";
 
 export interface FieldSchema {
   name: string;
@@ -65,7 +66,8 @@ export interface FieldSchema {
   choices?: string[];
   /** Portable string formats (ADR-022 adds decimal, date, date-time, duration). */
   format?: "uuid" | "digits" | "decimal" | "date" | "date-time" | "duration";
-  /** For `decimal`: total and fractional digits. */
+  /** For `decimal` and `money`: total and fractional digits. For money,
+   * `choices` lists the currencies when they are limited. */
   precision?: number;
   scale?: number;
   description?: string;
@@ -164,14 +166,40 @@ function onlyKeys(value: Json, allowed: string[], what: string): void {
   }
 }
 
+/** `trestle_protocol::scalar::CURRENCY_PATTERN`. */
+export const CURRENCY_PATTERN = "^[A-Z]{3}$";
+
+/**
+ * Money is the one object a portable field may be (ADR-027), and only in
+ * the exact shape the server writes: `{amount: decimal, currency: code}`.
+ */
+function decodeMoney(name: string, s: Json, required: boolean, nullable: boolean): FieldSchema {
+  onlyKeys(s, ["type", "additionalProperties", "required", "properties", "description"], `schema for ${name}`);
+  const props = object(s.properties, `${name}.properties`);
+  const req = Array.isArray(s.required) ? s.required : [];
+  if (s.additionalProperties !== false || req.length !== 2 || req[0] !== "amount" || req[1] !== "currency" || Object.keys(props).length !== 2) {
+    fail(`schema for ${name}: unsupported object`);
+  }
+  const amount = object(props.amount, `${name}.amount`);
+  const currency = object(props.currency, `${name}.currency`);
+  onlyKeys(amount, ["type", "pattern"], `${name}.amount`);
+  onlyKeys(currency, ["type", "pattern", "enum"], `${name}.currency`);
+  const digits = amount.type === "string" && typeof amount.pattern === "string" ? decimalDigits(amount.pattern) : undefined;
+  if (!digits) fail(`schema for ${name}: unsupported amount`);
+  const field: FieldSchema = { name, kind: "money", required, nullable, precision: digits.precision, scale: digits.scale };
+  if (currency.type !== "string") fail(`schema for ${name}: unsupported currency`);
+  if (currency.enum !== undefined && currency.pattern === undefined && Array.isArray(currency.enum)) {
+    field.choices = currency.enum.map((v) => string(v, `${name}.currency value`));
+  } else if (currency.pattern !== CURRENCY_PATTERN || currency.enum !== undefined) {
+    fail(`schema for ${name}: unsupported currency`);
+  }
+  if (s.description !== undefined) field.description = string(s.description, `${name}.description`);
+  return field;
+}
+
 function decodeField(name: string, raw: unknown, required: boolean): FieldSchema {
   if (!FIELD_NAME.test(name) || FORBIDDEN_NAMES.has(name)) fail(`unsupported field name ${JSON.stringify(name)}`);
   const s = object(raw, `schema for ${name}`);
-  onlyKeys(
-    s,
-    ["type", "minLength", "maxLength", "minimum", "maximum", "enum", "format", "pattern", "description"],
-    `schema for ${name}`,
-  );
   let nullable = false;
   let type = s.type;
   if (Array.isArray(type)) {
@@ -179,6 +207,12 @@ function decodeField(name: string, raw: unknown, required: boolean): FieldSchema
     nullable = true;
     type = type[0];
   }
+  if (type === "object") return decodeMoney(name, s, required, nullable);
+  onlyKeys(
+    s,
+    ["type", "minLength", "maxLength", "minimum", "maximum", "enum", "format", "pattern", "description"],
+    `schema for ${name}`,
+  );
   if (type !== "string" && type !== "integer" && type !== "boolean") {
     fail(`schema for ${name}: unsupported type ${JSON.stringify(type)}`);
   }
