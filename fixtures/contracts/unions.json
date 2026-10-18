@@ -1,0 +1,586 @@
+{
+  "contract": "fixtures.unions.input",
+  "version": "1",
+  "profile": "trestle.portable@1",
+  "about": "Accept/reject fixtures for tagged unions (ADR-028). Same checks as scalars.json: the IR exports exactly `schema`, the server gives each `expect` (with `normalized`), an independent JSON Schema validator accepts exactly the 201 cases, and the browser agrees. `errors` lists [pointer, code] in response order; member errors carry the union's pointer as a prefix.",
+  "ir": {
+    "fields": {
+      "payment": {
+        "nullable": false,
+        "required": true,
+        "tag": "method",
+        "type": "union",
+        "variants": {
+          "card": {
+            "fields": {
+              "brand": {
+                "nullable": false,
+                "required": false,
+                "type": "enum",
+                "values": [
+                  "mastercard",
+                  "visa"
+                ]
+              },
+              "last4": {
+                "maxChars": 4,
+                "minChars": 4,
+                "nullable": false,
+                "required": true,
+                "type": "text"
+              }
+            },
+            "id": "fixtures.unions.card",
+            "kind": "input",
+            "profile": "trestle.portable@1",
+            "version": "1"
+          },
+          "cash": {
+            "fields": {},
+            "id": "fixtures.unions.cash",
+            "kind": "input",
+            "profile": "trestle.portable@1",
+            "version": "1"
+          },
+          "invoice": {
+            "fields": {
+              "due": {
+                "nullable": false,
+                "required": true,
+                "type": "date"
+              },
+              "po": {
+                "maxChars": 20,
+                "minChars": 1,
+                "nullable": true,
+                "required": false,
+                "type": "text"
+              }
+            },
+            "id": "fixtures.unions.invoice",
+            "kind": "input",
+            "profile": "trestle.portable@1",
+            "version": "1"
+          }
+        }
+      },
+      "refund": {
+        "nullable": true,
+        "required": false,
+        "tag": "kind",
+        "type": "union",
+        "variants": {
+          "credit": {
+            "fields": {
+              "amount": {
+                "currencies": [
+                  "USD"
+                ],
+                "nullable": false,
+                "precision": 8,
+                "required": true,
+                "scale": 2,
+                "type": "money"
+              }
+            },
+            "id": "fixtures.unions.credit",
+            "kind": "input",
+            "profile": "trestle.portable@1",
+            "version": "1"
+          }
+        }
+      }
+    },
+    "id": "fixtures.unions.input",
+    "kind": "input",
+    "profile": "trestle.portable@1",
+    "version": "1"
+  },
+  "schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "payment": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "brand": {
+                "enum": [
+                  "mastercard",
+                  "visa"
+                ],
+                "type": "string"
+              },
+              "last4": {
+                "maxLength": 4,
+                "minLength": 4,
+                "type": "string"
+              },
+              "method": {
+                "const": "card"
+              }
+            },
+            "required": [
+              "last4",
+              "method"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "method": {
+                "const": "cash"
+              }
+            },
+            "required": [
+              "method"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "due": {
+                "format": "date",
+                "type": "string"
+              },
+              "method": {
+                "const": "invoice"
+              },
+              "po": {
+                "maxLength": 20,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "due",
+              "method"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "refund": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "amount": {
+                "additionalProperties": false,
+                "properties": {
+                  "amount": {
+                    "pattern": "^-?(0|[1-9][0-9]{0,5})(\\.[0-9]{1,2})?$",
+                    "type": "string"
+                  },
+                  "currency": {
+                    "enum": [
+                      "USD"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "amount",
+                  "currency"
+                ],
+                "type": "object"
+              },
+              "kind": {
+                "const": "credit"
+              }
+            },
+            "required": [
+              "amount",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "payment"
+    ],
+    "type": "object"
+  },
+  "cases": [
+    {
+      "name": "a card",
+      "input": {
+        "payment": {
+          "method": "card",
+          "last4": "4242"
+        }
+      },
+      "expect": {
+        "status": 201,
+        "normalized": {
+          "payment": {
+            "method": "card",
+            "last4": "4242"
+          }
+        }
+      }
+    },
+    {
+      "name": "a card with its optional brand",
+      "input": {
+        "payment": {
+          "method": "card",
+          "last4": "4242",
+          "brand": "visa"
+        }
+      },
+      "expect": {
+        "status": 201,
+        "normalized": {
+          "payment": {
+            "method": "card",
+            "last4": "4242",
+            "brand": "visa"
+          }
+        }
+      }
+    },
+    {
+      "name": "an invoice with a null purchase order",
+      "input": {
+        "payment": {
+          "method": "invoice",
+          "due": "2026-11-01",
+          "po": null
+        }
+      },
+      "expect": {
+        "status": 201,
+        "normalized": {
+          "payment": {
+            "method": "invoice",
+            "due": "2026-11-01",
+            "po": null
+          }
+        }
+      }
+    },
+    {
+      "name": "a variant with no other members",
+      "input": {
+        "payment": {
+          "method": "cash"
+        }
+      },
+      "expect": {
+        "status": 201,
+        "normalized": {
+          "payment": {
+            "method": "cash"
+          }
+        }
+      }
+    },
+    {
+      "name": "money inside a variant",
+      "input": {
+        "payment": {
+          "method": "cash"
+        },
+        "refund": {
+          "kind": "credit",
+          "amount": {
+            "amount": "5.00",
+            "currency": "USD"
+          }
+        }
+      },
+      "expect": {
+        "status": 201,
+        "normalized": {
+          "payment": {
+            "method": "cash"
+          },
+          "refund": {
+            "kind": "credit",
+            "amount": {
+              "amount": "5.00",
+              "currency": "USD"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "a null optional union",
+      "input": {
+        "payment": {
+          "method": "cash"
+        },
+        "refund": null
+      },
+      "expect": {
+        "status": 201,
+        "normalized": {
+          "payment": {
+            "method": "cash"
+          },
+          "refund": null
+        }
+      }
+    },
+    {
+      "name": "no union at all",
+      "input": {},
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/payment",
+            "required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "no tag",
+      "input": {
+        "payment": {
+          "last4": "4242"
+        }
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/payment/method",
+            "required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "an unknown variant",
+      "input": {
+        "payment": {
+          "method": "cheque"
+        }
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/payment/method",
+            "choice"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "a tag that is not a string",
+      "input": {
+        "payment": {
+          "method": 3
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_body_shape",
+        "errors": [
+          [
+            "/payment/method",
+            "type"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "a null tag",
+      "input": {
+        "payment": {
+          "method": null
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_body_shape",
+        "errors": [
+          [
+            "/payment/method",
+            "type"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "a union that is not an object",
+      "input": {
+        "payment": "card"
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_body_shape",
+        "errors": [
+          [
+            "/payment",
+            "type"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "a member of another variant",
+      "input": {
+        "payment": {
+          "method": "cash",
+          "last4": "4242"
+        }
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/payment/last4",
+            "unknown_field"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "a member that breaks its variant's rule",
+      "input": {
+        "payment": {
+          "method": "card",
+          "last4": "42"
+        }
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/payment/last4",
+            "min_length"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "a member the variant requires",
+      "input": {
+        "payment": {
+          "method": "invoice"
+        }
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/payment/due",
+            "required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "an impossible date in a variant",
+      "input": {
+        "payment": {
+          "method": "invoice",
+          "due": "2026-02-30"
+        }
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/payment/due",
+            "format"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "a member of the wrong type",
+      "input": {
+        "payment": {
+          "method": "card",
+          "last4": 4242
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_body_shape",
+        "errors": [
+          [
+            "/payment/last4",
+            "type"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "money errors inside a variant",
+      "input": {
+        "payment": {
+          "method": "cash"
+        },
+        "refund": {
+          "kind": "credit",
+          "amount": {
+            "amount": "5.001",
+            "currency": "EUR"
+          }
+        }
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/refund/amount/amount",
+            "decimal_digits"
+          ],
+          [
+            "/refund/amount/currency",
+            "choice"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "shape errors win over invalid ones",
+      "input": {
+        "payment": {
+          "method": "card",
+          "last4": 4242
+        },
+        "refund": {
+          "kind": "debit"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_body_shape",
+        "errors": [
+          [
+            "/payment/last4",
+            "type"
+          ]
+        ]
+      }
+    }
+  ]
+}

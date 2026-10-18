@@ -270,7 +270,7 @@ const money: Widget = {
     const set = (a: string, c: string) => props.onChange(`${a.replace(/ /g, "")} ${c.replace(/ /g, "")}`);
     const choices = props.field.choices;
     return (
-      <span role="group" aria-labelledby={props.describedBy}>
+      <span role="group">
         <input
           {...common(props)}
           type="text"
@@ -308,7 +308,118 @@ const money: Widget = {
   },
 };
 
+/** Field names as words, for members a descriptor does not label. */
+export function words(name: string): string {
+  const text = name.replace(/_/g, " ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** A uuid typed as text: a union member has no option source to pick from. */
+const uuid = formatted("uuid", { type: "text", spellCheck: "false" });
+
+/** The widget a union member gets, by its schema alone. */
+function memberWidget(field: FieldSchema): Widget | undefined {
+  return [checkbox, integer, money, select, decimal, date, datetime, duration, uuid, text].find((w) => w.accepts(field));
+}
+
+/**
+ * The chosen variant and each variant's raw member values, as JSON in the
+ * one raw string; switching variants keeps what was typed in the others.
+ */
+interface UnionRaw {
+  variant: string;
+  members: Record<string, Record<string, string | boolean>>;
+}
+
+function unionParts(raw: string | boolean): UnionRaw {
+  try {
+    const parsed = JSON.parse(String(raw)) as Partial<UnionRaw>;
+    if (typeof parsed.variant === "string" && typeof parsed.members === "object" && parsed.members !== null) {
+      return { variant: parsed.variant, members: parsed.members };
+    }
+  } catch {
+    // Not ours: start empty.
+  }
+  return { variant: "", members: {} };
+}
+
+const union: Widget = {
+  accepts: (f) => f.kind === "union" && (f.variants ?? []).every((v) => v.fields.every((m) => memberWidget(m) !== undefined)),
+  empty: (f) => JSON.stringify({ variant: f.variants?.length === 1 ? f.variants[0]?.name : "", members: {} }),
+  fromJson: (value, field) => {
+    const tag = field.tag ?? "";
+    const record = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+    const variant = field.variants?.find((v) => v.name === record[tag]);
+    if (!variant) return union.empty(field);
+    const members: Record<string, string | boolean> = {};
+    for (const member of variant.fields) {
+      const widget = memberWidget(member);
+      if (widget) members[member.name] = widget.fromJson(record[member.name], member);
+    }
+    return JSON.stringify({ variant: variant.name, members: { [variant.name]: members } });
+  },
+  toJson: (raw, field) => {
+    const { variant: name, members } = unionParts(raw);
+    const variant = field.variants?.find((v) => v.name === name);
+    if (!variant) return field.nullable ? null : undefined;
+    const typed = members[name] ?? {};
+    const value: Record<string, unknown> = { [field.tag ?? ""]: name };
+    for (const member of variant.fields) {
+      const widget = memberWidget(member);
+      const json = widget?.toJson(typed[member.name] ?? widget.empty(member), member);
+      if (json !== undefined) value[member.name] = json;
+    }
+    return value;
+  },
+  render: (props) => {
+    const parts = unionParts(props.value);
+    const variants = props.field.variants ?? [];
+    const variant = variants.find((v) => v.name === parts.variant);
+    const typed = parts.members[parts.variant] ?? {};
+    const set = (next: UnionRaw) => props.onChange(JSON.stringify(next));
+    return (
+      <span role="group">
+        <select
+          {...common(props)}
+          value={parts.variant}
+          onChange={(e) => set({ ...parts, variant: e.target.value })}
+        >
+          <option value="">{props.field.required ? "Choose…" : "None"}</option>
+          {variants.map((v) => (
+            <option key={v.name} value={v.name}>
+              {words(v.name)}
+            </option>
+          ))}
+        </select>
+        {variant?.fields.map((member) => {
+          const widget = memberWidget(member);
+          if (!widget) return null;
+          const id = `${props.id}-${member.name}`;
+          return (
+            <span className="trestle-member" key={`${variant.name}.${member.name}`}>
+              <label htmlFor={id}>
+                {words(member.name)}
+                {member.required ? "" : " (optional)"}
+              </label>
+              {widget.render({
+                ...props,
+                id,
+                field: member,
+                presented: { ...props.presented, pointer: `${props.presented.pointer}/${member.name}`, name: member.name, label: words(member.name) },
+                value: typed[member.name] ?? widget.empty(member),
+                onChange: (value) =>
+                  set({ ...parts, members: { ...parts.members, [variant.name]: { ...typed, [member.name]: value } } }),
+              })}
+            </span>
+          );
+        })}
+      </span>
+    );
+  },
+};
+
 export const defaultWidgets: WidgetRegistry = {
+  union,
   money,
   text,
   textarea,

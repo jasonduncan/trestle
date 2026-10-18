@@ -10,7 +10,7 @@ import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 
 import { decodeDescriptor, type Descriptor, type FieldSchema, type PresentedField } from "./protocol";
 import { asProblem, etagVersion, type RecordContext, type Transport } from "./transport";
 import { validateInstance, type FieldError } from "./validate";
-import { defaultWidgets, type Widget, type WidgetRegistry } from "./widgets";
+import { defaultWidgets, words, type Widget, type WidgetRegistry } from "./widgets";
 
 export interface OperationFormProps {
   /** Interaction ID, e.g. `lessons.create.form`. */
@@ -181,9 +181,11 @@ export function OperationForm({
     const byField: Record<string, FieldError[]> = {};
     const general = [...fallback];
     for (const error of errors) {
-      const name = error.pointer.slice(1);
-      if (fields.some((f) => f.field.name === name)) (byField[name] ??= []).push(error);
-      else general.push(error.message);
+      // `/price/amount` belongs to field `price`; the member names the part.
+      const [name = "", ...members] = error.pointer.slice(1).split("/");
+      const named = members.length > 0 ? { ...error, message: `${members.map(words).join(" ")}: ${error.message}` } : error;
+      if (fields.some((f) => f.field.name === name)) (byField[name] ??= []).push(named);
+      else general.push(named.message);
     }
     setFieldErrors(byField);
     setFormErrors(general);

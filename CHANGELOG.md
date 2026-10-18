@@ -157,6 +157,19 @@ promise.
   - **Widget:** `money`, which requires `forms.money@1`.
   - **Storage:** in `trestle.toml` (`type = "money"`), money is stored as
     `<field>_amount` and `<field>_currency`.
+- Tagged unions (ADR-028):
+  - **Contracts:** `Field::union(name, tag, &[(variant, &contract), ..])`
+    takes one of several shapes, named by its tag member
+    (`{"method": "card", "last4": "4242"}`).
+  - **Schema and errors:** JSON Schema `oneOf` with `const` tags. Member
+    errors carry the union's pointer (`/payment/last4`).
+  - **Agreement:** the server, JSON Schema and browser agree on
+    `fixtures/contracts/unions.json`.
+  - **SDK:** a discriminated union on the tag.
+  - **Widget:** `union`, which requires `forms.union@1` and shows the chosen
+    variant's fields.
+- **`OperationForm`:** errors under a field (`/price/amount`) now show on
+  that field, prefixed with the member, instead of only in the summary.
 
 ### Changed
 - **Breaking (intent format):** an endpoint's `order` must name a required

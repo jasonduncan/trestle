@@ -65,6 +65,23 @@ fn ts_type(ty: &FieldType, contracts: &mut BTreeMap<String, ContractDoc>) -> Str
                 .or_insert_with(|| (**item).clone());
             format!("{}[]", type_name(&item.id))
         }
+        // A discriminated union TypeScript narrows on the tag (ADR-028).
+        FieldType::Union { tag, variants } => variants
+            .iter()
+            .map(|(variant, doc)| {
+                let mut members = vec![format!("{tag}: {variant:?}")];
+                members.extend(doc.fields.iter().map(|field| {
+                    let mut ty = ts_type(&field.ty, contracts);
+                    if field.nullable {
+                        ty = format!("{ty} | null");
+                    }
+                    let optional = if field.required { "" } else { "?" };
+                    format!("{}{optional}: {ty}", field.name)
+                }));
+                format!("{{ {} }}", members.join("; "))
+            })
+            .collect::<Vec<_>>()
+            .join(" | "),
     }
 }
 
@@ -248,5 +265,19 @@ mod tests {
         assert_eq!(type_name("lessons.view.page"), "LessonsViewPage");
         assert_eq!(function_name("lessons.update"), "lessonsUpdate");
         assert_eq!(function_name("units.list"), "unitsList");
+    }
+
+    #[test]
+    fn a_union_is_a_discriminated_union_on_its_tag() {
+        use trestle_protocol::Field;
+        let card = ContractDoc::input("x.card", "1")
+            .field(Field::text("last4"))
+            .field(Field::money("limit", 8, 2).optional().nullable());
+        let cash = ContractDoc::input("x.cash", "1");
+        let payment = Field::union("payment", "method", &[("card", &card), ("cash", &cash)]);
+        assert_eq!(
+            ts_type(&payment.ty, &mut BTreeMap::new()),
+            r#"{ method: "card"; last4: string; limit?: { amount: string; currency: string } | null } | { method: "cash" }"#
+        );
     }
 }

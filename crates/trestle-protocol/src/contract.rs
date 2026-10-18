@@ -98,6 +98,13 @@ pub enum FieldType {
         scale: u8,
         currencies: Vec<String>,
     },
+    /// One of several shapes, picked by a tag member:
+    /// `{"method": "card", "last4": "4242"}`. Each variant is a contract for
+    /// the other members; variants hold no lists or unions (ADR-028).
+    Union {
+        tag: String,
+        variants: Vec<(String, ContractDoc)>,
+    },
 }
 
 impl FieldType {
@@ -116,6 +123,7 @@ impl FieldType {
             FieldType::Duration => "duration",
             FieldType::Reference { .. } => "reference",
             FieldType::Money { .. } => "money",
+            FieldType::Union { .. } => "union",
         }
     }
 }
@@ -212,6 +220,24 @@ impl Field {
                 precision,
                 scale,
                 currencies: Vec::new(),
+            },
+        )
+    }
+
+    /// One of `variants`, named by member `tag`:
+    /// `Field::union("payment", "method", &[("card", &card), ("invoice", &invoice)])`.
+    /// Variants are kept in name order, as the IR stores them.
+    pub fn union(name: &str, tag: &str, variants: &[(&str, &ContractDoc)]) -> Self {
+        let mut variants: Vec<(String, ContractDoc)> = variants
+            .iter()
+            .map(|(n, c)| ((*n).to_owned(), (*c).clone()))
+            .collect();
+        variants.sort_by(|a, b| a.0.cmp(&b.0));
+        Self::new(
+            name,
+            FieldType::Union {
+                tag: tag.to_owned(),
+                variants,
             },
         )
     }
@@ -428,6 +454,35 @@ impl ContractDoc {
                         "contract {id}: field {name}: currencies must be unique three-letter codes"
                     ));
                 }
+                FieldType::Union { tag, variants } => {
+                    if !valid_identifier(tag) || variants.is_empty() {
+                        problems.push(format!(
+                            "contract {id}: field {name}: a union needs an identifier tag and at least one variant"
+                        ));
+                    }
+                    for (i, (variant, doc)) in variants.iter().enumerate() {
+                        if !valid_identifier(variant)
+                            || variants[..i].iter().any(|(v, _)| v == variant)
+                        {
+                            problems.push(format!(
+                                "contract {id}: field {name}: variant names must be unique identifiers"
+                            ));
+                        }
+                        if doc.get(tag).is_some() {
+                            problems.push(format!(
+                                "contract {id}: field {name}: variant {variant} declares the tag {tag}"
+                            ));
+                        }
+                        if doc.fields.iter().any(|f| {
+                            matches!(f.ty, FieldType::Union { .. } | FieldType::Items { .. })
+                        }) {
+                            problems.push(format!(
+                                "contract {id}: field {name}: variant {variant} holds a list or a union"
+                            ));
+                        }
+                        problems.extend(doc.problems());
+                    }
+                }
                 FieldType::Reference { model } if !valid_stable_id(model) => {
                     problems.push(format!(
                         "contract {id}: field {name}: reference to {model:?}, which is not a model ID"
@@ -483,6 +538,14 @@ impl ContractDoc {
                     if let FieldType::Items { item, max_items } = &field.ty {
                         if let Some(value) =
                             check_items(item, *max_items, &at, present, &mut shape, &mut invalid)
+                        {
+                            normalized.insert(field.name.clone(), value);
+                        }
+                        continue;
+                    }
+                    if let FieldType::Union { tag, variants } = &field.ty {
+                        if let Some(value) =
+                            check_union(tag, variants, &at, present, &mut shape, &mut invalid)
                         {
                             normalized.insert(field.name.clone(), value);
                         }
@@ -601,6 +664,15 @@ impl ContractDoc {
                     FieldType::Reference { model } => {
                         ir["model"] = json!(model);
                     }
+                    FieldType::Union { tag, variants } => {
+                        ir["tag"] = json!(tag);
+                        ir["variants"] = Value::Object(
+                            variants
+                                .iter()
+                                .map(|(n, doc)| (n.clone(), doc.to_ir()))
+                                .collect(),
+                        );
+                    }
                     FieldType::Money {
                         precision,
                         scale,
@@ -709,6 +781,20 @@ impl ContractDoc {
                         .and_then(Value::as_str)
                         .ok_or_else(|| format!("reference field {name} has no model"))?
                         .to_owned(),
+                },
+                Some("union") => FieldType::Union {
+                    tag: f
+                        .get("tag")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| format!("union field {name} has no tag"))?
+                        .to_owned(),
+                    variants: f
+                        .get("variants")
+                        .and_then(Value::as_object)
+                        .ok_or_else(|| format!("union field {name} has no variants"))?
+                        .iter()
+                        .map(|(n, ir)| Ok((n.clone(), Self::from_ir(ir)?)))
+                        .collect::<Result<_, String>>()?,
                 },
                 Some("money") => {
                     let digits = |key: &str| {
@@ -856,6 +942,31 @@ impl ContractDoc {
                         reasons.push(format!("field {name} accepts fewer currencies"));
                     }
                 }
+                (
+                    FieldType::Union {
+                        tag: ot,
+                        variants: ov,
+                    },
+                    FieldType::Union {
+                        tag: nt,
+                        variants: nv,
+                    },
+                ) => {
+                    if ot != nt {
+                        reasons.push(format!("field {name} changed its tag from {ot} to {nt}"));
+                    }
+                    for (variant, old_doc) in ov {
+                        match nv.iter().find(|(n, _)| n == variant) {
+                            None => reasons.push(format!("field {name} dropped variant {variant}")),
+                            Some((_, new_doc)) => reasons.extend(
+                                new_doc
+                                    .rejects_instances_of(old_doc)
+                                    .into_iter()
+                                    .map(|r| format!("field {name}, variant {variant}: {r}")),
+                            ),
+                        }
+                    }
+                }
                 // The same wire value: a uuid, whatever it is known to refer to.
                 (
                     FieldType::Uuid | FieldType::Reference { .. },
@@ -906,6 +1017,14 @@ impl ContractDoc {
                         "amount": "0",
                         "currency": currencies.first().map_or("USD", String::as_str),
                     }),
+                    FieldType::Union { tag, variants } => match variants.first() {
+                        Some((variant, doc)) => {
+                            let mut example = doc.example();
+                            example[tag.as_str()] = json!(variant);
+                            example
+                        }
+                        None => Value::Null,
+                    },
                 };
                 (f.name.clone(), value)
             })
@@ -953,6 +1072,29 @@ fn field_schema(field: &Field) -> Value {
             json!({ "type": "string", "format": "duration", "pattern": scalar::DURATION_PATTERN })
         }
         FieldType::Reference { .. } => json!({ "type": "string", "format": "uuid" }),
+        FieldType::Union { tag, variants } => {
+            let mut branches: Vec<Value> = variants
+                .iter()
+                .map(|(variant, doc)| {
+                    let mut branch = doc.schema_body();
+                    branch["properties"][tag.as_str()] = json!({ "const": variant });
+                    let required = branch["required"].as_array_mut().expect("required list");
+                    required.push(json!(tag));
+                    required.sort_by(|a, b| a.as_str().cmp(&b.as_str()));
+                    branch
+                })
+                .collect();
+            if field.nullable {
+                branches.push(json!({ "type": "null" }));
+            }
+            let mut schema = json!({ "oneOf": branches });
+            insert_some(
+                &mut schema,
+                "description",
+                field.description.clone().map(Value::from),
+            );
+            return schema;
+        }
         FieldType::Money {
             precision,
             scale,
@@ -1084,7 +1226,7 @@ fn check(ty: &FieldType, at: &str, value: &Value) -> Check {
             _ => Check::Shape(type_error(at, "string")),
         },
         FieldType::Items { .. } => Check::Shape(type_error(at, "array")),
-        FieldType::Money { .. } => Check::Shape(type_error(at, "object")),
+        FieldType::Money { .. } | FieldType::Union { .. } => Check::Shape(type_error(at, "object")),
         FieldType::Decimal { precision, scale } => match value {
             Value::String(text) => match scalar::check_decimal(text, *precision, *scale) {
                 Ok(()) => Check::Ok(value.clone()),
@@ -1152,6 +1294,69 @@ fn check(ty: &FieldType, at: &str, value: &Value) -> Check {
             ),
             _ => Check::Shape(type_error(at, "string")),
         },
+    }
+}
+
+/// Validates a union value: the tag picks the variant, whose contract then
+/// validates the other members, with pointers under `at`.
+fn check_union(
+    tag: &str,
+    variants: &[(String, ContractDoc)],
+    at: &str,
+    value: &Value,
+    shape: &mut Vec<FieldError>,
+    invalid: &mut Vec<FieldError>,
+) -> Option<Value> {
+    let Value::Object(members) = value else {
+        shape.push(type_error(at, "object"));
+        return None;
+    };
+    let here = format!("{at}{}", pointer(tag));
+    let variant = match members.get(tag) {
+        None => {
+            invalid.push(FieldError::new(here, "required", "This field is required."));
+            return None;
+        }
+        Some(Value::String(name)) => name,
+        Some(_) => {
+            shape.push(type_error(&here, "string"));
+            return None;
+        }
+    };
+    let Some((name, doc)) = variants.iter().find(|(n, _)| n == variant) else {
+        let choices: Vec<&str> = variants.iter().map(|(n, _)| n.as_str()).collect();
+        invalid.push(
+            FieldError::new(
+                here,
+                "choice",
+                format!("Choose one of: {}.", choices.join(", ")),
+            )
+            .with_params(json!({ "choices": choices })),
+        );
+        return None;
+    };
+    let mut rest = members.clone();
+    rest.remove(tag);
+    let prefix = |errors: Vec<FieldError>| {
+        errors.into_iter().map(|mut e| {
+            e.pointer = format!("{at}{}", e.pointer);
+            e
+        })
+    };
+    match doc.validate(&Value::Object(rest)) {
+        Ok(mut normalized) => {
+            normalized[tag] = json!(name);
+            Some(normalized)
+        }
+        Err(Rejection::Shape(errors)) => {
+            shape.extend(prefix(errors));
+            None
+        }
+        Err(Rejection::Invalid(errors)) => {
+            invalid.extend(prefix(errors));
+            None
+        }
+        Err(Rejection::NotObject) => None,
     }
 }
 

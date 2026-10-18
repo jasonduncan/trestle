@@ -20,6 +20,7 @@ export const SUPPORTED_FEATURES: ReadonlySet<string> = new Set([
   "forms.decimal@1",
   "forms.temporal@1",
   "forms.money@1",
+  "forms.union@1",
 ]);
 
 /** Same numbers as `trestle_protocol::limits` (§8.5). */
@@ -52,7 +53,14 @@ function decimalDigits(pattern: string): { precision: number; scale: number } | 
   return decimalPattern(precision, scale) === pattern && precision >= 1 && precision <= 38 ? { precision, scale } : undefined;
 }
 
-export type FieldKind = "string" | "integer" | "boolean" | "money";
+export type FieldKind = "string" | "integer" | "boolean" | "money" | "union";
+
+/** One shape of a union field, named by its tag value (ADR-028). */
+export interface UnionVariant {
+  name: string;
+  /** The members besides the tag, in schema order. */
+  fields: FieldSchema[];
+}
 
 export interface FieldSchema {
   name: string;
@@ -70,6 +78,9 @@ export interface FieldSchema {
    * `choices` lists the currencies when they are limited. */
   precision?: number;
   scale?: number;
+  /** For `union`: the member that names the variant, and the variants. */
+  tag?: string;
+  variants?: UnionVariant[];
   description?: string;
 }
 
@@ -197,9 +208,55 @@ function decodeMoney(name: string, s: Json, required: boolean, nullable: boolean
   return field;
 }
 
+/**
+ * A tagged union (ADR-028), in the exact shape the server writes: `oneOf`
+ * object branches that each pin the same tag member with `const`, then a
+ * `{type: "null"}` branch when nullable. Variants hold no unions.
+ */
+function decodeUnion(name: string, s: Json, required: boolean): FieldSchema {
+  onlyKeys(s, ["oneOf", "description"], `schema for ${name}`);
+  const branches = Array.isArray(s.oneOf) ? s.oneOf.map((b, i) => object(b, `${name}.oneOf[${i}]`)) : [];
+  const last = branches.at(-1);
+  const nullable = last !== undefined && last.type === "null" && Object.keys(last).length === 1;
+  if (nullable) branches.pop();
+  const first = branches[0];
+  if (!first) fail(`schema for ${name}: a union needs variants`);
+  const pins = Object.entries(object(first.properties, `${name}.oneOf[0].properties`)).filter(
+    ([, v]) => typeof v === "object" && v !== null && "const" in v,
+  );
+  const tag = pins.length === 1 ? pins[0]?.[0] : undefined;
+  if (tag === undefined || !FIELD_NAME.test(tag) || FORBIDDEN_NAMES.has(tag)) fail(`schema for ${name}: unsupported union`);
+  const variants = branches.map((branch, i): UnionVariant => {
+    const what = `${name}.oneOf[${i}]`;
+    onlyKeys(branch, ["type", "additionalProperties", "required", "properties"], what);
+    const props = object(branch.properties, `${what}.properties`);
+    const pin = object(props[tag], `${what}.${tag}`);
+    onlyKeys(pin, ["const"], `${what}.${tag}`);
+    const variant = string(pin.const, `${what}.${tag}`);
+    const req = Array.isArray(branch.required) ? branch.required : [];
+    if (!FIELD_NAME.test(variant) || FORBIDDEN_NAMES.has(variant) || !req.includes(tag)) fail(`${what}: unsupported variant`);
+    const inner = decodeObjectSchema(
+      {
+        type: branch.type,
+        additionalProperties: branch.additionalProperties,
+        required: req.filter((r) => r !== tag),
+        properties: Object.fromEntries(Object.entries(props).filter(([k]) => k !== tag)),
+      },
+      `${name}.${variant}`,
+    );
+    if (inner.fields.some((f) => f.kind === "union")) fail(`${what}: a variant cannot hold a union`);
+    return { name: variant, fields: inner.fields };
+  });
+  if (new Set(variants.map((v) => v.name)).size !== variants.length) fail(`schema for ${name}: duplicate variants`);
+  const field: FieldSchema = { name, kind: "union", required, nullable, tag, variants };
+  if (s.description !== undefined) field.description = string(s.description, `${name}.description`);
+  return field;
+}
+
 function decodeField(name: string, raw: unknown, required: boolean): FieldSchema {
   if (!FIELD_NAME.test(name) || FORBIDDEN_NAMES.has(name)) fail(`unsupported field name ${JSON.stringify(name)}`);
   const s = object(raw, `schema for ${name}`);
+  if (s.oneOf !== undefined) return decodeUnion(name, s, required);
   let nullable = false;
   let type = s.type;
   if (Array.isArray(type)) {

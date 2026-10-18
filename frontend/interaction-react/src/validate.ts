@@ -118,7 +118,8 @@ function check(field: FieldSchema, at: string, value: unknown): Check {
     case "boolean":
       return typeof value === "boolean" ? { ok: value } : { shape: typeError(at, "boolean") };
     case "money":
-      // Money reports per member; see checkMoney.
+    case "union":
+      // Both report per member; see checkMoney and checkUnion.
       return { shape: typeError(at, "object") };
   }
 }
@@ -169,6 +170,38 @@ function checkMoney(field: FieldSchema, at: string, value: unknown, shape: Field
   return ok ? { amount: members.amount, currency: members.currency } : undefined;
 }
 
+/** Mirrors the server's `check_union`: the tag picks the variant's schema. */
+function checkUnion(field: FieldSchema, at: string, value: unknown, shape: FieldError[], invalid: FieldError[]): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    shape.push(typeError(at, "object"));
+    return undefined;
+  }
+  const members = value as Record<string, unknown>;
+  const tag = field.tag ?? "";
+  const here = `${at}${pointer(tag)}`;
+  if (!Object.hasOwn(members, tag)) {
+    invalid.push({ pointer: here, code: "required", message: "This field is required." });
+    return undefined;
+  }
+  const name = members[tag];
+  if (typeof name !== "string") {
+    shape.push(typeError(here, "string"));
+    return undefined;
+  }
+  const variants = field.variants ?? [];
+  const variant = variants.find((v) => v.name === name);
+  if (!variant) {
+    const choices = variants.map((v) => v.name);
+    invalid.push({ pointer: here, code: "choice", message: `Choose one of: ${choices.join(", ")}.`, params: { choices } });
+    return undefined;
+  }
+  const rest = Object.fromEntries(Object.entries(members).filter(([k]) => k !== tag));
+  const result = validateInstance({ fields: variant.fields }, rest);
+  if (result.ok) return { ...result.value, [tag]: name };
+  (result.status === 400 ? shape : invalid).push(...result.errors.map((e) => ({ ...e, pointer: `${at}${e.pointer}` })));
+  return undefined;
+}
+
 export function validateInstance(schema: ObjectSchema, instance: unknown): Validation {
   if (typeof instance !== "object" || instance === null || Array.isArray(instance)) {
     return { ok: false, status: 400, code: "body_not_object", errors: [] };
@@ -190,9 +223,9 @@ export function validateInstance(schema: ObjectSchema, instance: unknown): Valid
       else invalid.push({ pointer: at, code: "not_nullable", message: "This field cannot be null." });
       continue;
     }
-    if (field.kind === "money") {
-      const money = checkMoney(field, at, present, shape, invalid);
-      if (money !== undefined) value[field.name] = money;
+    if (field.kind === "money" || field.kind === "union") {
+      const checked = (field.kind === "money" ? checkMoney : checkUnion)(field, at, present, shape, invalid);
+      if (checked !== undefined) value[field.name] = checked;
       continue;
     }
     const result = check(field, at, present);
