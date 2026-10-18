@@ -170,8 +170,27 @@ promise.
     variant's fields.
 - **`OperationForm`:** errors under a field (`/price/amount`) now show on
   that field, prefixed with the member, instead of only in the summary.
+- Admin views for `trestle.toml` apps (ADR-029):
+  - **Resource verbs** take a typed `Operation` or an
+    `Arc<dyn DynOperation<S>>` (`ResourceOp`). `action_at` takes a binding
+    you choose.
+  - **`DynPolicy`** and `admin_dyn(view, policy)` publish an admin profile
+    from data.
+  - **`[[admin]]`** in `trestle.toml` (model, permission, title, columns,
+    filters, actions) shows a model in the admin shell, with generated
+    admin forms and its actions as buttons. Every intent CRUD endpoint is a
+    resource.
+  - **Admin actions** bound with `If-Match` are described with `ifMatch`,
+    and the shell sends the row's ETag.
+  - **The admin shell** shows money as "12.50 USD".
 
 ### Changed
+- **Breaking:** `RegisteredResource::admin_policy()` returns `Option<&str>`
+  (was `&'static str`). Resource verbs take `impl ResourceOp<S>` instead of
+  a generic `O: Operation`; calls are unchanged.
+- **Fixed:** runtime-built operations (`dyn_operation`) have an
+  availability function, so `/_meta` serves forms generated for
+  `trestle.toml` apps (ADR-026 published them but never served them).
 - **Breaking (intent format):** an endpoint's `order` must name a required
   field or `created_at`. Intent list contracts gain `cursor`, and pages
   gain `next_cursor`.

@@ -705,6 +705,23 @@ pub trait DynOperation<S>: Send + Sync + 'static {
     ) -> BoxFuture<'static, (DynConn, Result<Value, Problem>)>;
 }
 
+/// A policy assembled at runtime: a [`DynOperation`]'s context lookup and
+/// admission, without an operation. An admin profile built from data uses
+/// one ([`crate::registry::ResourceRegistration::admin_dyn`]).
+pub trait DynPolicy<S>: Send + Sync + 'static {
+    fn id(&self) -> &str;
+    fn context(&self) -> ContextDescriptor;
+
+    /// The context for this caller, as [`DynOperation::resolve_context`].
+    fn resolve_context<'a>(
+        &'a self,
+        invocation: &'a Invocation,
+        state: &'a S,
+    ) -> BoxFuture<'a, Result<DynContext, Problem>>;
+
+    fn admit(&self, ctx: &DynContext) -> Result<(), Problem>;
+}
+
 /// The executor for [`DynOperation`]s: validate against the input contract,
 /// admit, then read on a connection or write in a transaction (recheck, run,
 /// output check, commit). The same sequence and metrics as

@@ -27,6 +27,22 @@ struct File {
     models: Vec<ModelSection>,
     #[serde(default)]
     endpoints: Vec<EndpointSection>,
+    #[serde(default)]
+    admin: Vec<AdminSection>,
+}
+
+/// `[[admin]]`: a model in the admin shell (ADR-029).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AdminSection {
+    model: Spanned<String>,
+    /// Who sees it. Every button still runs its operation's own permission.
+    permission: Option<Spanned<String>>,
+    title: Option<String>,
+    columns: Option<Vec<Spanned<String>>>,
+    filters: Option<Vec<Spanned<String>>>,
+    #[serde(default)]
+    actions: Vec<Spanned<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -223,6 +239,23 @@ pub struct Intent {
     /// lives exactly as long as something uses it.
     pub models: Vec<Arc<ModelSpec>>,
     pub endpoints: Vec<EndpointSpec>,
+    pub admin: Vec<AdminSpec>,
+}
+
+/// A model shown in the admin shell (ADR-029): its CRUD endpoint's list,
+/// forms for its create and update, and buttons for its actions.
+#[derive(Debug, Clone)]
+pub struct AdminSpec {
+    pub model: String,
+    /// The permission that shows the model in the admin shell.
+    pub permission: String,
+    pub title: String,
+    /// Item fields shown as list columns, in order.
+    pub columns: Vec<String>,
+    /// List filters offered (a subset of the endpoint's `filter`).
+    pub filters: Vec<String>,
+    /// IDs of action endpoints on the model, shown as buttons.
+    pub actions: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1002,7 +1035,15 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
             forms: e.forms,
         });
     }
-    check_forms(file, &models, &endpoints, &mut problems);
+    let admin = admin_specs(
+        &lines,
+        &raw.admin,
+        &models,
+        &endpoints,
+        &check_permission,
+        &mut problems,
+    );
+    check_forms(file, &models, &endpoints, &admin, &mut problems);
 
     if let Some(oidc) = &raw.auth.oidc
         && let Err(e) = oidc.provider()
@@ -1019,6 +1060,7 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
             roles,
             models,
             endpoints,
+            admin,
         })
     } else {
         Err(IntentError { problems })
@@ -1032,6 +1074,7 @@ fn check_forms(
     file: &str,
     models: &[Arc<ModelSpec>],
     endpoints: &[EndpointSpec],
+    admin: &[AdminSpec],
     problems: &mut Vec<String>,
 ) {
     let listed = |model: &str| {
@@ -1041,12 +1084,12 @@ fn check_forms(
     };
     for e in endpoints {
         let (model, fields, what): (&str, Vec<&str>, String) = match e {
+            // Admin views publish create and update forms too.
             EndpointSpec::Crud {
-                model,
-                ops,
-                forms: true,
-                ..
-            } if ops.contains(&Crud::Create) || ops.contains(&Crud::Update) => {
+                model, ops, forms, ..
+            } if (*forms || admin.iter().any(|a| a.model == *model))
+                && (ops.contains(&Crud::Create) || ops.contains(&Crud::Update)) =>
+            {
                 let Some(m) = models.iter().find(|m| m.id == *model) else {
                     continue;
                 };
@@ -1090,6 +1133,124 @@ fn check_forms(
             }
         }
     }
+}
+
+/// Checks the `[[admin]]` sections and resolves their defaults: the
+/// table's name as the title, every field as a column, the endpoint's
+/// filters.
+fn admin_specs(
+    lines: &Lines<'_>,
+    sections: &[AdminSection],
+    models: &[Arc<ModelSpec>],
+    endpoints: &[EndpointSpec],
+    check_permission: &dyn Fn(&Spanned<String>, &mut Vec<String>) -> String,
+    problems: &mut Vec<String>,
+) -> Vec<AdminSpec> {
+    let mut out: Vec<AdminSpec> = Vec::new();
+    for a in sections {
+        let at = lines.at(&a.model);
+        let id = a.model.get_ref();
+        let Some(model) = models.iter().find(|m| m.id == *id) else {
+            problems.push(format!(
+                "{at}: admin model {id:?} is not a model in this file"
+            ));
+            continue;
+        };
+        if out.iter().any(|o| o.model == *id) {
+            problems.push(format!("{at}: model {id:?} has two [[admin]] sections"));
+        }
+        let listed = endpoints.iter().find_map(|e| match e {
+            EndpointSpec::Crud {
+                model: m,
+                ops,
+                filter,
+                ..
+            } if m == id && ops.contains(&Crud::List) => Some(filter),
+            _ => None,
+        });
+        let Some(endpoint_filters) = listed else {
+            problems.push(format!(
+                "{at}: the admin view of {id} lists rows, so its CRUD endpoint needs \"list\""
+            ));
+            continue;
+        };
+        let Some(permission) = &a.permission else {
+            problems.push(format!(
+                "{at}: [[admin]] for {id} needs permission = \"<permission>\" (there is no unprotected default)"
+            ));
+            continue;
+        };
+        let permission = check_permission(permission, problems);
+        let item = |name: &str| {
+            ["id", "version", "created_at"].contains(&name) || model.field(name).is_some()
+        };
+        let columns = match &a.columns {
+            None => model.fields.iter().map(|f| f.id.clone()).collect(),
+            Some(columns) => {
+                for c in columns.iter().filter(|c| !item(c.get_ref())) {
+                    problems.push(format!(
+                        "{}: admin column {:?} is not id, version, created_at or a field of {id}",
+                        lines.at(c),
+                        c.get_ref()
+                    ));
+                }
+                columns.iter().map(|c| c.get_ref().clone()).collect()
+            }
+        };
+        let filters = match &a.filters {
+            None => endpoint_filters.clone(),
+            Some(filters) => {
+                for f in filters
+                    .iter()
+                    .filter(|f| !endpoint_filters.contains(f.get_ref()))
+                {
+                    problems.push(format!(
+                        "{}: admin filter {:?} is not in the filter = [...] of {id}'s CRUD endpoint",
+                        lines.at(f),
+                        f.get_ref()
+                    ));
+                }
+                filters.iter().map(|f| f.get_ref().clone()).collect()
+            }
+        };
+        let mut actions = Vec::new();
+        for action in &a.actions {
+            let name = action.get_ref();
+            let found = endpoints.iter().any(|e| {
+                matches!(e, EndpointSpec::Action { id: i, model: m, .. } if i == name && m == id)
+            });
+            if !found {
+                problems.push(format!(
+                    "{}: admin action {name:?} is not an action endpoint on {id}",
+                    lines.at(action)
+                ));
+            } else if name.split_once('.').map(|(app, _)| app) != Some(model.app.as_str()) {
+                problems.push(format!(
+                    "{}: admin action {name:?} must belong to app {:?}, like {id}",
+                    lines.at(action),
+                    model.app
+                ));
+            } else {
+                actions.push(name.clone());
+            }
+        }
+        out.push(AdminSpec {
+            model: id.clone(),
+            permission,
+            title: a.title.clone().unwrap_or_else(|| {
+                let words = model.table.replace('_', " ");
+                let mut chars = words.chars();
+                chars
+                    .next()
+                    .map(|c| c.to_uppercase().chain(chars).collect())
+                    .unwrap_or_default()
+            }),
+            columns,
+            filters,
+            actions,
+        });
+    }
+    out
 }
 
 /// Checks a declared action and builds it.
