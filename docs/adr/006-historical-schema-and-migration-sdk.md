@@ -1,7 +1,7 @@
 # ADR-006: Historical schema format and migration SDK
 
 **Status:** Accepted (M3, 2026-09-26) · **Design doc:** §13–§14, §19.2 C, I07, I08, I10 ·
-**Amended by:** ADR-017 (fence migrations)
+**Amended by:** ADR-017 (fence migrations), ADR-019 (preconditions, impact, drift)
 
 ## Context
 

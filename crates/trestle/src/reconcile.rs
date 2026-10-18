@@ -11,6 +11,8 @@ use sha2::{Digest, Sha256};
 use sqlx::PgConnection;
 use sqlx::postgres::PgConnectOptions;
 use trestle_historical::classify::{self, Reason};
+use trestle_historical::impact;
+use trestle_historical::schema::SchemaState;
 use trestle_historical::{
     HistoryError, LedgerStatus, MigrationRef, MigrationSet, Outstanding, PlanState, RunConfig,
     RunEvent,
@@ -55,7 +57,8 @@ impl Failure {
     /// The exit code for a migration-runner error.
     pub fn from_history(e: &HistoryError) -> Self {
         let code = match e {
-            HistoryError::Failed { .. } => exit::FAILED,
+            HistoryError::Failed { .. } | HistoryError::Precondition { .. } => exit::FAILED,
+            HistoryError::Drift(_) => exit::DRIFT,
             HistoryError::Partial { .. } => exit::PARTIAL,
             HistoryError::NotApproved(_) => exit::APPROVAL,
             HistoryError::LockTimeout(_) => exit::LOCK,
@@ -147,6 +150,12 @@ pub struct PlanStep {
     /// The 1-based step a partial non-atomic migration resumes at.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resume_step: Option<i32>,
+    /// Its manifest's preconditions, evaluated now (ADR-019).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub preconditions: Vec<impact::Evaluated>,
+    /// What its operations would do to existing rows (ADR-019).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub impact: Vec<impact::Impact>,
     pub class: &'static str,
     pub requires_approval: bool,
     pub reasons: Vec<&'static str>,
@@ -176,6 +185,9 @@ impl PlanReport {
     }
 }
 
+/// How long one precondition or impact count may run during `--plan`.
+const IMPACT_TIMEOUT: &str = "5s";
+
 /// `migrate --plan`: what would run, how it is classified, and its digest.
 pub async fn plan_report(
     conn: &mut PgConnection,
@@ -185,8 +197,19 @@ pub async fn plan_report(
     let db = |e: sqlx::Error| Failure::new(exit::UNREACHABLE, format!("database: {e}"));
     let ledger_present = trestle_historical::ledger_exists(conn).await.map_err(db)?;
     let mut blocked = Vec::new();
+    let mut drift = Vec::new();
     let (outstanding, applied) = match trestle_historical::plan(conn, set).await {
         Ok(plan) => {
+            // The plan assumes the schema its applied history describes.
+            drift = trestle_historical::drift(conn, set, &plan)
+                .await
+                .map_err(|e| Failure::from_history(&e))?;
+            if !drift.is_empty() {
+                blocked.push(format!(
+                    "the database does not match its applied history: {}",
+                    drift.join("; ")
+                ));
+            }
             let applied = plan
                 .entries
                 .iter()
@@ -205,6 +228,7 @@ pub async fn plan_report(
         }
     };
     let classes = classify::classify_set(set);
+    let states = set.states().ok();
     let mut steps = Vec::new();
     let mut keys = Vec::new();
     for (key, state) in &outstanding {
@@ -227,6 +251,38 @@ pub async fn plan_report(
             _ => ("pending", 0),
         };
         keys.push((*key, step));
+        let preconditions = impact::preconditions(conn, m, IMPACT_TIMEOUT).await;
+        for p in &preconditions {
+            if let Some(n) = p.violations.filter(|n| *n != 0) {
+                blocked.push(format!(
+                    "{key}: precondition {:?} has {n} violation(s)",
+                    p.name
+                ));
+            }
+        }
+        let ops = set.manifest(m.key()).map(|man| man.operations.as_slice());
+        let before = states.as_ref().map(|s| {
+            if index == 0 {
+                SchemaState::default()
+            } else {
+                s[index - 1].clone()
+            }
+        });
+        let impact = match (ops, before) {
+            (Some(ops), Some(before)) => {
+                impact::impact(conn, m, ops, &before, IMPACT_TIMEOUT).await
+            }
+            _ => Vec::new(),
+        };
+        for i in impact.iter().filter(|i| i.blocks) {
+            blocked.push(format!(
+                "{key}: {} on {} would fail: {} {}",
+                i.change,
+                i.model,
+                i.affected.unwrap_or_default(),
+                i.meaning.unwrap_or("rows")
+            ));
+        }
         steps.push(PlanStep {
             app: m.app.to_owned(),
             id: m.id.to_owned(),
@@ -242,6 +298,8 @@ pub async fn plan_report(
             },
             status,
             resume_step: (status == "partial").then_some(step + 1),
+            preconditions,
+            impact,
             class: if reasons.is_empty() {
                 "auto"
             } else {
@@ -256,7 +314,11 @@ pub async fn plan_report(
         schema: "trestle.plan/1",
         project: project.to_owned(),
         trestle_version: env!("CARGO_PKG_VERSION"),
-        database: json!({ "ledger_present": ledger_present, "applied": applied }),
+        database: if drift.is_empty() {
+            json!({ "ledger_present": ledger_present, "applied": applied })
+        } else {
+            json!({ "ledger_present": ledger_present, "applied": applied, "drift": drift })
+        },
         plan_digest: plan_digest(set, &keys),
         class: if requires_approval || !blocked.is_empty() {
             "approval"
@@ -330,6 +392,7 @@ pub async fn apply(
     backup_ref: Option<String>,
     lock_wait: Option<String>,
     json: bool,
+    allow_drift: bool,
 ) -> Result<(), Failure> {
     let set = Arc::new(set);
     let applied = Arc::new(Mutex::new(Vec::<String>::new()));
@@ -337,6 +400,7 @@ pub async fn apply(
     let config = RunConfig {
         lock_wait,
         backup_ref,
+        allow_drift,
         guard: Some(Box::new(guard(set.clone(), gate))),
         events: Some(Box::new(move |event| {
             let line = match &event {

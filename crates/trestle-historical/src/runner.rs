@@ -152,6 +152,9 @@ pub struct RunConfig {
     /// Progress callback.
     #[allow(clippy::type_complexity)]
     pub events: Option<Box<dyn Fn(RunEvent) + Send + Sync>>,
+    /// Apply even when the catalog differs from applied history. For a
+    /// known, reviewed difference only.
+    pub allow_drift: bool,
 }
 
 /// Applies outstanding migrations in order and returns what was applied.
@@ -214,6 +217,13 @@ async fn run_locked(
     ledger::ensure(conn).await?;
     // Validate the whole history before applying anything.
     let plan = plan(conn, set).await?;
+    // The plan assumes the schema its applied history describes.
+    if !config.allow_drift {
+        let drift = drift(conn, set, &plan).await?;
+        if !drift.is_empty() {
+            return Err(HistoryError::Drift(drift.join("; ")));
+        }
+    }
     // Collected first: an iterator adapter held across `.await` makes the
     // future's `Send` bound unprovable (rust-lang/rust#102211).
     let outstanding: Vec<(MigrationRef, i32)> = plan
@@ -276,6 +286,30 @@ async fn run_locked(
     Ok(applied)
 }
 
+/// Catalog differences from the schema applied history describes; `plan`
+/// is this set's plan against the same database.
+pub async fn drift(
+    conn: &mut PgConnection,
+    set: &MigrationSet,
+    plan: &Plan,
+) -> Result<Vec<String>, HistoryError> {
+    let applied: Vec<MigrationRef> = plan
+        .entries
+        .iter()
+        .filter(|e| e.state == PlanState::Applied)
+        .map(|e| e.migration)
+        .collect();
+    if applied.is_empty() {
+        return Ok(Vec::new());
+    }
+    // History without manifests cannot be replayed into a schema, so there
+    // is nothing to compare against (`verify` reports it as unverified).
+    let Ok(history) = set.history_of(|key| applied.contains(&key)) else {
+        return Ok(Vec::new());
+    };
+    Ok(crate::verify::verify(conn, &history).await?.mismatches)
+}
+
 async fn apply(
     conn: &mut PgConnection,
     migration: &Migration,
@@ -300,6 +334,19 @@ async fn apply(
     {
         tx.rollback().await?;
         return Err(failed(conn, migration, describe(&err)).await?);
+    }
+    // In the migration's transaction (and under its fence), so the data it
+    // checks is the data the migration acts on.
+    match crate::impact::first_violated(&mut tx, &migration.preconditions()).await {
+        Ok(None) => {}
+        Ok(Some((name, violations))) => {
+            tx.rollback().await?;
+            return Err(refused(conn, migration, name, violations).await?);
+        }
+        Err(err) => {
+            tx.rollback().await?;
+            return Err(failed(conn, migration, describe(&err)).await?);
+        }
     }
     // `Executor::execute` with a bare `&str` (no arguments) uses the simple
     // query protocol, so a migration may contain several statements.
@@ -335,6 +382,24 @@ async fn apply(
     ledger::mark_applied(&mut tx, migration).await?;
     tx.commit().await?;
     Ok(())
+}
+
+/// Records a migration its preconditions stopped before it changed
+/// anything.
+async fn refused(
+    conn: &mut PgConnection,
+    migration: &Migration,
+    name: String,
+    violations: i64,
+) -> Result<HistoryError, HistoryError> {
+    let message = format!("precondition {name:?} has {violations} violation(s)");
+    ledger::mark_failed(conn, migration, &message).await?;
+    tracing::error!(migration = %migration.key(), %message, "migration refused");
+    Ok(HistoryError::Precondition {
+        migration: migration.key().to_string(),
+        name,
+        violations,
+    })
 }
 
 /// Records an attempt whose transaction rolled back, and describes it.
@@ -379,6 +444,22 @@ async fn apply_steps(
             .unwrap_or(STEP_STATEMENT_TIMEOUT),
     )
     .await?;
+    // Checked once, before any step: a resumed migration already passed.
+    if start == 0 {
+        match crate::impact::first_violated(conn, &migration.preconditions()).await {
+            Ok(None) => {}
+            Ok(Some((name, violations))) => {
+                set_config(conn, "lock_timeout", DDL_LOCK_TIMEOUT).await?;
+                set_config(conn, "statement_timeout", STATEMENT_TIMEOUT).await?;
+                return Err(refused(conn, migration, name, violations).await?);
+            }
+            Err(err) => {
+                set_config(conn, "lock_timeout", DDL_LOCK_TIMEOUT).await?;
+                set_config(conn, "statement_timeout", STATEMENT_TIMEOUT).await?;
+                return Err(failed(conn, migration, describe(&err)).await?);
+            }
+        }
+    }
     // Fenced before the first step, in its own transaction: older builds
     // stop writing before any of this migration's work begins.
     let result = match raise_fence(conn, migration, &options).await {

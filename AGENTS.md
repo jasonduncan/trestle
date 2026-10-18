@@ -29,7 +29,7 @@ and is not self-granted. Open items before a pilot:
 choose how people sign in (password accounts are built; an OIDC provider is optional and only
 mock-tested), send through the real SMTP relay, get external security review (§12.4), and
 validate the edge config (`deploy/Caddyfile`) on a real host. Do not claim general
-maturity or benchmark leadership. ADRs: 001–018 (015 reopens 009: jobs and outbox).
+maturity or benchmark leadership. ADRs: 001–019 (015 reopens 009: jobs and outbox).
 
 ## Non-negotiables
 - Installing a model publishes nothing (I01). Endpoints, forms and writable fields are explicit.
@@ -59,6 +59,9 @@ maturity or benchmark leadership. ADRs: 001–018 (015 reopens 009: jobs and out
 - Metrics labels stay bounded (route templates, operation IDs, problem codes); never actor,
   tenant or record IDs. The hot path in `metrics.rs` allocates nothing and takes no
   exclusive lock; keep it that way (it shows up directly in the load comparison).
+- `migrate` refuses to apply over drift (ADR-019); never add `--allow-drift` to a script or
+  default. Preconditions and impact counts run read-only; keep any new count bounded by the
+  plan's statement timeout and out of `plan_digest`.
 - Models live in apps (`app.model(..)`); migrations come from `pilot makemigrations` and are
   reviewed before commit. `makemigrations --check` must stay clean. Never edit an applied
   migration (digest-checked, data-step source included). Data steps use `HistoricalTx` with

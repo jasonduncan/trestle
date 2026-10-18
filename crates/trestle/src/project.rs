@@ -537,6 +537,10 @@ struct MigrateArgs {
     /// How long to wait for another migrate's lock (e.g. 30s); exit 7.
     #[arg(long, value_name = "DURATION")]
     lock_timeout: Option<String>,
+    /// Apply although the schema differs from applied history (exit 6
+    /// otherwise). Only for a known, reviewed difference.
+    #[arg(long, conflicts_with = "plan")]
+    allow_drift: bool,
 }
 
 #[derive(Args)]
@@ -1417,6 +1421,31 @@ async fn migrate<S>(
                     },
                     resume
                 );
+                for p in &step.preconditions {
+                    let found = match (p.violations, &p.note) {
+                        (Some(0), _) => "holds".to_owned(),
+                        (Some(n), _) => format!("{n} violation(s)"),
+                        (None, Some(note)) => format!("not evaluated: {note}"),
+                        (None, None) => "not evaluated".to_owned(),
+                    };
+                    println!("    precondition {:?}: {found}", p.name);
+                }
+                for i in &step.impact {
+                    let rows = i
+                        .rows
+                        .map(|n| format!("~{n} rows"))
+                        .unwrap_or_else(|| "rows unknown".into());
+                    let affected = match (i.affected, i.meaning, &i.note) {
+                        (Some(n), Some(meaning), _) => format!(", {n} {meaning}"),
+                        (None, _, Some(note)) => format!(", count {note}"),
+                        _ => String::new(),
+                    };
+                    let blocks = if i.blocks { " (would fail)" } else { "" };
+                    println!(
+                        "    impact: {} on {} ({rows}){affected}{blocks}",
+                        i.change, i.table
+                    );
+                }
             }
             for b in &report.blocked {
                 println!("blocked: {b}");
@@ -1443,6 +1472,7 @@ async fn migrate<S>(
         args.backup_ref,
         args.lock_timeout,
         args.json,
+        args.allow_drift,
     )
     .await
 }

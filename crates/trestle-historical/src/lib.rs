@@ -18,6 +18,7 @@ pub mod artifact;
 pub mod classify;
 pub mod data;
 pub mod fence;
+pub mod impact;
 mod ledger;
 pub mod load;
 pub mod planner;
@@ -38,7 +39,8 @@ use sha2::{Digest, Sha256};
 pub use data::{DataStep, HistoricalTx};
 pub use ledger::{LedgerRow, LedgerStatus, exists as ledger_exists, load as ledger_rows, missing};
 pub use runner::{
-    Outstanding, Plan, PlanEntry, PlanState, RunConfig, RunEvent, migrate, migrate_with, plan,
+    Outstanding, Plan, PlanEntry, PlanState, RunConfig, RunEvent, drift, migrate, migrate_with,
+    plan,
 };
 use schema::{SchemaState, StateOp};
 
@@ -97,6 +99,29 @@ pub struct Manifest {
     /// manifests keep their digests.
     #[serde(default, skip_serializing_if = "is_false")]
     pub fence: bool,
+    /// Checks on the data this migration expects ([`Precondition`]).
+    /// Omitted when empty, so older manifests keep their digests.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preconditions: Vec<Precondition>,
+}
+
+/// A check that must hold before a migration runs: `violations` is one
+/// `SELECT` returning how many rows break it. Anything but zero stops the
+/// migration before it changes anything; `migrate --plan` reports the
+/// count. Example:
+/// `{"name": "no duplicate slugs", "violations": "SELECT count(*) FROM (SELECT slug FROM lessons GROUP BY slug HAVING count(*) > 1) d"}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Precondition {
+    pub name: String,
+    pub violations: String,
+}
+
+impl Precondition {
+    /// The query as one bigint, whatever integer type it returns.
+    pub fn sql(&self) -> String {
+        let query = self.violations.trim().trim_end_matches(';').trim_end();
+        format!("SELECT ({query})::bigint")
+    }
 }
 
 fn yes() -> bool {
@@ -279,6 +304,20 @@ impl Migration {
         }
     }
 
+    /// What its manifest says must hold before it runs.
+    pub fn preconditions(&self) -> Vec<Precondition> {
+        self.parsed_preconditions().unwrap_or_default()
+    }
+
+    fn parsed_preconditions(&self) -> Result<Vec<Precondition>, serde_json::Error> {
+        match self.manifest_value() {
+            Some(m) if !m["preconditions"].is_null() => {
+                serde_json::from_value(m["preconditions"].clone())
+            }
+            _ => Ok(Vec::new()),
+        }
+    }
+
     /// The statements a non-atomic migration runs, in order.
     pub fn steps(&self) -> Vec<String> {
         split_steps(self.sql)
@@ -301,6 +340,29 @@ impl Migration {
                     "{key}: {name} {v:?} must be a number with an optional unit (ms, s, min, h)"
                 ));
             }
+        }
+        let mut names = HashSet::new();
+        for check in self.preconditions() {
+            let first = strip_comments(&check.violations)
+                .split_whitespace()
+                .next()
+                .map(str::to_ascii_uppercase);
+            if check.name.trim().is_empty() || !names.insert(check.name.clone()) {
+                problems.push(format!("{key}: every precondition needs a name of its own"));
+            }
+            if statement_count(&check.violations) != 1
+                || !matches!(first.as_deref(), Some("SELECT" | "WITH"))
+            {
+                problems.push(format!(
+                    "{key}: precondition {:?} must be one SELECT returning a count",
+                    check.name
+                ));
+            }
+        }
+        if self.parsed_preconditions().is_err() {
+            problems.push(format!(
+                "{key}: preconditions must be a list of {{\"name\", \"violations\"}}"
+            ));
         }
         let marked = self.sql.lines().any(|l| l.trim() == STEP_MARKER);
         if options.atomic {
@@ -659,6 +721,21 @@ pub enum HistoryError {
     Unreachable(String),
     #[error("migration {migration} failed and was rolled back: {message}")]
     Failed { migration: String, message: String },
+    #[error(
+        "migration {migration} did not run: precondition {name:?} has {violations} violation(s). \
+         Fix the data, then run migrate again"
+    )]
+    Precondition {
+        migration: String,
+        name: String,
+        violations: i64,
+    },
+    /// The catalog does not match applied history (ADR-019).
+    #[error(
+        "the database does not match its applied history, so no migration ran: {0}. \
+         Repair it (see `verify`), or pass --allow-drift if the difference is known and safe"
+    )]
+    Drift(String),
     #[error("data step in {migration}: {message}")]
     Data { migration: String, message: String },
     #[error("inconsistent history: {0}")]
