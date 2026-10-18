@@ -80,6 +80,7 @@ pub(crate) async fn ensure(conn: &mut PgConnection) -> Result<(), sqlx::Error> {
         (&mut *tx).execute(UPGRADE_LEDGER).await?;
         tx.commit().await?;
     }
+    (&mut *conn).execute(crate::fence::CREATE).await?;
     Ok(())
 }
 

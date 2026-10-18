@@ -841,7 +841,9 @@ where
                 intent_migrations_applied(ctx, intent, history()?).await?;
             }
             let options = database()?;
-            schema_verified(&options, history()?, bin).await?;
+            let set = history()?;
+            schema_verified(&options, set.clone(), bin).await?;
+            schema_fence_installed(&options, &set, bin).await?;
             Ok(serve::serve(ctx.registry.clone(), env, options, config, extension, bin).await?)
         }
         BuiltIn::Identity { action } => match action {
@@ -898,6 +900,12 @@ where
                         .unknown_applied
                         .iter()
                         .map(|u| format!("applied but unknown to this build: {u}")),
+                );
+                problems.extend(
+                    report
+                        .fenced_by
+                        .iter()
+                        .map(|f| format!("fenced: this build may not write until it contains {f}")),
                 );
                 Err(Failure::new(
                     exit::DRIFT,
@@ -1397,6 +1405,45 @@ async fn migrate<S>(
 /// `serve` refuses to start on a partly applied migration or schema
 /// drift. A database that is ahead of this build (a newer release applied
 /// migrations) is allowed, as rolling deploys need.
+/// Installs this build's schema fence (ADR-017) so its writes stop once a
+/// newer release applies a fence migration this build lacks. Refuses to
+/// start when that has already happened, or when `migrate` has not yet
+/// created the fence.
+async fn schema_fence_installed(
+    options: &PgConnectOptions,
+    set: &MigrationSet,
+    bin: &str,
+) -> Result<(), Failure> {
+    use trestle_core::fence;
+    let build = fence::BuildFence::of(set);
+    if build.is_empty() {
+        return Ok(());
+    }
+    let db = |e: sqlx::Error| Failure::new(exit::UNREACHABLE, format!("database: {e}"));
+    let mut conn = connect_one(options).await?;
+    if !fence::installed(&mut conn).await.map_err(db)? {
+        return Err(Failure::new(
+            exit::CHECK,
+            format!(
+                "refusing to start: the database has no schema fence yet (run `{bin} migrate`)"
+            ),
+        ));
+    }
+    let stale = fence::fenced_by(&mut conn, &build).await.map_err(db)?;
+    if !stale.is_empty() {
+        return Err(Failure::new(
+            exit::DRIFT,
+            format!(
+                "refusing to start: a newer release fenced out this build; it does not contain {} \
+                 (deploy a build that does)",
+                stale.join(", ")
+            ),
+        ));
+    }
+    fence::install(build);
+    Ok(())
+}
+
 async fn schema_verified(
     options: &PgConnectOptions,
     set: MigrationSet,

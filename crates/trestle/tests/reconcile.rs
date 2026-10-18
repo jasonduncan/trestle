@@ -350,3 +350,61 @@ async fn foreign_apps_share_the_database() {
     drop(conn);
     env.db.drop().await;
 }
+
+#[tokio::test]
+async fn serve_refuses_a_build_the_schema_fence_shuts_out() {
+    let env = Env::new().await;
+    env.run(&["migrate"]).await.unwrap();
+    // The old build keeps its own copy of history.
+    let old = Env {
+        dir: migrations(),
+        url: env.url.clone(),
+        db: TestDatabase::create().await,
+    };
+
+    // A newer release changes what titles mean and fences older builds.
+    add(
+        &env.dir,
+        "0002_titles",
+        r#", "fence": true"#,
+        "UPDATE notes SET title = upper(title);\n",
+    );
+    let plan = env.plan().await;
+    assert!(plan.steps[0].fence);
+    assert!(
+        plan.steps[0].reasons.contains(&"fence"),
+        "{:?}",
+        plan.steps[0].reasons
+    );
+    env.run(&["migrate"]).await.unwrap();
+    assert_eq!(env.code(&["verify"]).await, exit::OK);
+
+    let refused = old.run(&["serve"]).await.unwrap_err();
+    assert_eq!(refused.code, exit::DRIFT, "{refused}");
+    assert!(
+        refused.contains("fenced out this build") && refused.contains("notes.0002_titles"),
+        "{refused}"
+    );
+    let verify = old.run(&["verify"]).await.unwrap_err();
+    assert!(
+        verify.contains("fenced: this build may not write until it contains notes.0002_titles"),
+        "{verify}"
+    );
+
+    // A database migrated by an older Trestle has no fence: run migrate.
+    let mut conn = env.db.connect().await;
+    sqlx::query("DROP FUNCTION trestle_fence_v1(text[], text[])")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let refused = env.run(&["serve"]).await.unwrap_err();
+    assert_eq!(refused.code, exit::CHECK, "{refused}");
+    assert!(
+        refused.contains("no schema fence yet") && refused.contains(" migrate`"),
+        "{refused}"
+    );
+    let _ = conn.close().await;
+
+    old.db.drop().await;
+    env.db.drop().await;
+}

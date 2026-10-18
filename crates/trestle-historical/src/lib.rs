@@ -17,6 +17,7 @@
 pub mod artifact;
 pub mod classify;
 pub mod data;
+pub mod fence;
 mod ledger;
 pub mod load;
 pub mod planner;
@@ -91,6 +92,11 @@ pub struct Manifest {
     /// Per-migration `statement_timeout` (e.g. `"30min"`, `"0"` for none).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub statement_timeout: Option<String>,
+    /// `true`: once applied, builds that do not contain this migration may
+    /// not write ([`fence`], ADR-017). Omitted when `false`, so older
+    /// manifests keep their digests.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub fence: bool,
 }
 
 fn yes() -> bool {
@@ -99,6 +105,10 @@ fn yes() -> bool {
 
 fn is_true(v: &bool) -> bool {
     *v
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 /// Separates the statements of a non-atomic migration.
@@ -110,6 +120,8 @@ pub struct RunOptions {
     pub atomic: bool,
     pub lock_timeout: Option<String>,
     pub statement_timeout: Option<String>,
+    /// Raises the schema fence for its app ([`fence`]).
+    pub fence: bool,
 }
 
 /// Splits SQL at `-- trestle:step` lines. Steps that contain only
@@ -263,6 +275,7 @@ impl Migration {
             atomic: manifest["atomic"].as_bool().unwrap_or(true),
             lock_timeout: text("lock_timeout"),
             statement_timeout: text("statement_timeout"),
+            fence: manifest["fence"].as_bool().unwrap_or(false),
         }
     }
 

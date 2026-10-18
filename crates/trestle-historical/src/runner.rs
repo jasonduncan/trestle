@@ -4,6 +4,7 @@ use sqlx::postgres::PgConnectOptions;
 use sqlx::{Connection, Executor, PgConnection};
 
 use crate::data::HistoricalTx;
+use crate::fence;
 use crate::ledger::{self, LedgerRow, LedgerStatus};
 use crate::schema::SchemaState;
 use crate::{HistoryError, Migration, MigrationRef, MigrationSet};
@@ -292,17 +293,19 @@ async fn apply(
     if let Some(v) = &options.statement_timeout {
         set_local(&mut tx, "statement_timeout", v).await?;
     }
+    // Before any DDL: a write past the check may still need the tables
+    // this migration is about to lock.
+    if options.fence
+        && let Err(err) = fence::lock(&mut tx).await
+    {
+        tx.rollback().await?;
+        return Err(failed(conn, migration, describe(&err)).await?);
+    }
     // `Executor::execute` with a bare `&str` (no arguments) uses the simple
     // query protocol, so a migration may contain several statements.
     if let Err(err) = (&mut *tx).execute(migration.sql).await {
-        let message = describe(&err);
         tx.rollback().await?;
-        ledger::mark_failed(conn, migration, &message).await?;
-        tracing::error!(migration = %migration.key(), error = %message, "migration failed");
-        return Err(HistoryError::Failed {
-            migration: migration.key().to_string(),
-            message,
-        });
+        return Err(failed(conn, migration, describe(&err)).await?);
     }
     if let Some(step) = migration.data {
         let outcome = match state {
@@ -326,9 +329,26 @@ async fn apply(
             });
         }
     }
+    if options.fence {
+        fence::record(&mut tx, migration).await?;
+    }
     ledger::mark_applied(&mut tx, migration).await?;
     tx.commit().await?;
     Ok(())
+}
+
+/// Records an attempt whose transaction rolled back, and describes it.
+async fn failed(
+    conn: &mut PgConnection,
+    migration: &Migration,
+    message: String,
+) -> Result<HistoryError, HistoryError> {
+    ledger::mark_failed(conn, migration, &message).await?;
+    tracing::error!(migration = %migration.key(), error = %message, "migration failed");
+    Ok(HistoryError::Failed {
+        migration: migration.key().to_string(),
+        message,
+    })
 }
 
 /// Runs a non-atomic migration one committed step at a time, starting at
@@ -359,7 +379,12 @@ async fn apply_steps(
             .unwrap_or(STEP_STATEMENT_TIMEOUT),
     )
     .await?;
-    let result = run_steps(conn, migration, &steps, start).await;
+    // Fenced before the first step, in its own transaction: older builds
+    // stop writing before any of this migration's work begins.
+    let result = match raise_fence(conn, migration, &options).await {
+        Ok(()) => run_steps(conn, migration, &steps, start).await,
+        Err(e) => Err((start, e)),
+    };
     set_config(conn, "lock_timeout", DDL_LOCK_TIMEOUT).await?;
     set_config(conn, "statement_timeout", STATEMENT_TIMEOUT).await?;
     let (step, err) = match result {
@@ -379,6 +404,20 @@ async fn apply_steps(
         step: step + 1,
         message,
     })
+}
+
+async fn raise_fence(
+    conn: &mut PgConnection,
+    migration: &Migration,
+    options: &crate::RunOptions,
+) -> Result<(), sqlx::Error> {
+    if !options.fence {
+        return Ok(());
+    }
+    let mut tx = conn.begin().await?;
+    fence::lock(&mut tx).await?;
+    fence::record(&mut tx, migration).await?;
+    tx.commit().await
 }
 
 async fn run_steps(
