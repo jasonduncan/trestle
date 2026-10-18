@@ -65,7 +65,24 @@ promise.
   - **Generated `trestle.toml` CRUD** declares its model, except where a
     hook runs. The pilot declares effects on every operation.
 
+- Plans assert their source state and report their impact (ADR-019):
+  - **Preconditions:** a manifest may list
+    `"preconditions": [{"name", "violations"}]`, each a `SELECT` counting
+    rows that break it. The runner evaluates them before a migration
+    changes anything (exit 4 on a violation), and `migrate --plan` reports
+    them.
+  - **Impact:** `trestle.plan/1` steps carry `impact`: estimated rows, plus
+    exact counts of null rows before `SET NOT NULL`, duplicate groups
+    before a unique constraint, rows to backfill, and values or rows
+    deleted. A step that would fail is `blocked`. All of it is measured
+    read-only with a 5 s timeout.
+
 ### Changed
+- **Breaking (behavior):** `migrate` checks that the catalog matches
+  applied history before applying anything, and exits 6 (`HistoryError::Drift`)
+  if it doesn't. `--allow-drift` (`RunConfig::allow_drift`) overrides it.
+  `migrate --plan` lists the differences under `database.drift`.
+  `reconcile::apply` takes `allow_drift`.
 - **Breaking (behavior):** with `trestle_core::db::read_only_reads()` on,
   `Mode::Read` operations run in a `BEGIN READ ONLY` transaction, so a read
   that writes fails with a 500 instead of committing (ADR-018). It is on by

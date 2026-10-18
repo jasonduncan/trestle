@@ -9,7 +9,7 @@ use crate::schema::{
     Check, ColumnType, DbDefault, FieldState, ModelState, SchemaState, StateOp, sql_identifier,
 };
 
-fn ident(name: &str) -> Result<&str, String> {
+pub(crate) fn ident(name: &str) -> Result<&str, String> {
     if sql_identifier(name) {
         Ok(name)
     } else {

@@ -408,3 +408,76 @@ async fn serve_refuses_a_build_the_schema_fence_shuts_out() {
     old.db.drop().await;
     env.db.drop().await;
 }
+
+#[tokio::test]
+async fn the_plan_asserts_its_source_state_and_preconditions() {
+    let env = Env::new().await;
+    env.run(&["migrate"]).await.unwrap();
+    let mut conn = env.db.connect().await;
+    let ws = uuid::Uuid::now_v7();
+    sqlx::query("INSERT INTO workspaces (id, name) VALUES ($1, 'w')")
+        .bind(ws)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO notes (id, workspace_id, title, pinned) VALUES ($1, $2, 't', true)")
+        .bind(uuid::Uuid::now_v7())
+        .bind(ws)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    add(
+        &env.dir,
+        "0002_checked",
+        r#", "preconditions": [
+            {"name": "titles are set", "violations": "SELECT count(*) FROM notes WHERE title = ''"},
+            {"name": "nothing pinned", "violations": "SELECT count(*) FROM notes WHERE pinned"}
+        ]"#,
+        "ALTER TABLE notes ADD COLUMN extra text;\n",
+    );
+
+    let plan = env.plan().await;
+    let found: Vec<(&str, Option<i64>)> = plan.steps[0]
+        .preconditions
+        .iter()
+        .map(|p| (p.name.as_str(), p.violations))
+        .collect();
+    assert_eq!(
+        found,
+        [("titles are set", Some(0)), ("nothing pinned", Some(1))]
+    );
+    assert!(
+        plan.blocked
+            .iter()
+            .any(|b| b == "notes.0002_checked: precondition \"nothing pinned\" has 1 violation(s)"),
+        "{:?}",
+        plan.blocked
+    );
+    assert_eq!(env.code(&["migrate", "--plan"]).await, exit::CHECK);
+    let refused = env.run(&["migrate"]).await.unwrap_err();
+    assert_eq!(refused.code, exit::FAILED, "{refused}");
+    assert!(refused.contains("nothing pinned"), "{refused}");
+
+    // Drift blocks the plan and the run; --allow-drift overrides the run.
+    sqlx::query("UPDATE notes SET pinned = false")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE notes DROP COLUMN body")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let plan = env.plan().await;
+    assert!(plan.database["drift"].is_array(), "{}", plan.database);
+    assert!(
+        plan.blocked
+            .iter()
+            .any(|b| b.starts_with("the database does not match its applied history")),
+        "{:?}",
+        plan.blocked
+    );
+    assert_eq!(env.code(&["migrate"]).await, exit::DRIFT);
+    env.run(&["migrate", "--allow-drift"]).await.unwrap();
+    let _ = conn.close().await;
+    env.db.drop().await;
+}

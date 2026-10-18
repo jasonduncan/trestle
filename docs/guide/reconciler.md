@@ -30,7 +30,17 @@ forward: to recover, restore a backup or ship a forward fix.
 - Anything in `blocked` stops the plan, and the command exits 1. Examples:
   an applied migration was changed, the database has applied migrations
   this build doesn't know, a data step is missing, or a non-atomic
-  migration breaks the rules.
+  migration breaks the rules. Since ADR-019 also:
+  - the catalog differs from applied history (`database.drift` lists how);
+  - a precondition has violations;
+  - a step's impact says it would fail, such as `SET NOT NULL` over null
+    rows.
+- Steps may also carry the following. Both are left out when empty.
+  - `preconditions`: `[{"name", "violations"}]`, evaluated now.
+  - `impact`: `[{"model", "table", "change", "rows", "affected", "meaning", "blocks"}]`.
+
+  Neither is part of `plan_digest`: they describe the data, and `migrate`
+  checks the preconditions again as it applies.
 
 ## 2. Classify
 
@@ -56,6 +66,11 @@ Anything else needs approval. These are the reason codes:
 | `rewrite_risk` | volatile default, NOT NULL without a default, or a nullability change |
 | `existing_table_lock` | a new index, unique constraint, foreign key or check on an existing table |
 | `fence` | `"fence": true`: pauses writes while it runs, then refuses writes from builds without it (ADR-017) |
+
+`migrate` exits 6 without attempting anything when the catalog differs
+from applied history. Pass `--allow-drift` only for a reviewed difference.
+A migration whose precondition fails exits 4, like any other migration
+that rolled back.
 
 ## 3. Apply
 

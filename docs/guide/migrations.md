@@ -63,6 +63,48 @@ How a run proceeds:
 Non-atomic migrations always need approval in automated deploys. See the
 reconciler contract.
 
+## Preconditions (`"preconditions"`)
+
+A migration can state what it assumes about the data. Each check is one
+`SELECT` that returns how many rows break it:
+
+```json
+{ "format": 2, "app": "lessons", "id": "0008_unique_slugs", "depends_on": ["lessons.0007_x"],
+  "operations": [],
+  "preconditions": [
+    { "name": "no duplicate slugs",
+      "violations": "SELECT count(*) FROM (SELECT slug FROM lessons GROUP BY slug HAVING count(*) > 1) d" }
+  ] }
+```
+
+- **`migrate --plan`** evaluates each check, read-only, and blocks the plan
+  if any count isn't zero.
+- **`migrate`** checks again inside the migration's transaction, before its
+  SQL. A non-atomic migration is checked once, before step 1.
+- **On a violation,** the migration rolls back with nothing changed. It is
+  marked `failed`, and the run exits 4 naming the check. Fix the data and
+  run `migrate` again.
+
+## Impact and drift
+
+`migrate --plan` also reports, for each pending step, what its operations
+would do to existing rows (ADR-019):
+
+- the table's estimated rows;
+- exact counts of null rows before `SET NOT NULL`, duplicate groups before a
+  unique constraint, rows a backfill fills, and values or rows a drop
+  deletes.
+
+A step that would fail as the data stands, such as `SET NOT NULL` over
+nulls with no backfill, is listed under `blocked`. Every count runs
+read-only with a 5 s timeout, so a plan changes nothing.
+
+Before applying anything, `migrate` checks that the database matches the
+schema its applied history describes. If someone changed it by hand,
+`migrate` exits 6 before attempting any migration, and `migrate --plan`
+shows the differences under `database.drift`. Repair it, or pass
+`--allow-drift` once the difference is understood.
+
 ## Fencing older builds (`"fence": true`)
 
 Expand-and-contract releases keep the previous build working while a new
