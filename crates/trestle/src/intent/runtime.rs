@@ -572,6 +572,10 @@ fn model_of(spec: &ModelSpec, intent: &Intent) -> Model {
                 let values: Vec<&str> = f.values.iter().map(String::as_str).collect();
                 Column::text(&f.id).one_of(&values)
             }
+            FieldType::Decimal => Column::decimal(&f.id, f.precision, f.scale),
+            FieldType::Date => Column::date(&f.id),
+            FieldType::Instant => Column::timestamptz(&f.id),
+            FieldType::Duration => Column::duration(&f.id),
         };
         match f.ty {
             FieldType::Text if f.min.is_some() || f.max.is_some() => {
@@ -666,6 +670,10 @@ fn field_contract(f: &FieldSpec, required: bool) -> Field {
             let values: Vec<&str> = f.values.iter().map(String::as_str).collect();
             Field::enumeration(&f.id, &values)
         }
+        FieldType::Decimal => Field::decimal(&f.id, f.precision, f.scale),
+        FieldType::Date => Field::date(&f.id),
+        FieldType::Instant => Field::instant(&f.id),
+        FieldType::Duration => Field::duration(&f.id),
     };
     if !required {
         field = field.optional();
@@ -1198,11 +1206,32 @@ impl<S> IntentOp<S> {
 fn representation_sql(model: &ModelSpec) -> String {
     let mut parts = vec!["'id', t.id".to_owned()];
     for f in &model.fields {
-        parts.push(format!("'{0}', t.{0}", f.id));
+        // Decimals, dates, instants and durations render in their contract
+        // form (ADR-023): a decimal never becomes a JSON number.
+        let column = format!("t.{}", f.id);
+        let value = trestle_historical::sql::text_expr(column_type(f), &column).unwrap_or(column);
+        parts.push(format!("'{}', {value}", f.id));
     }
     parts.push("'version', t.version".into());
     parts.push("'created_at', t.created_at".into());
     format!("jsonb_build_object({})::text", parts.join(", "))
+}
+
+fn column_type(f: &FieldSpec) -> trestle_historical::schema::ColumnType {
+    use trestle_historical::schema::ColumnType;
+    match f.ty {
+        FieldType::Decimal => ColumnType::Numeric {
+            precision: f.precision,
+            scale: f.scale,
+        },
+        FieldType::Date => ColumnType::Date,
+        FieldType::Instant => ColumnType::TimestampTz,
+        FieldType::Duration => ColumnType::Interval,
+        FieldType::Int => ColumnType::BigInt,
+        FieldType::Bool => ColumnType::Boolean,
+        FieldType::Uuid => ColumnType::Uuid,
+        FieldType::Text | FieldType::Enum => ColumnType::Text,
+    }
 }
 
 fn parse_rows(model: &Arc<ModelSpec>, texts: Vec<String>) -> Result<Vec<Row>, Problem> {

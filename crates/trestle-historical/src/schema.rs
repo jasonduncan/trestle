@@ -27,11 +27,19 @@ pub enum ColumnType {
     Boolean,
     #[serde(rename = "timestamptz")]
     TimestampTz,
+    /// `numeric(precision, scale)`: a contract decimal (ADR-022, ADR-023).
+    Numeric {
+        precision: u8,
+        scale: u8,
+    },
+    Date,
+    /// Days and clock time only, like a contract duration.
+    Interval,
 }
 
 impl ColumnType {
-    pub fn sql(self) -> &'static str {
-        match self {
+    pub fn sql(self) -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed(match self {
             ColumnType::Uuid => "uuid",
             ColumnType::Text => "text",
             ColumnType::SmallInt => "smallint",
@@ -39,14 +47,40 @@ impl ColumnType {
             ColumnType::BigInt => "bigint",
             ColumnType::Boolean => "boolean",
             ColumnType::TimestampTz => "timestamptz",
+            ColumnType::Numeric { precision, scale } => {
+                return std::borrow::Cow::Owned(format!("numeric({precision},{scale})"));
+            }
+            ColumnType::Date => "date",
+            ColumnType::Interval => "interval",
+        })
+    }
+
+    /// `information_schema.columns.data_type` for this type. Numeric
+    /// precision and scale are compared separately.
+    pub fn catalog_name(self) -> &'static str {
+        match self {
+            ColumnType::Uuid => "uuid",
+            ColumnType::Text => "text",
+            ColumnType::SmallInt => "smallint",
+            ColumnType::Integer => "integer",
+            ColumnType::BigInt => "bigint",
+            ColumnType::Boolean => "boolean",
+            ColumnType::TimestampTz => "timestamp with time zone",
+            ColumnType::Numeric { .. } => "numeric",
+            ColumnType::Date => "date",
+            ColumnType::Interval => "interval",
         }
     }
 
-    /// `information_schema.columns.data_type` for this type.
-    pub fn catalog_name(self) -> &'static str {
+    /// The cast a bound text parameter needs (`$1::numeric`), for types
+    /// that travel as strings.
+    pub fn text_cast(self) -> Option<&'static str> {
         match self {
-            ColumnType::TimestampTz => "timestamp with time zone",
-            other => other.sql(),
+            ColumnType::Numeric { .. } => Some("numeric"),
+            ColumnType::Date => Some("date"),
+            ColumnType::TimestampTz => Some("timestamptz"),
+            ColumnType::Interval => Some("interval"),
+            _ => None,
         }
     }
 }
@@ -438,6 +472,17 @@ impl Column {
     }
     pub fn timestamptz(key: &str) -> Self {
         Self::new(key, ColumnType::TimestampTz)
+    }
+    /// `numeric(precision, scale)`, for a contract decimal.
+    pub fn decimal(key: &str, precision: u8, scale: u8) -> Self {
+        Self::new(key, ColumnType::Numeric { precision, scale })
+    }
+    pub fn date(key: &str) -> Self {
+        Self::new(key, ColumnType::Date)
+    }
+    /// `interval`, for a contract duration.
+    pub fn duration(key: &str) -> Self {
+        Self::new(key, ColumnType::Interval)
     }
 
     /// Storage column name when it differs from the key. Changing it later

@@ -90,6 +90,14 @@ impl fmt::Debug for DataStep {
 
 pub type Row = BTreeMap<String, Value>;
 
+/// `$n`, cast when the value travels as text (ADR-023).
+fn param(field: &FieldState, n: usize) -> String {
+    match field.ty.text_cast() {
+        Some(cast) => format!("${n}::{cast}"),
+        None => format!("${n}"),
+    }
+}
+
 /// Largest batch a data step may request.
 pub const MAX_BATCH: i64 = 10_000;
 
@@ -169,10 +177,13 @@ impl<'c> HistoricalTx<'c> {
                 fields.push(f);
             }
         }
-        let columns: Vec<&str> = fields.iter().map(|f| f.column.as_str()).collect();
+        let columns: Vec<String> = fields
+            .iter()
+            .map(|f| crate::sql::text_expr(f.ty, &f.column).unwrap_or_else(|| f.column.clone()))
+            .collect();
         let mut sql = format!("SELECT {} FROM {}", columns.join(", "), m.table);
         if after.is_some() {
-            sql.push_str(&format!(" WHERE {} > $1", pk.column));
+            sql.push_str(&format!(" WHERE {} > {}", pk.column, param(pk, 1)));
         }
         sql.push_str(&format!(" ORDER BY {} LIMIT {limit}", pk.column));
         let mut query = sqlx::query(&sql);
@@ -216,14 +227,14 @@ impl<'c> HistoricalTx<'c> {
         let assignments: Vec<String> = targets
             .iter()
             .enumerate()
-            .map(|(i, f)| format!("{} = ${}", f.column, i + 1))
+            .map(|(i, f)| format!("{} = {}", f.column, param(f, i + 1)))
             .collect();
         let sql = format!(
-            "UPDATE {} SET {} WHERE {} = ${}",
+            "UPDATE {} SET {} WHERE {} = {}",
             m.table,
             assignments.join(", "),
             pk.column,
-            set.len() + 1
+            param(pk, set.len() + 1)
         );
         let mut query = sqlx::query(&sql);
         for (f, (_, value)) in targets.iter().zip(set) {
@@ -244,7 +255,11 @@ impl<'c> HistoricalTx<'c> {
             fields.push(self.field(m, key)?);
         }
         let columns: Vec<&str> = fields.iter().map(|f| f.column.as_str()).collect();
-        let params: Vec<String> = (1..=values.len()).map(|i| format!("${i}")).collect();
+        let params: Vec<String> = fields
+            .iter()
+            .enumerate()
+            .map(|(i, f)| param(f, i + 1))
+            .collect();
         let sql = format!(
             "INSERT INTO {} ({}) VALUES ({})",
             m.table,
@@ -262,7 +277,12 @@ impl<'c> HistoricalTx<'c> {
     pub async fn delete(&mut self, model: &str, key: &Value) -> Result<u64, HistoryError> {
         let m = self.model(model)?;
         let pk = self.primary_key(m)?;
-        let sql = format!("DELETE FROM {} WHERE {} = $1", m.table, pk.column);
+        let sql = format!(
+            "DELETE FROM {} WHERE {} = {}",
+            m.table,
+            pk.column,
+            param(pk, 1)
+        );
         let query = self.bind(sqlx::query(&sql), pk, key)?;
         Ok(query.execute(&mut *self.conn).await?.rows_affected())
     }
@@ -300,12 +320,10 @@ impl<'c> HistoricalTx<'c> {
             (ColumnType::BigInt, _) => query.bind(Some(int()?)),
             (ColumnType::Boolean, Value::Null) => query.bind(None::<bool>),
             (ColumnType::Boolean, Value::Bool(b)) => query.bind(Some(*b)),
-            (ColumnType::TimestampTz, _) => {
-                return Err(self.error(format!(
-                    "{}: timestamp values are not supported by the historical SDK yet",
-                    field.id
-                )));
-            }
+            (ty, Value::Null) if ty.text_cast().is_some() => query.bind(None::<String>),
+            (ty, Value::String(s)) if ty.text_cast().is_some() => query.bind(Some(
+                crate::sql::canonical_text(ty, s).ok_or_else(mismatch)?,
+            )),
             _ => return Err(mismatch()),
         })
     }
@@ -326,12 +344,11 @@ impl<'c> HistoricalTx<'c> {
                 .try_get::<Option<i64>, _>(index)?
                 .map(|n| Value::Number(Number::from(n))),
             ColumnType::Boolean => row.try_get::<Option<bool>, _>(index)?.map(Value::Bool),
-            ColumnType::TimestampTz => {
-                return Err(self.error(format!(
-                    "{}: timestamp values are not supported by the historical SDK yet",
-                    field.id
-                )));
-            }
+            // Selected as canonical text (`sql::text_expr`).
+            ColumnType::TimestampTz
+            | ColumnType::Numeric { .. }
+            | ColumnType::Date
+            | ColumnType::Interval => row.try_get::<Option<String>, _>(index)?.map(Value::String),
         };
         Ok(value.unwrap_or(Value::Null))
     }

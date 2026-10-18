@@ -160,6 +160,10 @@ struct FieldSection {
     default: Option<toml::Value>,
     #[serde(default)]
     values: Vec<String>,
+    #[serde(default)]
+    precision: Option<u8>,
+    #[serde(default)]
+    scale: Option<u8>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -230,6 +234,11 @@ pub enum FieldType {
     Bool,
     Uuid,
     Enum,
+    /// `precision` and `scale` on the field (ADR-022, ADR-023).
+    Decimal,
+    Date,
+    Instant,
+    Duration,
 }
 
 impl FieldType {
@@ -239,6 +248,10 @@ impl FieldType {
             FieldType::Int => "bigint",
             FieldType::Bool => "boolean",
             FieldType::Uuid => "uuid",
+            FieldType::Decimal => "numeric",
+            FieldType::Date => "date",
+            FieldType::Instant => "timestamptz",
+            FieldType::Duration => "interval",
         }
     }
 }
@@ -252,6 +265,9 @@ pub struct FieldSpec {
     pub optional: bool,
     pub default: Option<serde_json::Value>,
     pub values: Vec<String>,
+    /// Decimal fields: total digits, and digits after the point.
+    pub precision: u8,
+    pub scale: u8,
 }
 
 impl FieldSpec {
@@ -861,14 +877,28 @@ fn field(lines: &Lines<'_>, f: &FieldSection, problems: &mut Vec<String>) -> Opt
         "bool" => FieldType::Bool,
         "uuid" => FieldType::Uuid,
         "enum" => FieldType::Enum,
+        "decimal" => FieldType::Decimal,
+        "date" => FieldType::Date,
+        "instant" => FieldType::Instant,
+        "duration" => FieldType::Duration,
         other => {
             problems.push(format!(
-                "{}: unknown type {other:?}; use text, int, bool, uuid or enum",
+                "{}: unknown type {other:?}; use text, int, bool, uuid, enum, decimal, date, instant or duration",
                 lines.at(&f.ty)
             ));
             return None;
         }
     };
+    let (precision, scale) = (f.precision.unwrap_or(0), f.scale.unwrap_or(0));
+    if ty == FieldType::Decimal {
+        if !(1..=38).contains(&precision) || scale > precision {
+            problems.push(format!(
+                "{at}: a decimal field needs precision = 1..38 and scale <= precision (scale defaults to 0)"
+            ));
+        }
+    } else if f.precision.is_some() || f.scale.is_some() {
+        problems.push(format!("{at}: precision and scale are for decimal fields"));
+    }
     if (f.min.is_some() || f.max.is_some()) && !matches!(ty, FieldType::Text | FieldType::Int) {
         problems.push(format!("{at}: min/max apply to text and int fields only"));
     }
@@ -889,6 +919,17 @@ fn field(lines: &Lines<'_>, f: &FieldSection, problems: &mut Vec<String>) -> Opt
                 (FieldType::Int, toml::Value::Integer(_)) => true,
                 (FieldType::Text, toml::Value::String(_)) => true,
                 (FieldType::Enum, toml::Value::String(s)) => f.values.contains(s),
+                (FieldType::Decimal, toml::Value::String(s)) => {
+                    trestle_core::protocol::scalar::check_decimal(s, precision, scale).is_ok()
+                        && (1..=38).contains(&precision)
+                        && scale <= precision
+                }
+                (FieldType::Date, toml::Value::String(s)) => {
+                    trestle_core::protocol::scalar::parse_date(s).is_some()
+                }
+                (FieldType::Duration, toml::Value::String(s)) => {
+                    trestle_core::protocol::scalar::parse_duration(s).is_some()
+                }
                 _ => false,
             };
             if !ok {
@@ -908,5 +949,7 @@ fn field(lines: &Lines<'_>, f: &FieldSection, problems: &mut Vec<String>) -> Opt
         optional: f.optional,
         default,
         values: f.values.clone(),
+        precision,
+        scale,
     })
 }

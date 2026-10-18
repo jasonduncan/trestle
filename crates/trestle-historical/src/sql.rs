@@ -35,7 +35,63 @@ pub fn literal(value: &Value, ty: ColumnType) -> Result<String, String> {
             Ok(n.to_string())
         }
         (ColumnType::Boolean, Value::Bool(b)) => Ok(b.to_string()),
+        (ty, Value::String(s)) if canonical_text(ty, s).is_some() => {
+            quote(&canonical_text(ty, s).unwrap_or_default())
+        }
         (ty, value) => Err(format!("{value} is not a valid {} literal", ty.sql())),
+    }
+}
+
+/// The value of a string-borne type (ADR-023) in the form PostgreSQL
+/// reads back the same: decimals and dates as given, instants in UTC,
+/// durations as given. `None` when `text` is not one.
+pub fn canonical_text(ty: ColumnType, text: &str) -> Option<String> {
+    use trestle_protocol::scalar;
+    match ty {
+        ColumnType::Numeric { precision, scale } => scalar::check_decimal(text, precision, scale)
+            .ok()
+            .map(|()| text.to_owned()),
+        ColumnType::Date => scalar::parse_date(text).map(|_| text.to_owned()),
+        ColumnType::TimestampTz => scalar::normalize_instant(text),
+        ColumnType::Interval => scalar::parse_duration(text).map(|_| text.to_owned()),
+        _ => None,
+    }
+}
+
+/// `expr` (a `timestamptz`) as an RFC 3339 instant in UTC, with only the
+/// fractional digits it needs: `2026-10-17T07:30:00Z`, `…:00.5Z`.
+pub fn iso_instant(expr: &str) -> String {
+    format!(
+        "regexp_replace(regexp_replace(to_char({expr} AT TIME ZONE 'UTC', \
+         'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'), '(\\.[0-9]*[1-9])0+Z$', '\\1Z'), '\\.0+Z$', 'Z')"
+    )
+}
+
+/// `expr` (an `interval` of days and clock time) as ISO 8601: `P1DT2H30M`,
+/// `PT0S` when zero.
+pub fn iso_interval(expr: &str) -> String {
+    let part = |field: &str| format!("extract({field} FROM {expr})::bigint");
+    let (d, h, m, s) = (part("day"), part("hour"), part("minute"), part("second"));
+    format!(
+        "CASE WHEN {expr} IS NULL THEN NULL WHEN {expr} = interval '0' THEN 'PT0S' ELSE 'P' \
+         || CASE WHEN {d} <> 0 THEN {d} || 'D' ELSE '' END \
+         || CASE WHEN {h} <> 0 OR {m} <> 0 OR {s} <> 0 THEN 'T' \
+            || CASE WHEN {h} <> 0 THEN {h} || 'H' ELSE '' END \
+            || CASE WHEN {m} <> 0 THEN {m} || 'M' ELSE '' END \
+            || CASE WHEN {s} <> 0 THEN {s} || 'S' ELSE '' END \
+            ELSE '' END END"
+    )
+}
+
+/// How a column reads back as JSON text for string-borne types; `None`
+/// for types sqlx decodes directly.
+pub fn text_expr(ty: ColumnType, expr: &str) -> Option<String> {
+    match ty {
+        ColumnType::Numeric { .. } => Some(format!("{expr}::text")),
+        ColumnType::Date => Some(format!("to_char({expr}, 'YYYY-MM-DD')")),
+        ColumnType::TimestampTz => Some(iso_instant(expr)),
+        ColumnType::Interval => Some(iso_interval(expr)),
+        _ => None,
     }
 }
 

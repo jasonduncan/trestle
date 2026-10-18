@@ -18,6 +18,10 @@ viewer = ["notes.read"]
 
 [[models]]
 id = "notes.note"          # stable ID: never change it
+# Field types: text, int, bool, uuid, enum (values = [...]), decimal
+# (precision = 10, scale = 2; sent as a string like "12.50"), date
+# ("2026-10-17"), instant (RFC 3339, stored and returned in UTC) and
+# duration ("PT30M", "P1DT2H").
 fields = [
   { id = "title",  type = "text", max = 200 },
   { id = "body",   type = "text", optional = true },
