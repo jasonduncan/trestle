@@ -46,7 +46,7 @@ use crate::invocation::{FromInvocation, Invocation};
 use crate::jobs::JobHandler;
 use crate::operation::{
     BoxFuture, ContextDescriptor, DynOperation, Operation, OperationDescriptor, Policy,
-    RequestContext, invoke, invoke_dyn,
+    RequestContext, execute_dyn_keyed, execute_keyed, invoke, invoke_dyn, validate,
 };
 
 /// A cohesive feature: lessons, schools, billing. Dyn-compatible so a
@@ -188,11 +188,19 @@ impl<S> AppBuilder<S> {
             erase_invoker(move |state: &S, invocation, input| {
                 let op = op.clone();
                 Box::pin(async move {
-                    let output = invoke(state, &*op, invocation, input).await?;
-                    serde_json::to_value(output).map_err(|err| {
-                        tracing::error!(operation = O::INFO.id, error = %err, "output does not serialize");
-                        Problem::internal()
-                    })
+                    let Some(key) = invocation.idempotency_key() else {
+                        let output = invoke(state, &*op, invocation, input).await?;
+                        return serde_json::to_value(output).map_err(|err| {
+                            tracing::error!(operation = O::INFO.id, error = %err, "output does not serialize");
+                            Problem::internal()
+                        });
+                    };
+                    let ctx = O::Context::resolve(invocation, state).await?;
+                    let input = validate::<O::Input>(input)?;
+                    let keyed =
+                        execute_keyed(&PgPool::from_ref(state), &*op, &ctx, input, invocation, key)
+                            .await?;
+                    from_body(O::INFO.id, &keyed.body)
                 })
             })
         };
@@ -231,7 +239,24 @@ impl<S> AppBuilder<S> {
         let invoker = {
             let op = op.clone();
             erase_invoker(move |state: &S, invocation, input| {
-                Box::pin(invoke_dyn(state, op.clone(), invocation, input))
+                let op = op.clone();
+                Box::pin(async move {
+                    let Some(key) = invocation.idempotency_key() else {
+                        return invoke_dyn(state, op, invocation, input).await;
+                    };
+                    let ctx = op.resolve_context(invocation, state).await?;
+                    let id = op.info().id.clone();
+                    let keyed = execute_dyn_keyed(
+                        &PgPool::from_ref(state),
+                        op,
+                        ctx,
+                        input,
+                        invocation,
+                        key,
+                    )
+                    .await?;
+                    from_body(&id, &keyed.body)
+                })
             })
         };
         let mut entry = RegisteredOperation {
@@ -407,6 +432,14 @@ type InvokeFn<S> = Arc<
         + Sync,
 >;
 
+/// A stored or fresh keyed answer, as JSON.
+fn from_body(operation: &str, body: &str) -> Result<Value, Problem> {
+    serde_json::from_str(body).map_err(|err| {
+        tracing::error!(operation, error = %err, "stored answer is not JSON");
+        Problem::internal()
+    })
+}
+
 fn erase_invoker<S, F>(f: F) -> InvokeFn<S>
 where
     F: for<'a> Fn(&'a S, &'a Invocation, &'a Value) -> BoxFuture<'a, Result<Value, Problem>>
@@ -418,6 +451,11 @@ where
 }
 
 impl<S> RegisteredOperation<S> {
+    /// Whether its binding accepts an `Idempotency-Key` (ADR-016).
+    pub fn accepts_idempotency_key(&self) -> bool {
+        self.binding.as_ref().is_some_and(|b| b.idempotency_key)
+    }
+
     pub fn accepted_revisions(&self) -> &[String] {
         self.accepted_revisions
             .get()
@@ -529,6 +567,22 @@ impl<S: 'static> Project<S> {
         check_routes(&builders, &mut issues);
         let published = publish_forms(&builders, &mut issues);
         let desired = check_models(&builders, &mut issues);
+        let keyed: Vec<&str> = builders
+            .iter()
+            .flat_map(|b| &b.operations)
+            .filter(|op| op.accepts_idempotency_key())
+            .map(|op| &*op.info.id)
+            .collect();
+        if !keyed.is_empty()
+            && desired
+                .as_ref()
+                .is_some_and(|d| d.model("idempotency.receipt").is_none())
+        {
+            issues.push(format!(
+                "{} accept Idempotency-Key, which needs trestle_core::idempotency::IdempotencyApp installed",
+                keyed.join(", ")
+            ));
+        }
         check_resources(&builders, &mut issues);
         check_jobs(&builders, &mut issues);
 
@@ -737,6 +791,11 @@ fn check_operations<S>(builders: &[AppBuilder<S>], issues: &mut Vec<String>) {
                 }
             }
             issues.extend(op.conformance.iter().cloned());
+            if op.accepts_idempotency_key() && op.info.mode != crate::operation::Mode::Write {
+                issues.push(format!(
+                    "operation {id} accepts Idempotency-Key, but only writes can"
+                ));
+            }
             if let Some(binding) = &op.binding {
                 check_binding(id, &op.input, &op.output, binding, issues);
             }
@@ -1278,6 +1337,14 @@ impl<S> Registry<S> {
         input: &Value,
     ) -> Result<Value, Problem> {
         let op = self.operation(id).ok_or_else(Problem::not_found)?;
+        if let Some(key) = invocation.idempotency_key() {
+            if !op.accepts_idempotency_key() {
+                return Err(crate::idempotency::unsupported());
+            }
+            if !crate::idempotency::valid_key(key) {
+                return Err(crate::idempotency::invalid());
+            }
+        }
         (op.invoker)(state, invocation, input).await
     }
 

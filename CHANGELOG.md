@@ -14,6 +14,30 @@ promise.
 
 ## [Unreleased]
 
+### Added
+- `Idempotency-Key` receipts (ADR-016, design doc §6.4):
+  - `Http::post(..).idempotency_key()` opts a write in;
+  - `trestle_core::idempotency::IdempotencyApp` installs the
+    `trestle_idempotency` table.
+
+  The receipt is claimed in the write transaction after `recheck`:
+  - a repeat with the same key and input replays the committed response
+    (`Idempotency-Replayed: true`);
+  - a different input is 409 `idempotency_key_reused`;
+  - concurrent duplicates are serialized;
+  - rolled-back attempts leave no receipt;
+  - replays are re-authorized.
+
+  A key sent where none is accepted is 400 `idempotency_unsupported`.
+  Other additions:
+  - `Invocation::with_idempotency_key` for `Registry::invoke`;
+  - `execute_keyed` / `execute_dyn_keyed`;
+  - `idempotency::purge_expired`;
+  - descriptors and OpenAPI document the header for opted-in operations
+    only.
+- Operation jobs whose target accepts a key use the job ID as the key, so
+  their database effects are exactly once.
+
 ## [0.3.0] - 2026-10-17
 
 ### Changed

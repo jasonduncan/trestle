@@ -25,12 +25,13 @@ use trestle_protocol::interaction::{BodySource, HttpBinding, REVISION_HEADER};
 use trestle_protocol::{ContractDoc, FieldType};
 
 use crate::Problem;
+use crate::idempotency::{self, IDEMPOTENCY_KEY_HEADER};
 use crate::identity::Identity;
 use crate::input::JsonBody;
 use crate::invocation::{FromInvocation, Invocation};
 use crate::operation::{
-    ContextDescriptor, DynOperation, Operation, RequestContext, execute_dyn, execute_validated,
-    validate,
+    ContextDescriptor, DynOperation, Keyed, Operation, RequestContext, execute_dyn,
+    execute_dyn_keyed, execute_keyed, execute_validated, validate,
 };
 
 /// How an operation is exposed over HTTP. Registered with
@@ -44,6 +45,7 @@ pub struct Http {
     etag: Option<String>,
     if_match: Option<String>,
     no_content: bool,
+    idempotency_key: bool,
 }
 
 impl Http {
@@ -77,7 +79,17 @@ impl Http {
             etag: None,
             if_match: None,
             no_content: false,
+            idempotency_key: false,
         }
+    }
+
+    /// Accepts an optional `Idempotency-Key` (design doc §6.4, ADR-016): a
+    /// repeat with the same key and input replays the committed response
+    /// instead of running again. Write operations only; the project needs
+    /// `trestle_core::idempotency::IdempotencyApp`.
+    pub fn idempotency_key(mut self) -> Self {
+        self.idempotency_key = true;
+        self
     }
 
     /// 201 Created with a `Location` built from output fields, e.g.
@@ -144,6 +156,9 @@ impl Http {
         if self.if_match.is_some() {
             errors.extend([412, 428]);
         }
+        if self.idempotency_key {
+            errors.push(409);
+        }
         errors.sort_unstable();
         errors.dedup();
         HttpBinding {
@@ -156,6 +171,7 @@ impl Http {
             etag: self.etag.clone(),
             if_match: self.if_match.clone(),
             no_content: self.no_content,
+            idempotency_key: self.idempotency_key,
         }
     }
 }
@@ -262,6 +278,7 @@ where
     // Identity and tenant before anything else is read (§6.2).
     let invocation = Invocation::from_http(&mut parts, state, descriptor).await?;
     let ctx = O::Context::resolve(&invocation, state).await?;
+    let key = idempotency_key(&parts, binding)?;
     let (instance, path) = prepare(
         state,
         parts,
@@ -277,6 +294,11 @@ where
     let input = validate::<O::Input>(&instance).map_err(|p| path_not_found(p, &path))?;
 
     let pool = PgPool::from_ref(state);
+    if let Some(key) = key {
+        let invocation = invocation.with_idempotency_key(key.clone());
+        let keyed = execute_keyed(&pool, op, &ctx, input, &invocation, &key).await?;
+        return keyed_response(binding, &output_contract.id, keyed);
+    }
     let output = execute_validated(&pool, op, &ctx, input).await?;
     let status = StatusCode::from_u16(binding.success_status).unwrap_or(StatusCode::OK);
     if binding.no_content {
@@ -360,6 +382,7 @@ where
     let (mut parts, body) = request.into_parts();
     let invocation = Invocation::from_http(&mut parts, state, descriptor).await?;
     let ctx = op.resolve_context(&invocation, state).await?;
+    let key = idempotency_key(&parts, binding)?;
     let (instance, path) = prepare(
         state,
         parts,
@@ -372,6 +395,13 @@ where
     )
     .await?;
     let pool = PgPool::from_ref(state);
+    if let Some(key) = key {
+        let invocation = invocation.with_idempotency_key(key.clone());
+        let keyed = execute_dyn_keyed(&pool, op.clone(), ctx, &instance, &invocation, &key)
+            .await
+            .map_err(|p| path_not_found(p, &path))?;
+        return keyed_response(binding, &output_contract.id, keyed);
+    }
     // The contracts above borrow from `op`; the executor gets its own handle.
     let output = execute_dyn(&pool, op.clone(), ctx, &instance)
         .await
@@ -391,6 +421,69 @@ where
         && let Ok(etag) = HeaderValue::from_str(&format!("\"{}:{value}\"", output_contract.id))
     {
         response.headers_mut().insert(header::ETAG, etag);
+    }
+    Ok(response)
+}
+
+/// The request's `Idempotency-Key`, if it sent one. Refused where the
+/// binding does not accept a key (ADR-016).
+fn idempotency_key(parts: &Parts, binding: &HttpBinding) -> Result<Option<String>, Problem> {
+    let Some(value) = parts.headers.get(IDEMPOTENCY_KEY_HEADER) else {
+        return Ok(None);
+    };
+    if !binding.idempotency_key {
+        return Err(idempotency::unsupported());
+    }
+    match value.to_str() {
+        Ok(key) if idempotency::valid_key(key) => Ok(Some(key.to_owned())),
+        _ => Err(idempotency::invalid()),
+    }
+}
+
+/// A keyed write's response: the committed body exactly as first sent, with
+/// the binding's status, `Location` and `ETag`, and
+/// `Idempotency-Replayed: true` when it came from the receipt.
+fn keyed_response(
+    binding: &HttpBinding,
+    output_id: &str,
+    keyed: Keyed,
+) -> Result<Response, Problem> {
+    let status = StatusCode::from_u16(binding.success_status).unwrap_or(StatusCode::OK);
+    let mut response = if binding.no_content {
+        status.into_response()
+    } else {
+        (
+            status,
+            [(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/json"),
+            )],
+            keyed.body.clone(),
+        )
+            .into_response()
+    };
+    if keyed.replayed {
+        response.headers_mut().insert(
+            idempotency::REPLAYED_HEADER,
+            HeaderValue::from_static("true"),
+        );
+    }
+    if binding.location.is_some() || binding.etag.is_some() {
+        let fields: Value = serde_json::from_str(&keyed.body).map_err(|err| {
+            tracing::error!(error = %err, "stored answer is not JSON");
+            Problem::internal()
+        })?;
+        if let Some(template) = &binding.location
+            && let Some(location) = fill(template, &fields)
+        {
+            response.headers_mut().insert(header::LOCATION, location);
+        }
+        if let Some(field) = &binding.etag
+            && let Some(value) = fields.get(field).and_then(scalar_text)
+            && let Ok(etag) = HeaderValue::from_str(&format!("\"{output_id}:{value}\""))
+        {
+            response.headers_mut().insert(header::ETAG, etag);
+        }
     }
     Ok(response)
 }

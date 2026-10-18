@@ -44,7 +44,14 @@ pub struct HttpBinding {
     pub if_match: Option<String>,
     /// Success has no body (204).
     pub no_content: bool,
+    /// Accepts an `Idempotency-Key` header (design doc §6.4).
+    pub idempotency_key: bool,
 }
+
+/// Header carrying a client's idempotency key.
+pub const IDEMPOTENCY_KEY_HEADER: &str = "Idempotency-Key";
+/// How long a receipt answers repeats of its key.
+pub const IDEMPOTENCY_RETENTION_SECONDS: u64 = 24 * 60 * 60;
 
 impl HttpBinding {
     /// Names of `{param}` segments in a template.
@@ -63,6 +70,20 @@ impl HttpBinding {
 pub struct OperationRef<'a> {
     pub id: &'a str,
     pub version: &'a str,
+}
+
+/// `{"mode": "none"}` unless the binding accepts an idempotency key. Not a
+/// required feature: a client that ignores it still submits correctly.
+fn idempotency(binding: &HttpBinding) -> Value {
+    if binding.idempotency_key {
+        json!({
+            "mode": "key",
+            "header": IDEMPOTENCY_KEY_HEADER,
+            "retentionSeconds": IDEMPOTENCY_RETENTION_SECONDS,
+        })
+    } else {
+        json!({ "mode": "none" })
+    }
 }
 
 /// Builds the descriptor for a form bound to an operation. The `revision`
@@ -114,8 +135,7 @@ pub fn form_interaction(
             "binding": http,
             "success": success,
             "errors": binding.errors,
-            // M1 operations declare neither idempotency keys nor preconditions.
-            "idempotency": { "mode": "none" },
+            "idempotency": idempotency(binding),
             "concurrency": { "mode": "not_applicable" },
         },
         "input": {
@@ -143,6 +163,46 @@ mod tests {
     use crate::form::Widget;
 
     #[test]
+    fn only_bindings_that_accept_a_key_describe_one() {
+        let input = ContractDoc::input("notes.new", "1").field(Field::text("body"));
+        let output = ContractDoc::output("notes.view", "1").field(Field::uuid("id"));
+        let form = FormPresentation::for_operation("notes.new.form", "notes.add").field(
+            "/body",
+            Widget::Text,
+            "Body",
+        );
+        let mut binding = HttpBinding {
+            method: "POST".into(),
+            path: "/notes".into(),
+            body: BodySource::Input,
+            success_status: 201,
+            location: None,
+            errors: vec![400],
+            etag: None,
+            if_match: None,
+            no_content: false,
+            idempotency_key: false,
+        };
+        let op = || OperationRef {
+            id: "notes.add",
+            version: "1",
+        };
+        let plain = form_interaction(&form, op(), &binding, &input, &output, &BTreeMap::new());
+        assert_eq!(plain["operation"]["idempotency"], json!({ "mode": "none" }));
+        binding.idempotency_key = true;
+        let keyed = form_interaction(&form, op(), &binding, &input, &output, &BTreeMap::new());
+        assert_eq!(keyed["operation"]["idempotency"]["mode"], "key");
+        assert_eq!(
+            keyed["operation"]["idempotency"]["header"],
+            "Idempotency-Key"
+        );
+        assert_eq!(
+            keyed["requiredFeatures"], plain["requiredFeatures"],
+            "not a required feature: older renderers keep working"
+        );
+    }
+
+    #[test]
     fn descriptor_follows_specimen_and_revision_tracks_content() {
         let input = ContractDoc::input("lessons.create.input", "1.0.0")
             .field(Field::text("title").chars(1, 200));
@@ -160,6 +220,7 @@ mod tests {
             etag: None,
             if_match: None,
             no_content: false,
+            idempotency_key: false,
         };
         let op = || OperationRef {
             id: "lessons.create",

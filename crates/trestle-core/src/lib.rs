@@ -15,6 +15,7 @@ pub mod admission;
 pub mod db;
 mod health;
 pub mod http;
+pub mod idempotency;
 pub mod identity;
 pub mod input;
 pub mod invocation;
