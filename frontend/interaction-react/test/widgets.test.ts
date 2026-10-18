@@ -1,10 +1,11 @@
 // ADR-022 widgets: decimals stay strings; a local date-time becomes an
-// instant in UTC and comes back in local time.
+// instant in UTC and comes back in local time. ADR-027/028: money and unions.
 
 import { describe, expect, it } from "vitest";
 
-import type { FieldSchema } from "../src/protocol";
+import { decodeObjectSchema, type FieldSchema } from "../src/protocol";
 import { defaultWidgets } from "../src/widgets";
+import { repoJson } from "./support";
 
 const field = (format: FieldSchema["format"], extra: Partial<FieldSchema> = {}): FieldSchema => ({
   name: "x",
@@ -68,3 +69,38 @@ describe("money widget", () => {
   });
 });
 
+
+describe("union widget", () => {
+  const union = defaultWidgets.union!;
+  const unions = repoJson("fixtures/contracts/unions.json");
+  const input = decodeObjectSchema(unions.schema, "unions");
+  const payment = input.fields.find((f) => f.name === "payment")!;
+  const refund = input.fields.find((f) => f.name === "refund")!;
+  const raw = (variant: string, members: Record<string, Record<string, string | boolean>> = {}) =>
+    JSON.stringify({ variant, members });
+
+  it("sends the tag and only the chosen variant's members", () => {
+    expect(union.accepts(payment)).toBe(true);
+    const typed = { card: { last4: "4242", brand: "" }, invoice: { due: "2026-11-01" } };
+    expect(union.toJson(raw("card", typed), payment)).toEqual({ method: "card", last4: "4242" });
+    expect(union.toJson(raw("invoice", typed), payment)).toEqual({ method: "invoice", due: "2026-11-01" });
+    expect(union.toJson(raw("cash", typed), payment)).toEqual({ method: "cash" });
+    expect(union.toJson(union.empty(payment), payment)).toBeUndefined();
+    expect(union.toJson("not ours", payment)).toBeUndefined();
+  });
+
+  it("prefills a lone variant, sends members through their own widgets, and clears to null", () => {
+    expect(JSON.parse(String(union.empty(refund))).variant).toBe("credit");
+    const credit = raw("credit", { credit: { amount: "5.00 USD" } });
+    expect(union.toJson(credit, refund)).toEqual({ kind: "credit", amount: { amount: "5.00", currency: "USD" } });
+    expect(union.toJson(raw(""), refund)).toBeNull();
+  });
+
+  it("edits a record's value and reads back what it sends", () => {
+    const value = { method: "card", last4: "4242", brand: "visa" };
+    const loaded = union.fromJson(value, payment);
+    expect(union.toJson(loaded, payment)).toEqual(value);
+    expect(union.fromJson(value, payment)).toBe(loaded);
+    expect(union.fromJson({ method: "cheque" }, payment)).toBe(union.empty(payment));
+  });
+});

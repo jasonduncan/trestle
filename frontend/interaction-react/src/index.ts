@@ -9,6 +9,7 @@ export {
   type Descriptor,
   type FieldSchema,
   type ObjectSchema,
+  type UnionVariant,
 } from "./protocol";
 export {
   asProblem,

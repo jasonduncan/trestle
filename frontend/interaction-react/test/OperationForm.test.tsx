@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { OperationForm } from "../src/OperationForm";
 import type { Reply, Transport } from "../src/transport";
-import { publishedDescriptor } from "./support";
+import { publishedDescriptor, repoJson } from "./support";
 
 afterEach(cleanup);
 
@@ -27,6 +27,14 @@ function withNotes(descriptor: any) {
   descriptor.input.schema.properties.notes = { type: "string", maxLength: 500 };
   descriptor.presentation.layout.children.push({ kind: "field", pointer: "/notes", widget: "textarea", label: "Teacher notes" });
   descriptor.revision = "r-bbbbbbbbbbbbbbbb";
+  return descriptor;
+}
+
+/** ADR-028: an optional tagged union, as the server exports it. */
+function withPayment(descriptor: any) {
+  descriptor.input.schema.properties.payment = structuredClone(repoJson("fixtures/contracts/unions.json").schema.properties.payment);
+  descriptor.presentation.layout.children.push({ kind: "field", pointer: "/payment", widget: "union", label: "Payment" });
+  descriptor.requiredFeatures.push("forms.union@1");
   return descriptor;
 }
 
@@ -138,6 +146,34 @@ describe("OperationForm", () => {
     await waitFor(() => expect(title.getAttribute("aria-invalid")).toBe("true"));
     expect(document.getElementById(title.getAttribute("aria-describedby")!)?.textContent).toContain("already exists");
     expect((title as HTMLInputElement).value).toBe("Fractions");
+  });
+
+  it("switches a union's fields by variant and shows member errors on the union", async () => {
+    const rejected = ok(
+      { status: 422, code: "validation_failed", errors: [{ pointer: "/payment/last4", code: "card_declined", message: "This card was declined." }] },
+      422,
+    );
+    const { transport, submits } = fakeTransport([withPayment(publishedDescriptor())], [rejected]);
+    render(<OperationForm interaction="lessons.create.form" transport={transport} />);
+    await fill(/Title/, "Fractions");
+    await fill(/Grade level/, "4");
+    const payment = await screen.findByLabelText(/Payment/);
+    expect(screen.queryByLabelText(/Last4/)).toBeNull();
+    await userEvent.selectOptions(payment, "invoice");
+    expect(await screen.findByLabelText(/Due/)).toBeTruthy();
+    await userEvent.selectOptions(payment, "card");
+    expect(screen.queryByLabelText(/Due/)).toBeNull();
+    await fill(/Last4/, "42");
+    await userEvent.click(screen.getByRole("button", { name: "Create lesson" }));
+    expect(submits).toHaveLength(0);
+    expect((await screen.findByRole("alert")).textContent).toContain("Payment: Last4: Use at least 4 characters.");
+    expect(payment.getAttribute("aria-invalid")).toBe("true");
+
+    await fill(/Last4/, "4242");
+    await userEvent.click(screen.getByRole("button", { name: "Create lesson" }));
+    await waitFor(() => expect(submits).toHaveLength(1));
+    expect(submits[0]!.body).toEqual({ title: "Fractions", grade_level: 4, payment: { method: "card", last4: "4242" } });
+    await waitFor(() => expect(document.getElementById(payment.getAttribute("aria-describedby")!)?.textContent).toBe("Last4: This card was declined."));
   });
 
   it("reloads a stale form, keeps entries and never resubmits by itself", async () => {

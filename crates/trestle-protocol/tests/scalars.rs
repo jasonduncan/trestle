@@ -33,6 +33,70 @@ fn composites_agree_with_every_fixture() {
     agree(include_str!("../../../fixtures/contracts/composites.json"));
 }
 
+/// ADR-028: tagged unions, from `fixtures/contracts/unions.json`.
+#[test]
+fn unions_agree_with_every_fixture() {
+    agree(include_str!("../../../fixtures/contracts/unions.json"));
+}
+
+#[test]
+fn unions_round_trip_check_their_variants_and_evolve_by_variant() {
+    use trestle_protocol::Field;
+    let fixture: Value =
+        serde_json::from_str(include_str!("../../../fixtures/contracts/unions.json")).unwrap();
+    let doc = ContractDoc::from_ir(&fixture["ir"]).unwrap();
+    assert_eq!(doc.to_ir(), fixture["ir"]);
+    assert!(doc.validate(&doc.example()).is_ok(), "the example is valid");
+
+    let card = ContractDoc::input("x.card", "1").field(Field::text("last4").chars(4, 4));
+    let cash = ContractDoc::input("x.cash", "1");
+    let pay = |variants: &[(&str, &ContractDoc)]| {
+        ContractDoc::input("x.pay", "1").field(Field::union("payment", "method", variants))
+    };
+    let base = pay(&[("card", &card), ("cash", &cash)]);
+    assert!(base.problems().is_empty(), "{:?}", base.problems());
+    assert_eq!(
+        pay(&[("cash", &cash), ("card", &card)]),
+        base,
+        "variants are kept in name order"
+    );
+    let wider = pay(&[("card", &card), ("cash", &cash), ("gift", &cash)]);
+    assert!(
+        wider.rejects_instances_of(&base).is_empty(),
+        "a new variant is compatible"
+    );
+    assert_eq!(
+        pay(&[("card", &card)]).rejects_instances_of(&base),
+        ["field payment dropped variant cash"]
+    );
+    let strict = ContractDoc::input("x.card", "2")
+        .field(Field::text("last4").chars(4, 4))
+        .field(Field::text("zip"));
+    assert_eq!(
+        pay(&[("card", &strict), ("cash", &cash)]).rejects_instances_of(&base),
+        ["field payment, variant card: new field zip is required"]
+    );
+    let retagged = ContractDoc::input("x.pay", "1").field(Field::union(
+        "payment",
+        "kind",
+        &[("card", &card), ("cash", &cash)],
+    ));
+    assert_eq!(
+        retagged.rejects_instances_of(&base),
+        ["field payment changed its tag from method to kind"]
+    );
+
+    let tagged = ContractDoc::input("x.card", "1").field(Field::text("method"));
+    let nested =
+        ContractDoc::input("x.nested", "1").field(Field::union("inner", "t", &[("a", &cash)]));
+    let problems = |doc: ContractDoc| doc.problems().join("\n");
+    assert!(problems(pay(&[])).contains("at least one variant"));
+    assert!(problems(pay(&[("card", &tagged)])).contains("variant card declares the tag method"));
+    assert!(problems(pay(&[("deep", &nested)])).contains("variant deep holds a list or a union"));
+    assert!(problems(pay(&[("Card", &cash)])).contains("unique identifiers"));
+    assert!(problems(pay(&[("card", &cash), ("card", &card)])).contains("unique identifiers"));
+}
+
 fn agree(text: &str) {
     let fixture: Value = serde_json::from_str(text).unwrap();
     let doc = ContractDoc::from_ir(&fixture["ir"]).unwrap();

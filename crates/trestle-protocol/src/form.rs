@@ -31,6 +31,9 @@ pub enum Widget {
     Duration,
     /// An amount and its currency (ADR-027). Needs `forms.money@1`.
     Money,
+    /// A variant picker and the chosen variant's fields (ADR-028). Needs
+    /// `forms.union@1`.
+    Union,
 }
 
 impl Widget {
@@ -47,6 +50,7 @@ impl Widget {
             Widget::DateTime => "datetime",
             Widget::Duration => "duration",
             Widget::Money => "money",
+            Widget::Union => "union",
         }
     }
 
@@ -57,6 +61,7 @@ impl Widget {
             Widget::Decimal => Some("forms.decimal@1"),
             Widget::Date | Widget::DateTime | Widget::Duration => Some("forms.temporal@1"),
             Widget::Money => Some("forms.money@1"),
+            Widget::Union => Some("forms.union@1"),
             _ => None,
         }
     }
@@ -73,6 +78,7 @@ impl Widget {
                     FieldType::Uuid | FieldType::Reference { .. }
                 )
                 | (Widget::Money, FieldType::Money { .. })
+                | (Widget::Union, FieldType::Union { .. })
                 | (Widget::Decimal, FieldType::Decimal { .. })
                 | (Widget::Date, FieldType::Date)
                 | (Widget::DateTime, FieldType::Instant)
@@ -333,6 +339,29 @@ mod tests {
         assert!(problems[0].contains("widget integer cannot edit text field /title"));
         assert!(problems[1].contains("/school_id is not a field"));
         assert!(problems[3].contains("/grade_level is missing"));
+    }
+
+    #[test]
+    fn composite_widgets_fit_only_their_types() {
+        let cash = ContractDoc::input("orders.cash", "1");
+        let input = ContractDoc::input("orders.pay.input", "1")
+            .field(Field::money("total", 10, 2))
+            .field(Field::union("payment", "method", &[("cash", &cash)]));
+        let form = FormPresentation::for_operation("orders.pay.form", "orders.pay")
+            .title("Pay")
+            .field("/total", Widget::Money, "Total")
+            .field("/payment", Widget::Union, "Payment");
+        assert!(
+            form.problems(&input, &[]).is_empty(),
+            "{:?}",
+            form.problems(&input, &[])
+        );
+        assert_eq!(form.features(), ["forms.money@1", "forms.union@1"]);
+        let swapped = FormPresentation::for_operation("orders.pay.form", "orders.pay")
+            .title("Pay")
+            .field("/total", Widget::Union, "Total")
+            .field("/payment", Widget::Money, "Payment");
+        assert_eq!(swapped.problems(&input, &[]).len(), 2);
     }
 
     #[test]

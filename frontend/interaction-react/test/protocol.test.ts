@@ -51,7 +51,9 @@ describe("decodeDescriptor", () => {
   it("rejects references and unsupported schema keywords", () => {
     rejects((d) => (d.input.schema.properties.title = { $ref: "https://evil.example/s.json" }), /references are not allowed/);
     rejects((d) => (d.input.schema.properties.title.pattern = "^(a+)+$"), /unsupported pattern/);
-    rejects((d) => (d.input.schema.properties.title.oneOf = []), /unsupported keyword "oneOf"/);
+    rejects((d) => (d.input.schema.properties.title.anyOf = []), /unsupported keyword "anyOf"/);
+    // `oneOf` is only a tagged union's shape (ADR-028), never mixed into a string.
+    rejects((d) => (d.input.schema.properties.title.oneOf = []), /schema for title: unsupported keyword/);
     rejects((d) => (d.input.schema.additionalProperties = true), /additionalProperties must be false/);
   });
 

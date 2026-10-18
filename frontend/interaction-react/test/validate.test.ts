@@ -138,3 +138,66 @@ describe("money and references in the browser", () => {
     expect(() => decode(loose)).toThrow(/unsupported currency/);
   });
 });
+
+// ADR-028: tagged unions, from the fixture the Rust test checks against the
+// server and an independent validator.
+const unions = repoJson("fixtures/contracts/unions.json");
+
+describe("tagged unions in the browser", () => {
+  const input = decodeObjectSchema(unions.schema, "unions");
+
+  it("decodes the tag, each variant's members and a null branch", () => {
+    const byName = Object.fromEntries(input.fields.map((f) => [f.name, f]));
+    expect(byName.payment).toMatchObject({ kind: "union", tag: "method", required: true, nullable: false });
+    expect(byName.payment?.variants?.map((v) => v.name)).toEqual(["card", "cash", "invoice"]);
+    const card = byName.payment?.variants?.[0];
+    expect(card?.fields.map((f) => [f.name, f.required])).toEqual([
+      ["brand", false],
+      ["last4", true],
+    ]);
+    expect(byName.refund).toMatchObject({ kind: "union", tag: "kind", required: false, nullable: true });
+    expect(byName.refund?.variants?.[0]?.fields[0]).toMatchObject({ name: "amount", kind: "money", choices: ["USD"] });
+  });
+
+  for (const testCase of unions.cases) {
+    it(`agrees with the server: ${testCase.name}`, () => {
+      const result = validateInstance(input, testCase.input);
+      if (testCase.expect.status === 201) {
+        expect(result).toEqual({ ok: true, value: testCase.expect.normalized });
+        return;
+      }
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.status).toBe(testCase.expect.status);
+      expect(result.code).toBe(testCase.expect.code);
+      expect(result.errors.map((e) => [e.pointer, e.code])).toEqual(testCase.expect.errors);
+    });
+  }
+
+  it("refuses unions in any shape the server does not write", () => {
+    const decode = (schema: unknown) =>
+      decodeObjectSchema({ type: "object", additionalProperties: false, required: [], properties: { x: schema } }, "probe");
+    const payment = structuredClone(unions.schema.properties.payment);
+    expect(() => decode(payment)).not.toThrow();
+    expect(() => decode({ oneOf: [] })).toThrow(/needs variants/);
+    expect(() => decode({ ...payment, anyOf: payment.oneOf })).toThrow(/unsupported keyword/);
+    const untagged = structuredClone(payment);
+    delete untagged.oneOf[1].properties.method;
+    expect(() => decode(untagged)).toThrow();
+    const optionalTag = structuredClone(payment);
+    optionalTag.oneOf[0].required = ["last4"];
+    expect(() => decode(optionalTag)).toThrow(/unsupported variant/);
+    const twice = structuredClone(payment);
+    twice.oneOf[1].properties.method.const = "card";
+    expect(() => decode(twice)).toThrow(/duplicate variants/);
+    const nested = structuredClone(payment);
+    nested.oneOf[1].properties.inner = structuredClone(payment);
+    expect(() => decode(nested)).toThrow(/cannot hold a union/);
+    const loose = structuredClone(payment);
+    loose.oneOf[0].additionalProperties = true;
+    expect(() => decode(loose)).toThrow(/additionalProperties/);
+    const nullFirst = structuredClone(payment);
+    nullFirst.oneOf.unshift({ type: "null" });
+    expect(() => decode(nullFirst)).toThrow();
+  });
+});
