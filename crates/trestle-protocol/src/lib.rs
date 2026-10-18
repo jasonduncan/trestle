@@ -10,6 +10,7 @@
 pub mod contract;
 pub mod form;
 pub mod interaction;
+pub mod scalar;
 
 use serde::Serialize;
 use serde_json::{Map, Value};

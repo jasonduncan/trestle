@@ -41,7 +41,15 @@ fn function_name(operation_id: &str) -> String {
 
 fn ts_type(ty: &FieldType, contracts: &mut BTreeMap<String, ContractDoc>) -> String {
     match ty {
-        FieldType::Text { .. } | FieldType::Uuid | FieldType::Digits => "string".into(),
+        // Decimals, dates, instants and durations travel as strings
+        // (ADR-022), so they stay strings here: no rounding, no parsing.
+        FieldType::Text { .. }
+        | FieldType::Uuid
+        | FieldType::Digits
+        | FieldType::Decimal { .. }
+        | FieldType::Date
+        | FieldType::Instant
+        | FieldType::Duration => "string".into(),
         FieldType::Integer { .. } => "number".into(),
         FieldType::Boolean => "boolean".into(),
         FieldType::Enum { values } => values

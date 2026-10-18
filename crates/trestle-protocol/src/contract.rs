@@ -19,7 +19,8 @@
 use serde_json::{Map, Number, Value, json};
 
 use crate::{
-    FieldError, VALIDATION_PROFILE, digest, limits, pointer, valid_identifier, valid_stable_id,
+    FieldError, VALIDATION_PROFILE, digest, limits, pointer, scalar, valid_identifier,
+    valid_stable_id,
 };
 
 /// A Rust type bound to a registered wire contract. Implementations return
@@ -69,6 +70,21 @@ pub enum FieldType {
         item: Box<ContractDoc>,
         max_items: u32,
     },
+    /// A base-10 number as a string (`"-12.50"`), never a JSON number, so
+    /// no client rounds it: at most `precision` digits, `scale` of them
+    /// after the point (ADR-022).
+    Decimal {
+        precision: u8,
+        scale: u8,
+    },
+    /// A calendar date, RFC 3339 `full-date` (`2026-10-17`).
+    Date,
+    /// A point in time, RFC 3339 `date-time` with an offset. Normalized to
+    /// UTC (`…Z`).
+    Instant,
+    /// An exact span, ISO 8601 `P[nD][T[nH][nM][nS]]`: no years or months,
+    /// whose length varies.
+    Duration,
 }
 
 impl FieldType {
@@ -81,6 +97,10 @@ impl FieldType {
             FieldType::Uuid => "uuid",
             FieldType::Digits => "digits",
             FieldType::Enum { .. } => "enum",
+            FieldType::Decimal { .. } => "decimal",
+            FieldType::Date => "date",
+            FieldType::Instant => "instant",
+            FieldType::Duration => "duration",
         }
     }
 }
@@ -137,6 +157,24 @@ impl Field {
 
     pub fn digits(name: &str) -> Self {
         Self::new(name, FieldType::Digits)
+    }
+
+    /// A decimal string with at most `precision` digits, `scale` after the
+    /// point (`decimal("price", 10, 2)` accepts `"99999999.99"`).
+    pub fn decimal(name: &str, precision: u8, scale: u8) -> Self {
+        Self::new(name, FieldType::Decimal { precision, scale })
+    }
+
+    pub fn date(name: &str) -> Self {
+        Self::new(name, FieldType::Date)
+    }
+
+    pub fn instant(name: &str) -> Self {
+        Self::new(name, FieldType::Instant)
+    }
+
+    pub fn duration(name: &str) -> Self {
+        Self::new(name, FieldType::Duration)
     }
 
     /// A list of at most `max_items` objects of `item`'s contract.
@@ -319,6 +357,13 @@ impl ContractDoc {
                     }
                     problems.extend(item.problems());
                 }
+                FieldType::Decimal { precision, scale }
+                    if !(1..=38).contains(precision) || scale > precision =>
+                {
+                    problems.push(format!(
+                        "contract {id}: field {name}: decimal needs 1 <= precision <= 38 and scale <= precision"
+                    ));
+                }
                 FieldType::Enum { values } => {
                     if values.is_empty() {
                         problems.push(format!("contract {id}: field {name}: enum has no values"));
@@ -466,7 +511,16 @@ impl ContractDoc {
                         ir["maxItems"] = json!(max_items);
                         ir["item"] = item.to_ir();
                     }
-                    FieldType::Boolean | FieldType::Uuid | FieldType::Digits => {}
+                    FieldType::Decimal { precision, scale } => {
+                        ir["precision"] = json!(precision);
+                        ir["scale"] = json!(scale);
+                    }
+                    FieldType::Boolean
+                    | FieldType::Uuid
+                    | FieldType::Digits
+                    | FieldType::Date
+                    | FieldType::Instant
+                    | FieldType::Duration => {}
                 }
                 insert_some(
                     &mut ir,
@@ -537,6 +591,21 @@ impl ContractDoc {
                 },
                 Some("uuid") => FieldType::Uuid,
                 Some("digits") => FieldType::Digits,
+                Some("decimal") => {
+                    let digits = |key: &str| {
+                        f.get(key)
+                            .and_then(Value::as_u64)
+                            .and_then(|n| u8::try_from(n).ok())
+                            .ok_or_else(|| format!("decimal field {name} has no {key}"))
+                    };
+                    FieldType::Decimal {
+                        precision: digits("precision")?,
+                        scale: digits("scale")?,
+                    }
+                }
+                Some("date") => FieldType::Date,
+                Some("instant") => FieldType::Instant,
+                Some("duration") => FieldType::Duration,
                 Some("enum") => FieldType::Enum {
                     values: f
                         .get("values")
@@ -629,6 +698,20 @@ impl ContractDoc {
                         reasons.push(format!("field {name} dropped enum values"));
                     }
                 }
+                (
+                    FieldType::Decimal {
+                        precision: op,
+                        scale: os,
+                    },
+                    FieldType::Decimal {
+                        precision: np,
+                        scale: ns,
+                    },
+                ) => {
+                    if np - ns < op - os || ns < os {
+                        reasons.push(format!("field {name} accepts fewer decimal digits"));
+                    }
+                }
                 (a, b) if a == b => {}
                 (a, b) => reasons.push(format!(
                     "field {name} changed type from {} to {}",
@@ -665,6 +748,10 @@ impl ContractDoc {
                     FieldType::Digits => json!("1"),
                     FieldType::Enum { values } => json!(values.first()),
                     FieldType::Items { item, .. } => json!([item.example()]),
+                    FieldType::Decimal { .. } => json!("0"),
+                    FieldType::Date => json!("2026-01-01"),
+                    FieldType::Instant => json!("2026-01-01T00:00:00Z"),
+                    FieldType::Duration => json!("PT1S"),
                 };
                 (f.name.clone(), value)
             })
@@ -702,6 +789,14 @@ fn field_schema(field: &Field) -> Value {
         FieldType::Enum { values } => json!({ "type": "string", "enum": values }),
         FieldType::Items { item, max_items } => {
             json!({ "type": "array", "maxItems": max_items, "items": item.schema_body() })
+        }
+        FieldType::Decimal { precision, scale } => {
+            json!({ "type": "string", "pattern": scalar::decimal_pattern(*precision, *scale) })
+        }
+        FieldType::Date => json!({ "type": "string", "format": "date" }),
+        FieldType::Instant => json!({ "type": "string", "format": "date-time" }),
+        FieldType::Duration => {
+            json!({ "type": "string", "format": "duration", "pattern": scalar::DURATION_PATTERN })
         }
     };
     if field.nullable {
@@ -814,6 +909,61 @@ fn check(ty: &FieldType, at: &str, value: &Value) -> Check {
             _ => Check::Shape(type_error(at, "string")),
         },
         FieldType::Items { .. } => Check::Shape(type_error(at, "array")),
+        FieldType::Decimal { precision, scale } => match value {
+            Value::String(text) => match scalar::check_decimal(text, *precision, *scale) {
+                Ok(()) => Check::Ok(value.clone()),
+                Err(scalar::DecimalError::Syntax) => Check::Invalid(
+                    FieldError::new(at, "format", "Enter a number, like 12.50.")
+                        .with_params(json!({ "format": "decimal" })),
+                ),
+                Err(scalar::DecimalError::Digits) => {
+                    let whole = precision - scale;
+                    Check::Invalid(
+                        FieldError::new(
+                            at,
+                            "decimal_digits",
+                            format!(
+                                "Use at most {whole} digits before the decimal point and {scale} after."
+                            ),
+                        )
+                        .with_params(json!({ "precision": precision, "scale": scale })),
+                    )
+                }
+            },
+            _ => Check::Shape(type_error(at, "string")),
+        },
+        FieldType::Date => match value {
+            Value::String(text) if scalar::parse_date(text).is_some() => Check::Ok(value.clone()),
+            Value::String(_) => Check::Invalid(
+                FieldError::new(at, "format", "Enter a date as YYYY-MM-DD.")
+                    .with_params(json!({ "format": "date" })),
+            ),
+            _ => Check::Shape(type_error(at, "string")),
+        },
+        FieldType::Instant => match value {
+            Value::String(text) => match scalar::normalize_instant(text) {
+                Some(utc) => Check::Ok(Value::String(utc)),
+                None => Check::Invalid(
+                    FieldError::new(
+                        at,
+                        "format",
+                        "Enter a date and time with a time zone, like 2026-10-17T09:30:00Z.",
+                    )
+                    .with_params(json!({ "format": "date-time" })),
+                ),
+            },
+            _ => Check::Shape(type_error(at, "string")),
+        },
+        FieldType::Duration => match value {
+            Value::String(text) if scalar::parse_duration(text).is_some() => {
+                Check::Ok(value.clone())
+            }
+            Value::String(_) => Check::Invalid(
+                FieldError::new(at, "format", "Enter a duration like PT30M or P1DT2H.")
+                    .with_params(json!({ "format": "duration" })),
+            ),
+            _ => Check::Shape(type_error(at, "string")),
+        },
         FieldType::Enum { values } => match value {
             Value::String(text) if values.contains(text) => Check::Ok(value.clone()),
             Value::String(_) => Check::Invalid(

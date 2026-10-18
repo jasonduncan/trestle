@@ -3308,6 +3308,7 @@ dependencies = [
 name = "trestle-protocol"
 version = "0.3.0"
 dependencies = [
+ "jsonschema",
  "serde",
  "serde_json",
  "sha2",

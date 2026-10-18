@@ -20,6 +20,15 @@ pub enum Widget {
     Select,
     /// Picks a record ID from a scoped list operation (§9.3).
     Relation,
+    /// A decimal string (ADR-022): a text box that never turns it into a
+    /// float. Needs `forms.decimal@1`.
+    Decimal,
+    /// A calendar date. Needs `forms.temporal@1`.
+    Date,
+    /// A date and time, sent with its offset. Needs `forms.temporal@1`.
+    DateTime,
+    /// A duration such as `PT30M`. Needs `forms.temporal@1`.
+    Duration,
 }
 
 impl Widget {
@@ -31,6 +40,20 @@ impl Widget {
             Widget::Checkbox => "checkbox",
             Widget::Select => "select",
             Widget::Relation => "relation",
+            Widget::Decimal => "decimal",
+            Widget::Date => "date",
+            Widget::DateTime => "datetime",
+            Widget::Duration => "duration",
+        }
+    }
+
+    /// The renderer feature this widget needs beyond `forms.core@1`.
+    pub fn feature(self) -> Option<&'static str> {
+        match self {
+            Widget::Relation => Some("forms.relation@1"),
+            Widget::Decimal => Some("forms.decimal@1"),
+            Widget::Date | Widget::DateTime | Widget::Duration => Some("forms.temporal@1"),
+            _ => None,
         }
     }
 
@@ -42,6 +65,10 @@ impl Widget {
                 | (Widget::Checkbox, FieldType::Boolean)
                 | (Widget::Select, FieldType::Enum { .. })
                 | (Widget::Relation, FieldType::Uuid)
+                | (Widget::Decimal, FieldType::Decimal { .. })
+                | (Widget::Date, FieldType::Date)
+                | (Widget::DateTime, FieldType::Instant)
+                | (Widget::Duration, FieldType::Duration)
         )
     }
 }
@@ -133,12 +160,17 @@ impl FormPresentation {
     }
 
     /// Renderer features this form needs beyond the core set.
+    /// Renderer features the form's widgets need, sorted: a renderer
+    /// without one refuses to submit instead of guessing (I11).
     pub fn features(&self) -> Vec<&'static str> {
-        if self.fields.iter().any(|f| f.widget == Widget::Relation) {
-            vec!["forms.relation@1"]
-        } else {
-            Vec::new()
-        }
+        let mut features: Vec<&'static str> = self
+            .fields
+            .iter()
+            .filter_map(|f| f.widget.feature())
+            .collect();
+        features.sort_unstable();
+        features.dedup();
+        features
     }
 
     /// Help text for the most recently added field.
@@ -293,6 +325,37 @@ mod tests {
         assert!(problems[0].contains("widget integer cannot edit text field /title"));
         assert!(problems[1].contains("/school_id is not a field"));
         assert!(problems[3].contains("/grade_level is missing"));
+    }
+
+    #[test]
+    fn scalar_widgets_fit_their_types_and_name_their_features() {
+        let input = ContractDoc::input("orders.create.input", "1")
+            .field(Field::decimal("price", 10, 2))
+            .field(Field::date("due"))
+            .field(Field::instant("at"))
+            .field(Field::duration("length"));
+        let form = FormPresentation::for_operation("orders.create.form", "orders.create")
+            .title("New order")
+            .field("/price", Widget::Decimal, "Price")
+            .field("/due", Widget::Date, "Due")
+            .field("/at", Widget::DateTime, "At")
+            .field("/length", Widget::Duration, "Length");
+        assert!(
+            form.problems(&input, &[]).is_empty(),
+            "{:?}",
+            form.problems(&input, &[])
+        );
+        assert_eq!(form.features(), ["forms.decimal@1", "forms.temporal@1"]);
+
+        let wrong = FormPresentation::for_operation("orders.create.form", "orders.create")
+            .title("New order")
+            .field("/price", Widget::Text, "Price")
+            .field("/due", Widget::DateTime, "Due")
+            .field("/at", Widget::Date, "At")
+            .field("/length", Widget::Integer, "Length");
+        let problems = wrong.problems(&input, &[]);
+        assert_eq!(problems.len(), 4, "{problems:#?}");
+        assert!(problems[0].contains("widget text cannot edit decimal field /price"));
     }
 
     #[test]

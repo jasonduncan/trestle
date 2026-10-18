@@ -188,4 +188,67 @@ const relation: Widget = {
   render: (props) => <RelationSelect {...props} />,
 };
 
-export const defaultWidgets: WidgetRegistry = { text, textarea, integer, checkbox, select, relation };
+/** A string in one format, edited as typed text; empty optional is left out. */
+function formatted(format: NonNullable<FieldSchema["format"]>, input: Partial<Record<string, string>>): Widget {
+  return {
+    accepts: (f) => f.kind === "string" && f.format === format,
+    empty: () => "",
+    fromJson: asText,
+    toJson: (raw, field) => {
+      const text = String(raw).trim();
+      return text === "" ? (field.nullable ? null : undefined) : text;
+    },
+    render: (props) => (
+      <input {...common(props)} {...input} value={String(props.value)} onChange={(e) => props.onChange(e.target.value)} />
+    ),
+  };
+}
+
+/** Decimals stay strings, so no float ever rounds them (ADR-022). */
+const decimal = formatted("decimal", { type: "text", inputMode: "decimal" });
+/** `<input type="date">` already speaks YYYY-MM-DD. */
+const date = formatted("date", { type: "date" });
+const duration = formatted("duration", { type: "text", placeholder: "PT30M" });
+
+/** Local time in the picker; sent as an instant in UTC. */
+const datetime: Widget = {
+  accepts: (f) => f.kind === "string" && f.format === "date-time",
+  empty: () => "",
+  // `datetime-local` wants local "YYYY-MM-DDTHH:MM[:SS]".
+  fromJson: (value) => {
+    if (typeof value !== "string") return "";
+    const at = new Date(value);
+    if (Number.isNaN(at.getTime())) return "";
+    const local = new Date(at.getTime() - at.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 19);
+  },
+  toJson: (raw, field) => {
+    const text = String(raw).trim();
+    if (text === "") return field.nullable ? null : undefined;
+    const at = new Date(text);
+    // Not a time: send the text so validation reports the format error.
+    return Number.isNaN(at.getTime()) ? text : at.toISOString();
+  },
+  render: (props) => (
+    <input
+      {...common(props)}
+      type="datetime-local"
+      step="1"
+      value={String(props.value)}
+      onChange={(e) => props.onChange(e.target.value)}
+    />
+  ),
+};
+
+export const defaultWidgets: WidgetRegistry = {
+  text,
+  textarea,
+  integer,
+  checkbox,
+  select,
+  relation,
+  decimal,
+  date,
+  datetime,
+  duration,
+};

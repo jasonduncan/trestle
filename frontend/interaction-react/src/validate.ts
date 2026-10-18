@@ -7,6 +7,7 @@
 // `fixtures/contracts/` through both (see test/validate.test.ts).
 
 import type { FieldSchema, ObjectSchema } from "./protocol";
+import { checkDecimal, isDuration, normalizeInstant, parseDate } from "./scalar";
 
 export interface FieldError {
   pointer: string;
@@ -61,6 +62,29 @@ function check(field: FieldSchema, at: string, value: unknown): Check {
       }
       if (field.format === "digits" && !DIGITS.test(value)) {
         return { invalid: { pointer: at, code: "format", message: "Enter digits only.", params: { format: "digits" } } };
+      }
+      if (field.format === "decimal") {
+        const precision = field.precision ?? 0;
+        const scale = field.scale ?? 0;
+        const error = checkDecimal(value, precision, scale);
+        if (error === "syntax") {
+          return { invalid: { pointer: at, code: "format", message: "Enter a number, like 12.50.", params: { format: "decimal" } } };
+        }
+        if (error === "digits") {
+          const message = `Use at most ${precision - scale} digits before the decimal point and ${scale} after.`;
+          return { invalid: { pointer: at, code: "decimal_digits", message, params: { precision, scale } } };
+        }
+      }
+      if (field.format === "date" && parseDate(value) === undefined) {
+        return { invalid: { pointer: at, code: "format", message: "Enter a date as YYYY-MM-DD.", params: { format: "date" } } };
+      }
+      if (field.format === "date-time" && normalizeInstant(value) === undefined) {
+        const message = "Enter a date and time with a time zone, like 2026-10-17T09:30:00Z.";
+        return { invalid: { pointer: at, code: "format", message, params: { format: "date-time" } } };
+      }
+      if (field.format === "duration" && !isDuration(value)) {
+        const message = "Enter a duration like PT30M or P1DT2H.";
+        return { invalid: { pointer: at, code: "format", message, params: { format: "duration" } } };
       }
       const count = codePoints(value);
       if (field.minLength !== undefined && count < field.minLength) {

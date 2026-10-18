@@ -1,6 +1,7 @@
 # ADR-004: Interaction protocol, features and compatibility
 
-**Status:** Accepted (M2, 2026-09-26) · **Design doc:** §8, §11.3–§11.4, App. B, I03, I11
+**Status:** Accepted (M2, 2026-09-26) · **Design doc:** §8, §11.3–§11.4, App. B, I03, I11 ·
+**Amended by:** ADR-022 (decimal, date, instant, duration)
 
 ## Context
 
