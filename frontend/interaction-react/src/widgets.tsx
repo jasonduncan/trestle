@@ -240,7 +240,76 @@ const datetime: Widget = {
   ),
 };
 
+/**
+ * Amount and currency in one raw string, `"<amount> <currency>"`: neither
+ * part can contain a space, so the split is exact (ADR-027).
+ */
+function moneyParts(raw: string | boolean): [string, string] {
+  const text = String(raw);
+  const space = text.indexOf(" ");
+  return space === -1 ? [text, ""] : [text.slice(0, space), text.slice(space + 1)];
+}
+
+const money: Widget = {
+  accepts: (f) => f.kind === "money",
+  empty: (f) => (f.choices?.length === 1 ? ` ${f.choices[0]}` : " "),
+  fromJson: (value) => {
+    if (typeof value !== "object" || value === null) return " ";
+    const v = value as { amount?: unknown; currency?: unknown };
+    return `${asText(v.amount)} ${asText(v.currency)}`;
+  },
+  toJson: (raw, field) => {
+    const [amount, currency] = moneyParts(raw).map((p) => p.trim()) as [string, string];
+    if (amount === "" && (currency === "" || field.choices?.length === 1)) {
+      return field.nullable ? null : undefined;
+    }
+    return { amount, currency };
+  },
+  render: (props) => {
+    const [amount, currency] = moneyParts(props.value);
+    const set = (a: string, c: string) => props.onChange(`${a.replace(/ /g, "")} ${c.replace(/ /g, "")}`);
+    const choices = props.field.choices;
+    return (
+      <span role="group" aria-labelledby={props.describedBy}>
+        <input
+          {...common(props)}
+          type="text"
+          inputMode="decimal"
+          value={amount}
+          onChange={(e) => set(e.target.value, currency)}
+        />
+        {choices ? (
+          <select
+            name={`${props.field.name}.currency`}
+            aria-label="Currency"
+            value={currency}
+            onChange={(e) => set(amount, e.target.value)}
+          >
+            <option value="">…</option>
+            {choices.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            name={`${props.field.name}.currency`}
+            aria-label="Currency"
+            type="text"
+            size={3}
+            maxLength={3}
+            value={currency}
+            onChange={(e) => set(amount, e.target.value.toUpperCase())}
+          />
+        )}
+      </span>
+    );
+  },
+};
+
 export const defaultWidgets: WidgetRegistry = {
+  money,
   text,
   textarea,
   integer,

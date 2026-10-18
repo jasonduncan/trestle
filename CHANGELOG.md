@@ -146,6 +146,18 @@ promise.
   - **Checked:** fields that can't be shown are refused when the file is
     read.
 
+- Money and references (ADR-027):
+  - **References:** `Field::reference(name, model)` is a uuid on the wire
+    that records its target model in the IR. `trestle.toml` refs use it.
+  - **Money:** `Field::money(name, precision, scale).currencies(..)` is
+    `{"amount", "currency"}`, with errors at `/field/amount` and
+    `/field/currency`.
+  - **Agreement:** the server, JSON Schema and browser agree on
+    `fixtures/contracts/composites.json`.
+  - **Widget:** `money`, which requires `forms.money@1`.
+  - **Storage:** in `trestle.toml` (`type = "money"`), money is stored as
+    `<field>_amount` and `<field>_currency`.
+
 ### Changed
 - **Breaking (intent format):** an endpoint's `order` must name a required
   field or `created_at`. Intent list contracts gain `cursor`, and pages

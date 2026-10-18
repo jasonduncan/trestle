@@ -49,7 +49,9 @@ fn ts_type(ty: &FieldType, contracts: &mut BTreeMap<String, ContractDoc>) -> Str
         | FieldType::Decimal { .. }
         | FieldType::Date
         | FieldType::Instant
-        | FieldType::Duration => "string".into(),
+        | FieldType::Duration
+        | FieldType::Reference { .. } => "string".into(),
+        FieldType::Money { .. } => "{ amount: string; currency: string }".into(),
         FieldType::Integer { .. } => "number".into(),
         FieldType::Boolean => "boolean".into(),
         FieldType::Enum { values } => values

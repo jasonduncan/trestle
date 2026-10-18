@@ -175,6 +175,14 @@ fn a_ref_field_is_an_indexed_foreign_key() {
     let account = deal.field("crm.deal.account").unwrap();
     assert_eq!(account.references.as_deref(), Some("crm.account"));
     assert!(deal.indexes.iter().any(|i| i.name == "deals_account_idx"));
+    // The contract records what the ID refers to (ADR-027).
+    let create = registry.operation("crm.deal.create").unwrap();
+    assert_eq!(
+        create.input.get("account").unwrap().ty,
+        trestle::protocol::FieldType::Reference {
+            model: "crm.account".into()
+        }
+    );
 }
 
 #[test]

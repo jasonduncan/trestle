@@ -40,3 +40,31 @@ describe("scalar widgets", () => {
     expect(datetime.toJson("not a time", field("date-time"))).toBe("not a time");
   });
 });
+
+describe("money widget", () => {
+  const money = defaultWidgets.money!;
+  const field = (extra: Partial<FieldSchema> = {}): FieldSchema => ({
+    name: "price",
+    kind: "money",
+    required: true,
+    nullable: false,
+    precision: 10,
+    scale: 2,
+    ...extra,
+  });
+
+  it("sends the amount as typed and the currency beside it", () => {
+    expect(money.accepts(field())).toBe(true);
+    expect(money.toJson("12.50 USD", field())).toEqual({ amount: "12.50", currency: "USD" });
+    expect(money.fromJson({ amount: "3", currency: "EUR" }, field())).toBe("3 EUR");
+    expect(money.toJson(money.empty(field()), field())).toBeUndefined();
+  });
+
+  it("prefills a single allowed currency and treats it alone as empty", () => {
+    const one = field({ choices: ["EUR"], nullable: true });
+    expect(money.empty(one)).toBe(" EUR");
+    expect(money.toJson(money.empty(one), one)).toBeNull();
+    expect(money.toJson("5 EUR", one)).toEqual({ amount: "5", currency: "EUR" });
+  });
+});
+

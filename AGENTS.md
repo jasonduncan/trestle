@@ -29,7 +29,7 @@ and is not self-granted. Open items before a pilot:
 choose how people sign in (password accounts are built; an OIDC provider is optional and only
 mock-tested), send through the real SMTP relay, get external security review (§12.4), and
 validate the edge config (`deploy/Caddyfile`) on a real host. Do not claim general
-maturity or benchmark leadership. ADRs: 001–026 (015 reopens 009: jobs and outbox).
+maturity or benchmark leadership. ADRs: 001–027 (015 reopens 009: jobs and outbox).
 
 ## Non-negotiables
 - Installing a model publishes nothing (I01). Endpoints, forms and writable fields are explicit.
@@ -116,7 +116,8 @@ maturity or benchmark leadership. ADRs: 001–026 (015 reopens 009: jobs and out
 - The browser validator is derived from published schemas; never hand-write per-form rules.
   New field types need server evaluator, schema export, TS decoder/validator and fixtures together
   (`fixtures/contracts/scalars.json` is the model, ADR-022). Decimals, dates, instants and durations
-  are strings on the wire; never accept a JSON number for a decimal. Their columns are read through
+  are strings on the wire; never accept a JSON number for a decimal. Money is the one object field
+  (`{amount, currency}`, ADR-027); the browser decodes only that exact shape. Their columns are read through
   `trestle_historical::sql::text_expr` (never a raw `numeric` into JSON) and bound with casts.
 
 ## Commands

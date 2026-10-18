@@ -173,6 +173,9 @@ struct FieldSection {
     /// What a generated form calls the field.
     #[serde(default)]
     label: Option<String>,
+    /// Money fields: the currencies accepted (default: any code).
+    #[serde(default)]
+    currencies: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -261,6 +264,9 @@ pub enum FieldType {
     Duration,
     /// The ID of another model's row in the same tenant (`to = "<model>"`).
     Ref,
+    /// `{amount, currency}`, stored as `<id>_amount` and `<id>_currency`
+    /// (ADR-027).
+    Money,
 }
 
 impl FieldType {
@@ -270,7 +276,7 @@ impl FieldType {
             FieldType::Int => "bigint",
             FieldType::Bool => "boolean",
             FieldType::Uuid | FieldType::Ref => "uuid",
-            FieldType::Decimal => "numeric",
+            FieldType::Decimal | FieldType::Money => "numeric",
             FieldType::Date => "date",
             FieldType::Instant => "timestamptz",
             FieldType::Duration => "interval",
@@ -295,6 +301,8 @@ pub struct FieldSpec {
     pub to_table: Option<String>,
     /// Form label; defaults to the ID in words.
     pub label: Option<String>,
+    /// Money fields: allowed currencies; empty means any.
+    pub currencies: Vec<String>,
 }
 
 impl FieldSpec {
@@ -566,6 +574,19 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
                 fields.push(spec);
             }
         }
+        for money in fields.iter().filter(|f| f.ty == FieldType::Money) {
+            for column in [
+                format!("{}_amount", money.id),
+                format!("{}_currency", money.id),
+            ] {
+                if fields.iter().any(|f| f.id == column) {
+                    problems.push(format!(
+                        "{at}: field {column:?} collides with the storage of money field {:?}",
+                        money.id
+                    ));
+                }
+            }
+        }
         let mut unique = Vec::new();
         for set in &m.unique {
             let at = lines.at(set);
@@ -575,8 +596,16 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
                 continue;
             }
             for n in names {
-                if !fields.iter().any(|f: &FieldSpec| &f.id == n) {
-                    problems.push(format!("{at}: unique field {n:?} is not a field of {id}"));
+                match fields.iter().find(|f: &&FieldSpec| &f.id == n) {
+                    None => {
+                        problems.push(format!("{at}: unique field {n:?} is not a field of {id}"))
+                    }
+                    Some(f) if f.ty == FieldType::Money => {
+                        problems.push(format!(
+                            "{at}: money field {n:?} cannot be part of a unique set"
+                        ));
+                    }
+                    Some(_) => {}
                 }
             }
             let mut parts = vec![table.clone()];
@@ -895,7 +924,16 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
         };
         let mut filter = Vec::new();
         for f in &e.filter {
-            if model.field(f.get_ref()).is_some() {
+            if model
+                .field(f.get_ref())
+                .is_some_and(|x| x.ty == FieldType::Money)
+            {
+                problems.push(format!(
+                    "{}: money field {:?} cannot be a filter",
+                    lines.at(f),
+                    f.get_ref()
+                ));
+            } else if model.field(f.get_ref()).is_some() {
                 filter.push(f.get_ref().clone());
             } else {
                 problems.push(format!(
@@ -919,6 +957,10 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
                         "{}: order field {name:?} is not created_at or a field of {}",
                         lines.at(o),
                         model.id
+                    )),
+                    Some(f) if f.ty == FieldType::Money => problems.push(format!(
+                        "{}: order field {name:?} is money; order by its amount in Rust",
+                        lines.at(o)
                     )),
                     // Pages continue after the last row's key; a null key
                     // has no place in that order.
@@ -1192,16 +1234,34 @@ fn field(lines: &Lines<'_>, f: &FieldSection, problems: &mut Vec<String>) -> Opt
         "instant" => FieldType::Instant,
         "duration" => FieldType::Duration,
         "ref" => FieldType::Ref,
+        "money" => FieldType::Money,
         other => {
             problems.push(format!(
-                "{}: unknown type {other:?}; use text, int, bool, uuid, enum, decimal, date, instant, duration or ref",
+                "{}: unknown type {other:?}; use text, int, bool, uuid, enum, decimal, money, date, instant, duration or ref",
                 lines.at(&f.ty)
             ));
             return None;
         }
     };
     let (precision, scale) = (f.precision.unwrap_or(0), f.scale.unwrap_or(0));
-    if ty == FieldType::Decimal {
+    if ty == FieldType::Money {
+        if f.default.is_some() {
+            problems.push(format!("{at}: money fields take no default"));
+        }
+        let codes = &f.currencies;
+        if codes
+            .iter()
+            .enumerate()
+            .any(|(i, c)| !trestle_core::protocol::scalar::is_currency(c) || codes[..i].contains(c))
+        {
+            problems.push(format!(
+                "{at}: currencies must be unique three-letter codes, like [\"EUR\", \"USD\"]"
+            ));
+        }
+    } else if !f.currencies.is_empty() {
+        problems.push(format!("{at}: currencies = [...] is for money fields"));
+    }
+    if matches!(ty, FieldType::Decimal | FieldType::Money) {
         if !(1..=38).contains(&precision) || scale > precision {
             problems.push(format!(
                 "{at}: a decimal field needs precision = 1..38 and scale <= precision (scale defaults to 0)"
@@ -1256,5 +1316,6 @@ fn field(lines: &Lines<'_>, f: &FieldSection, problems: &mut Vec<String>) -> Opt
         to: f.to.as_ref().map(|t| t.get_ref().clone()),
         to_table: None,
         label: f.label.clone(),
+        currencies: f.currencies.clone(),
     })
 }

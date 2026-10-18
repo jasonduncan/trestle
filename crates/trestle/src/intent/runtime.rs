@@ -666,6 +666,7 @@ fn form_fields(
             FieldType::Bool => Widget::Checkbox,
             FieldType::Enum => Widget::Select,
             FieldType::Decimal => Widget::Decimal,
+            FieldType::Money => Widget::Money,
             FieldType::Date => Widget::Date,
             FieldType::Instant => Widget::DateTime,
             FieldType::Duration => Widget::Duration,
@@ -710,6 +711,23 @@ fn model_of(spec: &ModelSpec, intent: &Intent) -> Model {
         }
     }
     for f in &spec.fields {
+        if f.ty == FieldType::Money {
+            // Two columns: the amount and its currency (ADR-027).
+            let (amount, currency) = money_columns(f);
+            let mut amount = Column::decimal(&amount, f.precision, f.scale);
+            let codes: Vec<&str> = f.currencies.iter().map(String::as_str).collect();
+            let mut currency = if codes.is_empty() {
+                Column::text(&currency).chars(3, 3)
+            } else {
+                Column::text(&currency).one_of(&codes)
+            };
+            if f.optional {
+                amount = amount.nullable();
+                currency = currency.nullable();
+            }
+            model = model.field(amount).field(currency);
+            continue;
+        }
         let mut column = match f.ty {
             FieldType::Text => Column::text(&f.id),
             FieldType::Int => Column::big_int(&f.id),
@@ -720,6 +738,7 @@ fn model_of(spec: &ModelSpec, intent: &Intent) -> Model {
                 Column::text(&f.id).one_of(&values)
             }
             FieldType::Decimal => Column::decimal(&f.id, f.precision, f.scale),
+            FieldType::Money => continue,
             FieldType::Date => Column::date(&f.id),
             FieldType::Instant => Column::timestamptz(&f.id),
             FieldType::Duration => Column::duration(&f.id),
@@ -824,10 +843,14 @@ fn field_contract(f: &FieldSpec, required: bool) -> Field {
             Field::enumeration(&f.id, &values)
         }
         FieldType::Decimal => Field::decimal(&f.id, f.precision, f.scale),
+        FieldType::Money => {
+            let codes: Vec<&str> = f.currencies.iter().map(String::as_str).collect();
+            Field::money(&f.id, f.precision, f.scale).currencies(&codes)
+        }
         FieldType::Date => Field::date(&f.id),
         FieldType::Instant => Field::instant(&f.id),
         FieldType::Duration => Field::duration(&f.id),
-        FieldType::Ref => Field::uuid(&f.id),
+        FieldType::Ref => Field::reference(&f.id, f.to.as_deref().unwrap_or_default()),
     };
     if !required {
         field = field.optional();
@@ -1462,6 +1485,15 @@ impl<S> IntentOp<S> {
 fn representation_sql(model: &ModelSpec) -> String {
     let mut parts = vec!["'id', t.id".to_owned()];
     for f in &model.fields {
+        if f.ty == FieldType::Money {
+            let (amount, currency) = money_columns(f);
+            parts.push(format!(
+                "'{}', CASE WHEN t.{amount} IS NULL THEN NULL \
+                 ELSE jsonb_build_object('amount', t.{amount}::text, 'currency', t.{currency}) END",
+                f.id
+            ));
+            continue;
+        }
         // Decimals, dates, instants and durations render in their contract
         // form (ADR-023): a decimal never becomes a JSON number.
         let column = format!("t.{}", f.id);
@@ -1476,7 +1508,7 @@ fn representation_sql(model: &ModelSpec) -> String {
 fn column_type(f: &FieldSpec) -> trestle_historical::schema::ColumnType {
     use trestle_historical::schema::ColumnType;
     match f.ty {
-        FieldType::Decimal => ColumnType::Numeric {
+        FieldType::Decimal | FieldType::Money => ColumnType::Numeric {
             precision: f.precision,
             scale: f.scale,
         },
@@ -1600,12 +1632,40 @@ async fn list(
     parse_rows(model, q.fetch_all(conn).await?)
 }
 
+/// `<id>_amount` and `<id>_currency`.
+fn money_columns(f: &FieldSpec) -> (String, String) {
+    (format!("{}_amount", f.id), format!("{}_currency", f.id))
+}
+
+/// Field values keyed by column: a money value becomes its two columns.
+fn flatten(model: &ModelSpec, mut values: Map<String, Value>) -> Map<String, Value> {
+    for f in model.fields.iter().filter(|f| f.ty == FieldType::Money) {
+        let Some(value) = values.remove(&f.id) else {
+            continue;
+        };
+        let (amount, currency) = money_columns(f);
+        values.insert(amount, value.get("amount").cloned().unwrap_or(Value::Null));
+        values.insert(
+            currency,
+            value.get("currency").cloned().unwrap_or(Value::Null),
+        );
+    }
+    values
+}
+
+/// The columns of `model` that `values` (flattened) sets.
 fn writable(model: &ModelSpec, values: &Map<String, Value>) -> Vec<String> {
     model
         .fields
         .iter()
-        .filter(|f| values.contains_key(&f.id))
-        .map(|f| f.id.clone())
+        .flat_map(|f| match f.ty {
+            FieldType::Money => {
+                let (amount, currency) = money_columns(f);
+                vec![amount, currency]
+            }
+            _ => vec![f.id.clone()],
+        })
+        .filter(|column| values.contains_key(column))
         .collect()
 }
 
@@ -1656,9 +1716,10 @@ async fn insert(
     conn: &mut PgConnection,
     model: &Arc<ModelSpec>,
     scope: &Scope,
-    mut values: Map<String, Value>,
+    values: Map<String, Value>,
 ) -> Result<Row, Problem> {
     check_references(conn, model, scope, &values).await?;
+    let mut values = flatten(model, values);
     let mut cols = vec!["id".to_owned()];
     values.insert("id".into(), json!(Uuid::now_v7()));
     if let Some((col, t)) = &scope.tenant {
@@ -1692,6 +1753,7 @@ async fn update(
     expected_version: Option<i64>,
 ) -> Result<Option<Row>, Problem> {
     check_references(conn, model, scope, &values).await?;
+    let values = flatten(model, values);
     let cols = writable(model, &values);
     let mut set = vec!["version = t.version + 1".to_owned()];
     if !cols.is_empty() {

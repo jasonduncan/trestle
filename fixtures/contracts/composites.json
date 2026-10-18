@@ -1,0 +1,434 @@
+{
+  "contract": "fixtures.composites.input",
+  "version": "1",
+  "profile": "trestle.portable@1",
+  "about": "Accept/reject fixtures for money and references (ADR-027). Same checks as scalars.json: the IR exports exactly `schema`, the server gives each `expect` (with `normalized`), an independent JSON Schema validator accepts exactly the 201 cases, and the browser agrees. `errors` lists [pointer, code] in response order.",
+  "ir": {
+    "fields": {
+      "account": {
+        "model": "crm.account",
+        "nullable": false,
+        "required": true,
+        "type": "reference"
+      },
+      "fee": {
+        "currencies": [
+          "EUR",
+          "USD"
+        ],
+        "nullable": true,
+        "precision": 6,
+        "required": false,
+        "scale": 2,
+        "type": "money"
+      },
+      "price": {
+        "nullable": false,
+        "precision": 10,
+        "required": true,
+        "scale": 2,
+        "type": "money"
+      }
+    },
+    "id": "fixtures.composites.input",
+    "kind": "input",
+    "profile": "trestle.portable@1",
+    "version": "1"
+  },
+  "schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "account": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "fee": {
+        "additionalProperties": false,
+        "properties": {
+          "amount": {
+            "pattern": "^-?(0|[1-9][0-9]{0,3})(\\.[0-9]{1,2})?$",
+            "type": "string"
+          },
+          "currency": {
+            "enum": [
+              "EUR",
+              "USD"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "amount",
+          "currency"
+        ],
+        "type": [
+          "object",
+          "null"
+        ]
+      },
+      "price": {
+        "additionalProperties": false,
+        "properties": {
+          "amount": {
+            "pattern": "^-?(0|[1-9][0-9]{0,7})(\\.[0-9]{1,2})?$",
+            "type": "string"
+          },
+          "currency": {
+            "pattern": "^[A-Z]{3}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "amount",
+          "currency"
+        ],
+        "type": "object"
+      }
+    },
+    "required": [
+      "account",
+      "price"
+    ],
+    "type": "object"
+  },
+  "cases": [
+    {
+      "name": "minimal valid",
+      "input": {
+        "price": {
+          "amount": "12.50",
+          "currency": "USD"
+        },
+        "account": "00000000-0000-4000-8000-0000000000a1"
+      },
+      "expect": {
+        "status": 201,
+        "normalized": {
+          "price": {
+            "amount": "12.50",
+            "currency": "USD"
+          },
+          "account": "00000000-0000-4000-8000-0000000000a1"
+        }
+      }
+    },
+    {
+      "name": "a listed currency and a null optional",
+      "input": {
+        "price": {
+          "amount": "-3",
+          "currency": "JPY"
+        },
+        "fee": {
+          "amount": "9999.99",
+          "currency": "EUR"
+        },
+        "account": "00000000-0000-4000-8000-0000000000a1"
+      },
+      "expect": {
+        "status": 201
+      }
+    },
+    {
+      "name": "null fee",
+      "input": {
+        "price": {
+          "amount": "0",
+          "currency": "USD"
+        },
+        "fee": null,
+        "account": "00000000-0000-4000-8000-0000000000a1"
+      },
+      "expect": {
+        "status": 201,
+        "normalized": {
+          "price": {
+            "amount": "0",
+            "currency": "USD"
+          },
+          "fee": null,
+          "account": "00000000-0000-4000-8000-0000000000a1"
+        }
+      }
+    },
+    {
+      "name": "an amount alone is not money",
+      "input": {
+        "price": "12.50",
+        "account": "00000000-0000-4000-8000-0000000000a1"
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_body_shape",
+        "errors": [
+          [
+            "/price",
+            "type"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "a number amount",
+      "input": {
+        "price": {
+          "amount": 12.5,
+          "currency": "USD"
+        },
+        "account": "00000000-0000-4000-8000-0000000000a1"
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_body_shape",
+        "errors": [
+          [
+            "/price/amount",
+            "type"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "missing currency",
+      "input": {
+        "price": {
+          "amount": "1"
+        },
+        "account": "00000000-0000-4000-8000-0000000000a1"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/price/currency",
+            "required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "an empty object",
+      "input": {
+        "price": {},
+        "account": "00000000-0000-4000-8000-0000000000a1"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/price/amount",
+            "required"
+          ],
+          [
+            "/price/currency",
+            "required"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "null amount",
+      "input": {
+        "price": {
+          "amount": null,
+          "currency": "USD"
+        },
+        "account": "00000000-0000-4000-8000-0000000000a1"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/price/amount",
+            "not_nullable"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "too many decimals",
+      "input": {
+        "price": {
+          "amount": "1.234",
+          "currency": "USD"
+        },
+        "account": "00000000-0000-4000-8000-0000000000a1"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/price/amount",
+            "decimal_digits"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "lowercase currency",
+      "input": {
+        "price": {
+          "amount": "1",
+          "currency": "usd"
+        },
+        "account": "00000000-0000-4000-8000-0000000000a1"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/price/currency",
+            "format"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "two-letter currency",
+      "input": {
+        "price": {
+          "amount": "1",
+          "currency": "US"
+        },
+        "account": "00000000-0000-4000-8000-0000000000a1"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/price/currency",
+            "format"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "an unlisted currency",
+      "input": {
+        "price": {
+          "amount": "1",
+          "currency": "USD"
+        },
+        "fee": {
+          "amount": "1",
+          "currency": "GBP"
+        },
+        "account": "00000000-0000-4000-8000-0000000000a1"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/fee/currency",
+            "choice"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "another member",
+      "input": {
+        "price": {
+          "amount": "1",
+          "currency": "USD",
+          "note": "x"
+        },
+        "account": "00000000-0000-4000-8000-0000000000a1"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/price/note",
+            "unknown_field"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "price cannot be null",
+      "input": {
+        "price": null,
+        "account": "00000000-0000-4000-8000-0000000000a1"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/price",
+            "not_nullable"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "a reference is a uuid",
+      "input": {
+        "price": {
+          "amount": "1",
+          "currency": "USD"
+        },
+        "account": "acct-1"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/account",
+            "format"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "every error, in field order",
+      "input": {
+        "price": {
+          "amount": "x"
+        },
+        "fee": {
+          "amount": "1.234",
+          "currency": "GBP"
+        },
+        "account": "no"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/account",
+            "format"
+          ],
+          [
+            "/fee/amount",
+            "decimal_digits"
+          ],
+          [
+            "/fee/currency",
+            "choice"
+          ],
+          [
+            "/price/amount",
+            "format"
+          ],
+          [
+            "/price/currency",
+            "required"
+          ]
+        ]
+      }
+    }
+  ]
+}
