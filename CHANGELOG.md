@@ -99,6 +99,16 @@ promise.
   is left out when false. A `NOT VALID` check, and a `CONCURRENTLY` index
   in a non-atomic migration, are no longer `existing_table_lock`.
 
+- Portable scalar types in contracts (ADR-022): `Field::decimal(name,
+  precision, scale)`, `Field::date`, `Field::instant` and `Field::duration`.
+  - **Wire form:** each is a JSON string with one syntax. Decimals are never
+    JSON numbers, and instants are normalized to UTC.
+  - **Everywhere at once:** the server, the JSON Schema export and the
+    browser validator agree on `fixtures/contracts/scalars.json`.
+  - **Forms:** new widgets `decimal`, `date`, `datetime` and `duration`,
+    which require `forms.decimal@1` or `forms.temporal@1`.
+  - **SDK:** they are `string` in the generated TypeScript.
+
 ### Changed
 - **Breaking:** `DataStep::run` is a `DataRun` (`Once` or `Batched`).
   Build one-shot steps with `DataStep::once(name, source, f)`, or write

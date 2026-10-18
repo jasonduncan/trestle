@@ -1,0 +1,459 @@
+{
+  "contract": "fixtures.scalars.input",
+  "version": "1",
+  "profile": "trestle.portable@1",
+  "about": "Accept/reject fixtures for the portable scalar types (ADR-022): decimal, date, instant, duration. The Rust test checks that `ir` exports exactly `schema`, that the server's validation gives each `expect` (with `normalized`, the value it returns), and that an independent JSON Schema validator accepts exactly the 201 cases; the browser test decodes `schema` and must agree. `errors` lists [pointer, code] in response order.",
+  "ir": {
+    "fields": {
+      "at": {
+        "nullable": true,
+        "required": false,
+        "type": "instant"
+      },
+      "due": {
+        "nullable": false,
+        "required": false,
+        "type": "date"
+      },
+      "length": {
+        "nullable": false,
+        "required": false,
+        "type": "duration"
+      },
+      "price": {
+        "nullable": false,
+        "precision": 10,
+        "required": true,
+        "scale": 2,
+        "type": "decimal"
+      },
+      "rate": {
+        "nullable": false,
+        "precision": 3,
+        "required": false,
+        "scale": 3,
+        "type": "decimal"
+      }
+    },
+    "id": "fixtures.scalars.input",
+    "kind": "input",
+    "profile": "trestle.portable@1",
+    "version": "1"
+  },
+  "schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "at": {
+        "format": "date-time",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "due": {
+        "format": "date",
+        "type": "string"
+      },
+      "length": {
+        "format": "duration",
+        "pattern": "^P([0-9]+D(T([0-9]+H([0-9]+M)?([0-9]+S)?|[0-9]+M([0-9]+S)?|[0-9]+S))?|T([0-9]+H([0-9]+M)?([0-9]+S)?|[0-9]+M([0-9]+S)?|[0-9]+S))$",
+        "type": "string"
+      },
+      "price": {
+        "pattern": "^-?(0|[1-9][0-9]{0,7})(\\.[0-9]{1,2})?$",
+        "type": "string"
+      },
+      "rate": {
+        "pattern": "^-?0(\\.[0-9]{1,3})?$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "price"
+    ],
+    "type": "object"
+  },
+  "cases": [
+    {
+      "name": "minimal valid",
+      "input": {
+        "price": "12.50"
+      },
+      "expect": {
+        "status": 201
+      }
+    },
+    {
+      "name": "every field, offsets normalized to UTC",
+      "input": {
+        "price": "-99999999.99",
+        "rate": "0.125",
+        "due": "2024-02-29",
+        "at": "2026-10-17T09:30:00.5+02:00",
+        "length": "P1DT2H30M"
+      },
+      "expect": {
+        "status": 201,
+        "normalized": {
+          "price": "-99999999.99",
+          "rate": "0.125",
+          "due": "2024-02-29",
+          "at": "2026-10-17T07:30:00.5Z",
+          "length": "P1DT2H30M"
+        }
+      }
+    },
+    {
+      "name": "an instant crossing midnight and a leap day",
+      "input": {
+        "price": "0",
+        "at": "2024-03-01T00:15:00+01:00"
+      },
+      "expect": {
+        "status": 201,
+        "normalized": {
+          "price": "0",
+          "at": "2024-02-29T23:15:00Z"
+        }
+      }
+    },
+    {
+      "name": "null instant",
+      "input": {
+        "price": "1",
+        "at": null
+      },
+      "expect": {
+        "status": 201,
+        "normalized": {
+          "price": "1",
+          "at": null
+        }
+      }
+    },
+    {
+      "name": "whole numbers and zero",
+      "input": {
+        "price": "0",
+        "rate": "0"
+      },
+      "expect": {
+        "status": 201
+      }
+    },
+    {
+      "name": "a JSON number is not a decimal",
+      "input": {
+        "price": 12.5
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_body_shape",
+        "errors": [
+          [
+            "/price",
+            "type"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "exponent",
+      "input": {
+        "price": "1e3"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/price",
+            "format"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "leading zero",
+      "input": {
+        "price": "01.5"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/price",
+            "format"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "plus sign",
+      "input": {
+        "price": "+1"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/price",
+            "format"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "bare point",
+      "input": {
+        "price": "1."
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/price",
+            "format"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "too many digits before the point",
+      "input": {
+        "price": "123456789.00"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/price",
+            "decimal_digits"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "too many digits after the point",
+      "input": {
+        "price": "1.234"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/price",
+            "decimal_digits"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "scale equal to precision allows only a fraction",
+      "input": {
+        "price": "1",
+        "rate": "1.0"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/rate",
+            "decimal_digits"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "not a leap year",
+      "input": {
+        "price": "1",
+        "due": "2023-02-29"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/due",
+            "format"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "unpadded month",
+      "input": {
+        "price": "1",
+        "due": "2026-1-01"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/due",
+            "format"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "a date is not a date-time",
+      "input": {
+        "price": "1",
+        "due": "2026-10-17T00:00:00Z"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/due",
+            "format"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "an instant needs an offset",
+      "input": {
+        "price": "1",
+        "at": "2026-10-17T09:30:00"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/at",
+            "format"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "hour 24",
+      "input": {
+        "price": "1",
+        "at": "2026-10-17T24:00:00Z"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/at",
+            "format"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "years and months are not exact",
+      "input": {
+        "price": "1",
+        "length": "P1Y"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/length",
+            "format"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "weeks are not in the subset",
+      "input": {
+        "price": "1",
+        "length": "P2W"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/length",
+            "format"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "a T needs a time part",
+      "input": {
+        "price": "1",
+        "length": "P1DT"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/length",
+            "format"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "dates and durations are strings",
+      "input": {
+        "price": "1",
+        "due": 20261017,
+        "length": 30
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_body_shape",
+        "errors": [
+          [
+            "/due",
+            "type"
+          ],
+          [
+            "/length",
+            "type"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "every error, in field order (the IR sorts fields by name)",
+      "input": {
+        "price": "x",
+        "due": "bad",
+        "length": "PT"
+      },
+      "expect": {
+        "status": 422,
+        "code": "validation_failed",
+        "errors": [
+          [
+            "/due",
+            "format"
+          ],
+          [
+            "/length",
+            "format"
+          ],
+          [
+            "/price",
+            "format"
+          ]
+        ]
+      }
+    }
+  ]
+}

@@ -17,6 +17,8 @@ export const SUPPORTED_FEATURES: ReadonlySet<string> = new Set([
   "http.json@1",
   "forms.relation@1",
   "http.precondition@1",
+  "forms.decimal@1",
+  "forms.temporal@1",
 ]);
 
 /** Same numbers as `trestle_protocol::limits` (§8.5). */
@@ -29,6 +31,25 @@ export const LIMITS = {
 const FORBIDDEN_NAMES = new Set(["__proto__", "constructor", "prototype"]);
 const FIELD_NAME = /^[a-z][a-z0-9_]*$/;
 const DIGITS_PATTERN = "^[0-9]+$";
+/** `trestle_protocol::scalar::DURATION_PATTERN`, character for character. */
+export const DURATION_PATTERN =
+  "^P([0-9]+D(T([0-9]+H([0-9]+M)?([0-9]+S)?|[0-9]+M([0-9]+S)?|[0-9]+S))?|T([0-9]+H([0-9]+M)?([0-9]+S)?|[0-9]+M([0-9]+S)?|[0-9]+S))$";
+
+/** The pattern `trestle_protocol::scalar::decimal_pattern` writes. */
+export function decimalPattern(precision: number, scale: number): string {
+  const whole = precision - scale === 0 ? "0" : `(0|[1-9][0-9]{0,${precision - scale - 1}})`;
+  const fraction = scale === 0 ? "" : `(\\.[0-9]{1,${scale}})?`;
+  return `^-?${whole}${fraction}$`;
+}
+
+/** Precision and scale of a pattern only `decimalPattern` produces. */
+function decimalDigits(pattern: string): { precision: number; scale: number } | undefined {
+  const m = /^\^-\?(?:0|\(0\|\[1-9\]\[0-9\]\{0,(\d+)\}\))(?:\(\\\.\[0-9\]\{1,(\d+)\}\)\?)?\$$/.exec(pattern);
+  if (!m) return undefined;
+  const scale = m[2] === undefined ? 0 : Number(m[2]);
+  const precision = (m[1] === undefined ? 0 : Number(m[1]) + 1) + scale;
+  return decimalPattern(precision, scale) === pattern && precision >= 1 && precision <= 38 ? { precision, scale } : undefined;
+}
 
 export type FieldKind = "string" | "integer" | "boolean";
 
@@ -42,7 +63,11 @@ export interface FieldSchema {
   minimum?: number;
   maximum?: number;
   choices?: string[];
-  format?: "uuid" | "digits";
+  /** Portable string formats (ADR-022 adds decimal, date, date-time, duration). */
+  format?: "uuid" | "digits" | "decimal" | "date" | "date-time" | "duration";
+  /** For `decimal`: total and fractional digits. */
+  precision?: number;
+  scale?: number;
   description?: string;
 }
 
@@ -168,14 +193,25 @@ function decodeField(name: string, raw: unknown, required: boolean): FieldSchema
     field.choices = s.enum.filter((v) => v !== null).map((v) => string(v, `${name}.enum value`));
   }
   if (s.format !== undefined) {
-    if (s.format !== "uuid") fail(`${name}: unsupported format ${JSON.stringify(s.format)}`);
-    field.format = "uuid";
+    if (s.format !== "uuid" && s.format !== "date" && s.format !== "date-time" && s.format !== "duration") {
+      fail(`${name}: unsupported format ${JSON.stringify(s.format)}`);
+    }
+    field.format = s.format;
   }
   if (s.pattern !== undefined) {
-    // Arbitrary regexes stay server-side (§5.4); only the digits profile is portable.
-    if (s.pattern !== DIGITS_PATTERN) fail(`${name}: unsupported pattern`);
-    field.format = "digits";
+    // Arbitrary regexes stay server-side (§5.4). The portable patterns are
+    // digits, decimals and the duration subset, exactly as the server writes them.
+    const digits = typeof s.pattern === "string" ? decimalDigits(s.pattern) : undefined;
+    if (s.pattern === DIGITS_PATTERN && field.format === undefined) field.format = "digits";
+    else if (s.pattern === DURATION_PATTERN && field.format === "duration") {
+      // The format says what it is; the pattern narrows it to the subset.
+    } else if (digits && field.format === undefined) {
+      field.format = "decimal";
+      field.precision = digits.precision;
+      field.scale = digits.scale;
+    } else fail(`${name}: unsupported pattern`);
   }
+  if (field.format === "duration" && s.pattern !== DURATION_PATTERN) fail(`${name}: duration needs its pattern`);
   const lengthOnString = field.minLength !== undefined || field.maxLength !== undefined || field.format !== undefined;
   if (lengthOnString && field.kind !== "string") fail(`${name}: string keywords on a ${field.kind} field`);
   if ((field.minimum !== undefined || field.maximum !== undefined) && field.kind !== "integer") {

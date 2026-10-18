@@ -1,6 +1,7 @@
 # ADR-002: Contract authority and schema toolchain
 
-**Status:** Accepted (M1, 2026-09-26) · **Design doc:** §3.3, §5, §11.1, I02
+**Status:** Accepted (M1, 2026-09-26) · **Design doc:** §3.3, §5, §11.1, I02 ·
+**Amended by:** ADR-022 (decimal, date, instant, duration)
 
 ## Context
 

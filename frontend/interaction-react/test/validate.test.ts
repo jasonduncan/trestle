@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { decodeDescriptor } from "../src/protocol";
+import { decimalPattern, decodeDescriptor, decodeObjectSchema, DURATION_PATTERN } from "../src/protocol";
 import { codePoints, validateInstance } from "../src/validate";
 import { publishedDescriptor, repoJson } from "./support";
 
@@ -43,3 +43,51 @@ describe("trestle.portable@1 in the browser", () => {
     expect(codePoints("é")).toBe(2);
   });
 });
+
+// ADR-022: decimals, dates, instants and durations, from the same fixture
+// the Rust test checks against the server and an independent validator.
+const scalars = repoJson("fixtures/contracts/scalars.json");
+
+describe("portable scalar types in the browser", () => {
+  const input = decodeObjectSchema(scalars.schema, "scalars");
+
+  it("decodes each type from the schema the server exports", () => {
+    const byName = Object.fromEntries(input.fields.map((f) => [f.name, f]));
+    expect(byName.price).toMatchObject({ format: "decimal", precision: 10, scale: 2, required: true });
+    expect(byName.rate).toMatchObject({ format: "decimal", precision: 3, scale: 3 });
+    expect(byName.due?.format).toBe("date");
+    expect(byName.at).toMatchObject({ format: "date-time", nullable: true });
+    expect(byName.length?.format).toBe("duration");
+  });
+
+  for (const testCase of scalars.cases) {
+    it(`agrees with the server: ${testCase.name}`, () => {
+      const result = validateInstance(input, testCase.input);
+      if (testCase.expect.status === 201) {
+        expect(result.ok).toBe(true);
+        return;
+      }
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.status).toBe(testCase.expect.status);
+      expect(result.code).toBe(testCase.expect.code);
+      const pairs = result.errors.map((e) => [e.pointer, e.code]).sort();
+      expect(pairs).toEqual([...(testCase.expect.errors ?? [])].sort());
+    });
+  }
+
+  it("accepts only the patterns the server writes", () => {
+    expect(decimalPattern(10, 2)).toBe(scalars.schema.properties.price.pattern);
+    expect(DURATION_PATTERN).toBe(scalars.schema.properties.length.pattern);
+    const decode = (pattern: string, format?: string) =>
+      decodeObjectSchema(
+        { type: "object", additionalProperties: false, required: [], properties: { x: { type: "string", pattern, ...(format ? { format } : {}) } } },
+        "probe",
+      );
+    expect(() => decode("^-?(0|[1-9][0-9]{0,7})(\\.[0-9]{1,3})?$")).not.toThrow();
+    expect(() => decode("^[a-z]+$")).toThrow(/unsupported pattern/);
+    expect(() => decode("^-?(0|[1-9][0-9]{0,7})(\\.[0-9]{1,2})$")).toThrow(/unsupported pattern/);
+    expect(() => decode("^P[0-9]+D$", "duration")).toThrow();
+  });
+});
+
