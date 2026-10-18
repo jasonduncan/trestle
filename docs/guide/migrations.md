@@ -64,6 +64,23 @@ How a run proceeds:
 Non-atomic migrations always need approval in automated deploys. See the
 reconciler contract.
 
+### Generated online changes (`makemigrations --online`)
+
+`makemigrations --online` writes the online forms for you (ADR-021). Each
+app's change becomes two migrations:
+
+1. An atomic `NNNN_<name>` with everything else. A check added to an
+   existing table is added `NOT VALID`, which reads no rows; new writes are
+   checked from then on.
+2. A non-atomic `NNNN_<name>_online`. It builds each index on an existing
+   table with `CREATE INDEX CONCURRENTLY IF NOT EXISTS`, then runs
+   `VALIDATE CONSTRAINT` for each new check.
+
+Neither blocks writes while it reads existing rows. If validation finds a
+row that breaks the check, the online migration stops `partial`. Fix the
+row and run `migrate` again. Unique constraints and foreign keys on existing
+tables are not generated online yet.
+
 ## Batched data steps (resumable backfills)
 
 A data step normally runs once, inside its migration's transaction. For a

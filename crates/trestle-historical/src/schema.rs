@@ -207,6 +207,17 @@ pub enum StateOp {
         field: String,
         check: Option<Check>,
         check_name: Option<String>,
+        /// Add the new check `NOT VALID` (no scan, existing rows unchecked)
+        /// and validate it later with [`StateOp::ValidateConstraint`]
+        /// (ADR-021). Omitted when false.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        not_valid: bool,
+    },
+    /// `VALIDATE CONSTRAINT` for a check added `NOT VALID`: scans the table
+    /// without blocking writes. Changes no state.
+    ValidateConstraint {
+        model: String,
+        name: String,
     },
     /// One-off value for existing rows where the field is null. Changes no
     /// state; frozen into the artifact, never read from current code.
@@ -244,6 +255,7 @@ impl StateOp {
             | StateOp::RenameColumn { model, .. }
             | StateOp::AlterNullability { model, .. }
             | StateOp::AlterCheck { model, .. }
+            | StateOp::ValidateConstraint { model, .. }
             | StateOp::Backfill { model, .. }
             | StateOp::AddUnique { model, .. }
             | StateOp::RemoveUnique { model, .. }
@@ -338,6 +350,7 @@ impl SchemaState {
                 field,
                 check,
                 check_name,
+                ..
             } => {
                 let f = self.model_mut(model)?.field_mut(field)?;
                 f.check = check.clone();
@@ -345,6 +358,9 @@ impl SchemaState {
             }
             StateOp::Backfill { model, field, .. } => {
                 self.model_mut(model)?.field_mut(field)?;
+            }
+            StateOp::ValidateConstraint { model, .. } => {
+                self.model_mut(model)?;
             }
             StateOp::AddUnique { model, unique } => {
                 self.model_mut(model)?.unique.push(unique.clone())

@@ -227,6 +227,7 @@ fn render_op(state: &SchemaState, op: &StateOp) -> Result<String, String> {
             field: fid,
             check,
             check_name,
+            not_valid,
         } => {
             let m = model(state, id)?;
             let f = field(m, fid)?;
@@ -243,9 +244,10 @@ fn render_op(state: &SchemaState, op: &StateOp) -> Result<String, String> {
                     .as_deref()
                     .ok_or("new check needs a constraint name")?;
                 parts.push(format!(
-                    "ALTER TABLE {table} ADD CONSTRAINT {} CHECK ({});",
+                    "ALTER TABLE {table} ADD CONSTRAINT {} CHECK ({}){};",
                     ident(name)?,
-                    check_sql(ident(&f.column)?, check)?
+                    check_sql(ident(&f.column)?, check)?,
+                    if *not_valid { " NOT VALID" } else { "" }
                 ));
             }
             parts.join("\n")
@@ -290,7 +292,42 @@ fn render_op(state: &SchemaState, op: &StateOp) -> Result<String, String> {
             )
         }
         StateOp::RemoveIndex { name, .. } => format!("DROP INDEX {};", ident(name)?),
+        StateOp::ValidateConstraint { model: id, name } => format!(
+            "ALTER TABLE {} VALIDATE CONSTRAINT {};",
+            ident(&model(state, id)?.table)?,
+            ident(name)?
+        ),
     })
+}
+
+/// SQL for the second half of an online change (ADR-021): one step per
+/// operation, each safe outside a transaction and safe to repeat.
+pub fn render_online(before: &SchemaState, ops: &[StateOp]) -> Result<String, String> {
+    let mut steps = Vec::new();
+    for op in ops {
+        steps.push(match op {
+            StateOp::AddIndex { model: id, index } => {
+                let m = model(before, id)?;
+                format!(
+                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS {} ON {} ({});",
+                    ident(&index.name)?,
+                    ident(&m.table)?,
+                    columns(m, &index.fields)?
+                )
+            }
+            StateOp::ValidateConstraint { .. } => render_op(before, op)?,
+            other => {
+                return Err(format!(
+                    "{} cannot run outside a transaction",
+                    serde_json::to_value(other)
+                        .ok()
+                        .and_then(|v| v["op"].as_str().map(str::to_owned))
+                        .unwrap_or_default()
+                ));
+            }
+        });
+    }
+    Ok(steps.join(&format!("\n{}\n", crate::STEP_MARKER)))
 }
 
 /// SQL for `ops` applied in order to `before`.
