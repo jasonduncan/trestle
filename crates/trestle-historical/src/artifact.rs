@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
+use crate::classify;
 use crate::planner::{AppChange, Plan};
 use crate::schema::{SchemaState, StateOp};
 use crate::{HistoryError, Manifest, MigrationSet, sql};
@@ -119,13 +120,23 @@ pub fn generate(
                 depends_on.push(dep);
             }
         }
-        let rendered = sql::render(&state, &change.ops)
+        let (ops, online) = if plan.online {
+            split_online(&state, &change.ops)
+        } else {
+            (change.ops.clone(), Vec::new())
+        };
+        if ops.is_empty() && !online.is_empty() {
+            // Only indexes changed: the online half is the whole change.
+            let id = format!("{id}_online");
+            push_online(&mut artifacts, &mut state, change, id, depends_on, online)?;
+            continue;
+        }
+        let rendered = sql::render(&state, &ops)
             .map_err(|e| HistoryError::State(format!("{}.{id}: {e}", change.app)))?;
-        for op in &change.ops {
+        for op in &ops {
             state.apply(op).map_err(HistoryError::State)?;
         }
-        let approved_destructive = change
-            .ops
+        let approved_destructive = ops
             .iter()
             .filter_map(|op| match op {
                 StateOp::RemoveModel { model } => Some(model.clone()),
@@ -139,7 +150,7 @@ pub fn generate(
                 app: change.app.clone(),
                 id: id.clone(),
                 depends_on,
-                operations: change.ops.clone(),
+                operations: ops,
                 data: None,
                 approved_destructive,
                 notes: change.notes.clone(),
@@ -154,8 +165,91 @@ pub fn generate(
                 change.app
             ),
         });
+        if !online.is_empty() {
+            let next = format!("{:04}_{name}_online", set.next_number(&change.app) + 1);
+            let after = vec![format!("{}.{id}", change.app)];
+            push_online(&mut artifacts, &mut state, change, next, after, online)?;
+        }
     }
     Ok(artifacts)
+}
+
+/// The second half of an online change: index builds and validation, one
+/// step each, outside a transaction.
+fn push_online(
+    artifacts: &mut Vec<Artifact>,
+    state: &mut SchemaState,
+    change: &AppChange,
+    id: String,
+    depends_on: Vec<String>,
+    ops: Vec<StateOp>,
+) -> Result<(), HistoryError> {
+    let sql = classify::generated_online_sql(&change.app, &id, state, &ops)
+        .ok_or_else(|| HistoryError::State(format!("{}.{id}: cannot render", change.app)))?;
+    for op in &ops {
+        state.apply(op).map_err(HistoryError::State)?;
+    }
+    artifacts.push(Artifact {
+        manifest: Manifest {
+            format: 2,
+            app: change.app.clone(),
+            id,
+            depends_on,
+            operations: ops,
+            data: None,
+            approved_destructive: Vec::new(),
+            notes: vec![
+                "online: builds indexes CONCURRENTLY and validates checks without blocking writes"
+                    .into(),
+            ],
+            atomic: false,
+            lock_timeout: None,
+            statement_timeout: None,
+            fence: false,
+            preconditions: Vec::new(),
+        },
+        sql,
+    });
+    Ok(())
+}
+
+/// Splits one app's operations for an online change (ADR-021): indexes on
+/// tables that already exist move to a second, non-atomic migration, and
+/// checks added to them become `NOT VALID` there validated. Everything else
+/// stays in the first, atomic migration.
+fn split_online(before: &SchemaState, ops: &[StateOp]) -> (Vec<StateOp>, Vec<StateOp>) {
+    let mut now = Vec::new();
+    let mut later = Vec::new();
+    let mut validate = Vec::new();
+    for op in ops {
+        let existing = before.model(op.model()).is_some();
+        match op {
+            StateOp::AddIndex { .. } if existing => later.push(op.clone()),
+            StateOp::AlterCheck {
+                model,
+                field,
+                check: Some(check),
+                check_name: Some(name),
+                ..
+            } if existing => {
+                now.push(StateOp::AlterCheck {
+                    model: model.clone(),
+                    field: field.clone(),
+                    check: Some(check.clone()),
+                    check_name: Some(name.clone()),
+                    not_valid: true,
+                });
+                validate.push(StateOp::ValidateConstraint {
+                    model: model.clone(),
+                    name: name.clone(),
+                });
+            }
+            _ => now.push(op.clone()),
+        }
+    }
+    // Index builds first, then validation.
+    later.extend(validate);
+    (now, later)
 }
 
 /// A data-only migration skeleton that runs the named data step.

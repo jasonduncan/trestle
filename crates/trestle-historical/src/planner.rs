@@ -25,6 +25,10 @@ pub struct PlanOptions {
     /// required. PostgreSQL still refuses `SET NOT NULL` if a null remains,
     /// and the migration then rolls back.
     pub filled: BTreeSet<String>,
+    /// Build indexes on existing tables `CONCURRENTLY` and add checks on
+    /// them `NOT VALID`, validating in a second, non-atomic migration
+    /// (ADR-021), so writes are not blocked while existing rows are read.
+    pub online: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -40,6 +44,8 @@ pub struct Plan {
     pub changes: Vec<AppChange>,
     /// Reasons generation must stop. A blocked plan writes nothing.
     pub blocked: Vec<String>,
+    /// From [`PlanOptions::online`].
+    pub online: bool,
 }
 
 impl Plan {
@@ -212,6 +218,7 @@ pub fn diff(history: &SchemaState, desired: &SchemaState, options: &PlanOptions)
             })
             .collect(),
         blocked,
+        online: options.online,
     }
 }
 
@@ -328,6 +335,7 @@ fn alter_field(
             field: id.clone(),
             check: d.check.clone(),
             check_name,
+            not_valid: false,
         });
         note(
             notes,

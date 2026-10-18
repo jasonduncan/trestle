@@ -88,6 +88,17 @@ promise.
     `artifact::empty_batched`, writes the data-only `"atomic": false`
     migration.
 
+- `makemigrations --online` (`PlanOptions::online`, ADR-021) splits a
+  change into two migrations:
+  - **Atomic:** everything else, with checks on existing tables added
+    `NOT VALID`.
+  - **Non-atomic `_online`:** `CREATE INDEX CONCURRENTLY IF NOT EXISTS` for
+    each index on an existing table, then `VALIDATE CONSTRAINT`.
+
+  New `StateOp::ValidateConstraint` and `AlterCheck::not_valid`; the field
+  is left out when false. A `NOT VALID` check, and a `CONCURRENTLY` index
+  in a non-atomic migration, are no longer `existing_table_lock`.
+
 ### Changed
 - **Breaking:** `DataStep::run` is a `DataRun` (`Once` or `Batched`).
   Build one-shot steps with `DataStep::once(name, source, f)`, or write

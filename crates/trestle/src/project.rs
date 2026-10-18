@@ -630,6 +630,10 @@ enum BuiltIn<X: Args> {
         /// become required.
         #[arg(long, value_name = "FIELD_ID")]
         filled: Vec<String>,
+        /// Build indexes on existing tables CONCURRENTLY and validate new
+        /// checks separately, in a second, non-atomic migration (ADR-021).
+        #[arg(long, conflicts_with = "empty")]
+        online: bool,
         /// Create a data-only migration in --app that runs data step --data.
         #[arg(long, requires_all = ["app", "data"])]
         empty: bool,
@@ -988,6 +992,7 @@ where
             name,
             allow_destructive,
             filled,
+            online,
             empty,
             batched,
             app,
@@ -1021,6 +1026,7 @@ where
             let options = PlanOptions {
                 allow_destructive: allow_destructive.into_iter().collect(),
                 filled: filled.into_iter().collect(),
+                online,
                 ..Default::default()
             };
             let (set, plan) = migration_plan(registry, history()?, options)?;

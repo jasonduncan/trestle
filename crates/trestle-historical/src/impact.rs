@@ -201,6 +201,7 @@ pub async fn impact(
             StateOp::AddField { .. } => ("add_column", None, None, false),
             StateOp::AddIndex { .. } => ("index", None, None, false),
             StateOp::AlterCheck { .. } => ("check", None, None, false),
+            StateOp::ValidateConstraint { .. } => ("validate", None, None, false),
             StateOp::RenameTable { .. } | StateOp::RenameColumn { .. } => {
                 ("rename", None, None, false)
             }

@@ -64,7 +64,7 @@ Anything else needs approval. These are the reason codes:
 | `data_step` | runs a data step or backfill |
 | `hand_sql` | the SQL differs from what the planner renders, or there are no operations to check it against |
 | `rewrite_risk` | volatile default, NOT NULL without a default, or a nullability change |
-| `existing_table_lock` | a new index, unique constraint, foreign key or check on an existing table |
+| `existing_table_lock` | a new index, unique constraint, foreign key or check on an existing table (not a check added `NOT VALID`, nor an index built `CONCURRENTLY` in a non-atomic migration; see ADR-021) |
 | `fence` | `"fence": true`: pauses writes while it runs, then refuses writes from builds without it (ADR-017) |
 
 `migrate` exits 6 without attempting anything when the catalog differs
