@@ -40,7 +40,8 @@ decision for later:
 The intent format now covers what pilot's other apps (lessons, audit) were
 waiting for:
 
-- relations: `type = "ref"`, with tenant-checked writes (ADR-024);
+- relations: `type = "ref"`, with tenant-checked writes (ADR-024), also to
+  another app's model when refs between apps go one way (ADR-032);
 - domain actions: `set`, `when` and `accept` on an endpoint (ADR-025);
 - generated forms: `forms = true` (ADR-026);
 - admin views: `[[admin]]` (ADR-029).

@@ -5,7 +5,7 @@
 //! writes recheck membership inside their transaction (`FOR SHARE`), and
 //! identifiers come only from the validated intent; values are always bound.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -507,6 +507,19 @@ where
         }
         if let Some(t) = &intent.tenancy {
             app.requires(t.name.as_str());
+        }
+        // A ref to another app's model, and the relation picker for it,
+        // need that app first (ADR-032).
+        let mut required = BTreeSet::new();
+        for model in intent.models.iter().filter(|m| m.app == self.id) {
+            for to in model.fields.iter().filter_map(|f| f.to.as_deref()) {
+                if let Some(target) = intent.models.iter().find(|m| m.id == to)
+                    && target.app != self.id
+                    && required.insert(target.app.as_str())
+                {
+                    app.requires(target.app.as_str());
+                }
+            }
         }
         for model in intent.models.iter().filter(|m| m.app == self.id) {
             app.model(model_of(model, intent));

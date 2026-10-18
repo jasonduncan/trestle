@@ -14,6 +14,15 @@ promise.
 
 ## [Unreleased]
 
+### Fixed
+- A `trestle.toml` `ref` to another app's model, and the relation picker
+  its form builds, no longer fail at assembly: the generated app requires
+  the app its refs point to (ADR-032).
+
+### Changed
+- Refs between apps must go one way. A circle of apps referring to each
+  other's models is a parse problem that names the circle (ADR-032).
+
 ## [0.5.0] - 2026-10-18
 
 ### Added
