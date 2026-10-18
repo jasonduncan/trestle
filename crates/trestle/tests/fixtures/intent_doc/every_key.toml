@@ -1,0 +1,86 @@
+# Uses every key of trestle.toml, so tests/intent_doc.rs catches an
+# IntentDoc that drifts from the file's schema. Add new keys here.
+
+[project]
+name = "crm"
+trestle = "0.5"
+
+[auth]
+passwords = false
+oidc = { issuer = "https://id.example.com", client_id_env = "CRM_OIDC_ID", client_secret_env = "CRM_OIDC_SECRET" }
+
+[tenancy]
+model = "workspace"
+
+[roles]
+admin = ["crm.read", "crm.write", "crm.admin"]
+member = ["crm.read", "crm.write"]
+
+[[models]]
+id = "crm.account"
+table = "client_accounts"
+label = "name"
+fields = [
+  { id = "name", type = "text", min = 1, max = 100, label = "Account name" },
+  { id = "seats", type = "int", min = 0, max = 500, default = 1 },
+  { id = "active", type = "bool", default = true },
+  { id = "external", type = "uuid", optional = true },
+]
+unique = [["name"]]
+
+[[models]]
+id = "crm.deal"
+fields = [
+  { id = "title", type = "text", max = 100 },
+  { id = "amount", type = "money", precision = 10, scale = 2, currencies = ["EUR", "USD"], optional = true },
+  { id = "rate", type = "decimal", precision = 5, scale = 2, optional = true },
+  { id = "account", type = "ref", to = "crm.account" },
+  { id = "stage", type = "enum", values = ["open", "won"], default = "open" },
+  { id = "due", type = "date", optional = true },
+  { id = "closed_at", type = "instant", optional = true },
+  { id = "effort", type = "duration", default = "PT1H" },
+  { id = "reason", type = "text", optional = true },
+]
+
+[[endpoints]]
+model = "crm.account"
+crud = ["list", "get", "create", "update", "delete"]
+read = "crm.read"
+write = "crm.write"
+filter = ["active"]
+order = "-created_at"
+hooks = { validate = "crm::tidy" }
+
+[[endpoints]]
+model = "crm.deal"
+crud = ["list", "get", "create", "update"]
+read = "crm.read"
+write = "crm.write"
+filter = ["stage"]
+forms = true
+
+[[endpoints]]
+id = "crm.flag"
+model = "crm.deal"
+path = "POST /api/v1/deals/{id}/flag"
+permission = "crm.write"
+handler = "crm::flag"
+input = [{ id = "note", type = "text", max = 200 }]
+
+[[endpoints]]
+id = "crm.win"
+model = "crm.deal"
+path = "POST /api/v1/deals/{id}/win"
+permission = "crm.write"
+set = { stage = "won", closed_at = "now" }
+when = { stage = ["open"] }
+accept = ["reason"]
+forms = true
+
+[[admin]]
+model = "crm.deal"
+permission = "crm.admin"
+title = "Deals"
+columns = ["title", "amount", "stage"]
+filters = ["stage"]
+actions = ["crm.win"]

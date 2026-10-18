@@ -29,7 +29,7 @@ and is not self-granted. Open items before a pilot:
 choose how people sign in (password accounts are built; an OIDC provider is optional and only
 mock-tested), send through the real SMTP relay, get external security review (§12.4), and
 validate the edge config (`deploy/Caddyfile`) on a real host. Do not claim general
-maturity or benchmark leadership. ADRs: 001–029 (015 reopens 009: jobs and outbox).
+maturity or benchmark leadership. ADRs: 001–030 (015 reopens 009: jobs and outbox).
 
 ## Non-negotiables
 - Installing a model publishes nothing (I01). Endpoints, forms and writable fields are explicit.
@@ -68,6 +68,10 @@ maturity or benchmark leadership. ADRs: 001–029 (015 reopens 009: jobs and out
   stable IDs only, never app types. Large backfills are `DataStep::batched` (ADR-020): one
   bounded batch per call, checkpoint returned, idempotent per row; its progress must stay in
   the batch's own transaction.
+- `IntentDoc` (ADR-030) is the intent file's schema as public data, key for key, with no
+  validator of its own: it is checked by rendering it and running `intent::parse`. A new
+  intent key goes into both `spec.rs` and `doc.rs`, and into
+  `tests/fixtures/intent_doc/every_key.toml`.
 - Reads use `trestle_core::query::select(scope, ..)`; there is no unscoped variant on purpose.
 - Intent `ref` writes check the target row is in the caller's tenant (`check_references`, ADR-024)
   and report another tenant's row exactly like a missing one; never add a write path around it.
