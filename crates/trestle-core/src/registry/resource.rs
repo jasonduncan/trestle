@@ -6,20 +6,21 @@
 //! normal managed operation, so the executor, contracts and policies apply
 //! exactly as for hand-bound ones. CRUD is opt-in per verb, and domain
 //! actions are explicit (`.action("publish", PublishLesson)`), never
-//! inferred from model fields.
+//! inferred from model fields. Verbs take an [`Operation`] or one built at
+//! runtime (`Arc<dyn DynOperation<S>>`, ADR-029), registered the same way.
 
 use std::sync::Arc;
-
-use axum::extract::FromRef;
-use http::request::Parts;
-use sqlx::PgPool;
-use trestle_protocol::Contract;
 
 use super::{AppBuilder, Http};
 use crate::Problem;
 use crate::identity::{BoxFuture, Identity};
 use crate::invocation::{FromInvocation, Invocation};
-use crate::operation::{Operation, Policy};
+use crate::operation::{DynOperation, DynPolicy, Operation, Policy};
+use axum::extract::FromRef;
+use http::request::Parts;
+use sqlx::PgPool;
+use trestle_protocol::Contract;
+use trestle_protocol::ContractDoc;
 
 /// Conventional field names: responses carry `version`; updates, deletes
 /// and domain actions compare `expected_version`.
@@ -123,7 +124,7 @@ impl AdminView {
 
 pub(crate) struct AdminProfile<S> {
     pub view: AdminView,
-    pub policy: &'static str,
+    pub policy: Arc<str>,
     pub check: AdminCheck<S>,
 }
 
@@ -146,8 +147,53 @@ impl<S> RegisteredResource<S> {
         self.admin.as_ref().map(|a| &a.view)
     }
 
-    pub fn admin_policy(&self) -> Option<&'static str> {
-        self.admin.as_ref().map(|a| a.policy)
+    pub fn admin_policy(&self) -> Option<&str> {
+        self.admin.as_ref().map(|a| &*a.policy)
+    }
+}
+
+/// What a resource verb takes: an [`Operation`] you wrote, or an
+/// `Arc<dyn DynOperation<S>>` built at runtime. Either becomes an ordinary
+/// managed operation.
+pub trait ResourceOp<S> {
+    /// The output contract (a `version` field earns an `ETag`).
+    fn output_contract(&self) -> &ContractDoc;
+    /// Registers the operation with `http`; returns its ID.
+    fn register(self, builder: &mut AppBuilder<S>, http: Http) -> Arc<str>;
+}
+
+impl<S, O> ResourceOp<S> for O
+where
+    S: Clone + Send + Sync + 'static,
+    O: Operation,
+    O::Context: FromInvocation<S>,
+    PgPool: FromRef<S>,
+    Identity: FromRef<S>,
+{
+    fn output_contract(&self) -> &ContractDoc {
+        O::Output::contract()
+    }
+
+    fn register(self, builder: &mut AppBuilder<S>, http: Http) -> Arc<str> {
+        builder.operation(self).http(http);
+        Arc::from(O::INFO.id)
+    }
+}
+
+impl<S> ResourceOp<S> for Arc<dyn DynOperation<S>>
+where
+    S: Clone + Send + Sync + 'static,
+    PgPool: FromRef<S>,
+    Identity: FromRef<S>,
+{
+    fn output_contract(&self) -> &ContractDoc {
+        self.output()
+    }
+
+    fn register(self, builder: &mut AppBuilder<S>, http: Http) -> Arc<str> {
+        let id = Arc::from(&*self.info().id);
+        builder.dyn_operation(self, Some(http));
+        id
     }
 }
 
@@ -160,6 +206,7 @@ impl<S> ResourceRegistration<'_, S>
 where
     S: Clone + Send + Sync + 'static,
     PgPool: FromRef<S>,
+    Identity: FromRef<S>,
 {
     fn resource(&mut self) -> &mut RegisteredResource<S> {
         &mut self.builder.resources[self.index]
@@ -169,28 +216,17 @@ where
         self.builder.resources[self.index].path.clone()
     }
 
-    fn register<O>(&mut self, op: O, http: Http) -> Arc<str>
-    where
-        O: Operation,
-        O::Context: FromInvocation<S>,
-        Identity: FromRef<S>,
-    {
-        let http = if O::Output::contract().get(VERSION_FIELD).is_some() {
+    fn register(&mut self, op: impl ResourceOp<S>, http: Http) -> Arc<str> {
+        let http = if op.output_contract().get(VERSION_FIELD).is_some() {
             http.etag(VERSION_FIELD)
         } else {
             http
         };
-        self.builder.operation(op).http(http);
-        Arc::from(O::INFO.id)
+        op.register(self.builder, http)
     }
 
     /// `GET {path}`: a page of items (output `Page<T>`).
-    pub fn list<O>(mut self, op: O) -> Self
-    where
-        O: Operation,
-        O::Context: FromInvocation<S>,
-        Identity: FromRef<S>,
-    {
+    pub fn list(mut self, op: impl ResourceOp<S>) -> Self {
         let path = self.path();
         let id = self.register(op, Http::get(&*path));
         self.resource().list = Some(id);
@@ -198,12 +234,7 @@ where
     }
 
     /// `POST {path}`: 201 with `Location: {path}/{id}`.
-    pub fn create<O>(mut self, op: O) -> Self
-    where
-        O: Operation,
-        O::Context: FromInvocation<S>,
-        Identity: FromRef<S>,
-    {
+    pub fn create(mut self, op: impl ResourceOp<S>) -> Self {
         let path = self.path();
         let id = self.register(op, Http::post(&*path).created(format!("{path}/{{id}}")));
         self.resource().create = Some(id);
@@ -211,12 +242,7 @@ where
     }
 
     /// `GET {path}/{id}` with an `ETag`.
-    pub fn retrieve<O>(mut self, op: O) -> Self
-    where
-        O: Operation,
-        O::Context: FromInvocation<S>,
-        Identity: FromRef<S>,
-    {
+    pub fn retrieve(mut self, op: impl ResourceOp<S>) -> Self {
         let path = self.path();
         let id = self.register(op, Http::get(format!("{path}/{{id}}")));
         self.resource().retrieve = Some(id);
@@ -225,12 +251,7 @@ where
 
     /// `PATCH {path}/{id}`; `If-Match` required and passed as
     /// `expected_version`.
-    pub fn update<O>(mut self, op: O) -> Self
-    where
-        O: Operation,
-        O::Context: FromInvocation<S>,
-        Identity: FromRef<S>,
-    {
+    pub fn update(mut self, op: impl ResourceOp<S>) -> Self {
         let path = self.path();
         let http = Http::patch(format!("{path}/{{id}}")).if_match(EXPECTED_VERSION_FIELD);
         let id = self.register(op, http);
@@ -239,31 +260,30 @@ where
     }
 
     /// `DELETE {path}/{id}`; `If-Match` required; 204.
-    pub fn delete<O>(mut self, op: O) -> Self
-    where
-        O: Operation,
-        O::Context: FromInvocation<S>,
-        Identity: FromRef<S>,
-    {
+    pub fn delete(mut self, op: impl ResourceOp<S>) -> Self {
         let path = self.path();
         let http = Http::delete(format!("{path}/{{id}}"))
             .if_match(EXPECTED_VERSION_FIELD)
             .no_content();
-        self.builder.operation(op).http(http);
-        self.resource().delete = Some(Arc::from(O::INFO.id));
+        let id = op.register(self.builder, http);
+        self.resource().delete = Some(id);
         self
     }
 
     /// `POST {path}/{id}/actions/{name}`: a domain transition. Its input
     /// usually carries `expected_version` (409 when stale, §6.4).
-    pub fn action<O>(mut self, name: &str, op: O) -> Self
-    where
-        O: Operation,
-        O::Context: FromInvocation<S>,
-        Identity: FromRef<S>,
-    {
+    pub fn action(mut self, name: &str, op: impl ResourceOp<S>) -> Self {
         let path = self.path();
         let id = self.register(op, Http::post(format!("{path}/{{id}}/actions/{name}")));
+        self.resource().actions.push((name.to_owned(), id));
+        self
+    }
+
+    /// [`action`](Self::action) at a binding you choose, such as one an
+    /// intent file declares. With `.if_match(..)`, the admin shell sends the
+    /// row's version as `If-Match`.
+    pub fn action_at(mut self, name: &str, op: impl ResourceOp<S>, http: Http) -> Self {
+        let id = self.register(op, http);
         self.resource().actions.push((name.to_owned(), id));
         self
     }
@@ -275,9 +295,8 @@ where
     where
         C: FromInvocation<S>,
         P: Policy<C>,
-        Identity: FromRef<S>,
     {
-        let id = policy.id();
+        let id = Arc::from(policy.id());
         let policy = Arc::new(policy);
         let descriptor = Arc::new(C::describe());
         let check = erase(move |parts, state| {
@@ -286,6 +305,27 @@ where
             Box::pin(async move {
                 let invocation = Invocation::from_http(parts, state, &descriptor).await?;
                 let ctx = C::resolve(&invocation, state).await?;
+                policy.admit(&ctx)
+            })
+        });
+        self.resource().admin = Some(AdminProfile {
+            view,
+            policy: id,
+            check,
+        });
+        self
+    }
+
+    /// [`admin`](Self::admin) with a policy built at runtime.
+    pub fn admin_dyn(mut self, view: AdminView, policy: Arc<dyn DynPolicy<S>>) -> Self {
+        let id = Arc::from(policy.id());
+        let descriptor = Arc::new(policy.context());
+        let check = erase(move |parts, state| {
+            let policy = policy.clone();
+            let descriptor = descriptor.clone();
+            Box::pin(async move {
+                let invocation = Invocation::from_http(parts, state, &descriptor).await?;
+                let ctx = policy.resolve_context(&invocation, state).await?;
                 policy.admit(&ctx)
             })
         });

@@ -8,7 +8,8 @@
     "dev": "vite --port 5174",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@trestle/interaction-react": "0.0.1"

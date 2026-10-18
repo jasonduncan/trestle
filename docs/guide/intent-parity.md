@@ -34,7 +34,7 @@ decision for later:
 | `version` in responses | string of digits (`"1"`) | integer |
 | List paging | signed keyset cursor | signed keyset cursor (ADR-024) |
 | Audit | records an audit event on create | none (it would need an `after_create` hook) |
-| Admin profile | product and admin audiences | product only |
+| Admin profile | product and admin audiences | product only, unless the file adds `[[admin]]` (ADR-029) |
 | Error message wording | "...already exists in this school." | "A unit with this name already exists." |
 
 The intent format now covers what pilot's other apps (lessons, audit) were
@@ -42,7 +42,7 @@ waiting for:
 
 - relations: `type = "ref"`, with tenant-checked writes (ADR-024);
 - domain actions: `set`, `when` and `accept` on an endpoint (ADR-025);
-- generated forms: `forms = true` (ADR-026).
+- generated forms: `forms = true` (ADR-026);
+- admin views: `[[admin]]` (ADR-029).
 
-Admin views remain Rust-only. The apps stay Rust apps, which the design
-expects (§3.4).
+The apps stay Rust apps, which the design expects (§3.4).

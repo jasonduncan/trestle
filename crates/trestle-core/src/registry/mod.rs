@@ -16,8 +16,8 @@ pub use meta::{
     ADMIN_INTERACTION_PATH, ADMIN_MANIFEST_PATH, Availability, INTERACTION_PATH, MANIFEST_PATH,
 };
 pub use resource::{
-    AdminAction, AdminView, EXPECTED_VERSION_FIELD, RegisteredResource, ResourceRegistration,
-    VERSION_FIELD,
+    AdminAction, AdminView, EXPECTED_VERSION_FIELD, RegisteredResource, ResourceOp,
+    ResourceRegistration, VERSION_FIELD,
 };
 pub use routes::Http;
 
@@ -278,6 +278,7 @@ impl<S> AppBuilder<S> {
         };
         if let Some(http) = http {
             let binding = http.binding(&entry.context, &entry.input);
+            entry.availability = Some(meta::dyn_availability::<S>(op.clone()));
             entry.route = Some(routes::managed_dyn::<S>(
                 op,
                 &http,

@@ -29,7 +29,7 @@ and is not self-granted. Open items before a pilot:
 choose how people sign in (password accounts are built; an OIDC provider is optional and only
 mock-tested), send through the real SMTP relay, get external security review (§12.4), and
 validate the edge config (`deploy/Caddyfile`) on a real host. Do not claim general
-maturity or benchmark leadership. ADRs: 001–028 (015 reopens 009: jobs and outbox).
+maturity or benchmark leadership. ADRs: 001–029 (015 reopens 009: jobs and outbox).
 
 ## Non-negotiables
 - Installing a model publishes nothing (I01). Endpoints, forms and writable fields are explicit.
@@ -74,6 +74,8 @@ maturity or benchmark leadership. ADRs: 001–028 (015 reopens 009: jobs and out
 - Resources are bindings over operations you wrote; CRUD is opt-in, transitions are explicit
   `.action(..)`s. Update/delete return the retrieve representation (If-Match checks it).
   Admin metadata grants nothing: every admin button calls the same operation, which authorizes.
+  That holds for runtime-built resources too (`ResourceOp`, `admin_dyn`, `[[admin]]`, ADR-029): the
+  admin permission only decides who sees the view, never what an operation admits.
 - `frontend/product/src/generated/api.ts` is generated (`make snapshots`); never edit it.
 - Every caller goes through the executor (`execute`, `execute_json`, managed routes, `invoke`,
   `Registry::invoke`). Never call `Operation::run` directly; that skips the contract, policy and

@@ -19,6 +19,8 @@ import {
   type Transport,
 } from "@trestle/interaction-react";
 
+import { actionRequest, at, cell, type Row, type RowAction } from "./rows";
+
 // Deployment profile (Vite env, so the shell itself stays app-agnostic):
 // - VITE_ADMIN_TITLE: heading and document title.
 // - VITE_ADMIN_DEV_USERS: JSON {name: {token, note}} for development sign-in
@@ -61,18 +63,14 @@ interface AdminResource {
   retrieve: Binding | null;
   update: Binding | null;
   create?: Binding | null;
-  actions: {
+  actions: (RowAction & {
     name: string;
     label: string;
     operation: string;
-    path: string;
-    bind: Record<string, string>;
     /** Advisory: show only when the row matches. The server still decides. */
     visibleWhen?: { pointer: string; equals: unknown };
-  }[];
+  })[];
 }
-
-type Row = Record<string, unknown> & { id: string };
 
 const MESSAGES: Record<string, string> = {
   stale_version: "Someone changed this record. The list has been refreshed; try again.",
@@ -85,14 +83,6 @@ const MESSAGES: Record<string, string> = {
 function describe(body: unknown, status: number): string {
   const problem = asProblem(body);
   return (problem.code && MESSAGES[problem.code]) ?? problem.detail ?? problem.title ?? `Request failed (${status}).`;
-}
-
-/** Value at a JSON Pointer such as `/version`. */
-function at(row: Row, pointer: string): unknown {
-  return pointer
-    .split("/")
-    .slice(1)
-    .reduce<unknown>((value, key) => (value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined), row);
 }
 
 function ResourcePanel({ resource, transport }: { resource: AdminResource; transport: Transport }) {
@@ -132,8 +122,7 @@ function ResourcePanel({ resource, transport }: { resource: AdminResource; trans
   }, [load]);
 
   const act = async (row: Row, action: AdminResource["actions"][number]) => {
-    const body = Object.fromEntries(Object.entries(action.bind).map(([field, pointer]) => [field, at(row, pointer)]));
-    const reply = await transport.send({ method: "POST", path: fillPath(action.path, row), body });
+    const reply = await transport.send({ method: "POST", path: fillPath(action.path, row), ...actionRequest(row, action) });
     const name = String(row[resource.label]);
     setMessage(reply.status === 200 ? `${action.label}: “${name}” done.` : describe(reply.body, reply.status));
     if (reply.status === 200) reveal(reply.body);
@@ -238,7 +227,7 @@ function ResourcePanel({ resource, transport }: { resource: AdminResource; trans
           {rows.map((row) => (
             <tr key={row.id}>
               {resource.columns.map((column) => (
-                <td key={column}>{row[column] === null || row[column] === undefined ? "—" : String(row[column])}</td>
+                <td key={column}>{cell(row[column])}</td>
               ))}
               <td className="actions">
                 {resource.actions

@@ -46,3 +46,11 @@ order = "-created_at"
 # permission = "notes.write"
 # set = { archived = true }
 # when = { archived = [false] }
+
+# Show notes in the admin shell to callers with a permission (add it to a
+# role first). Buttons still run each operation's own permission.
+# [[admin]]
+# model = "notes.note"
+# permission = "notes.admin"
+# columns = ["title", "pinned"]   # default: every field
+# actions = ["notes.archive"]

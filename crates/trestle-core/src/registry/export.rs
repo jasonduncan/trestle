@@ -270,8 +270,10 @@ impl<S> Registry<S> {
                 let (_, op_id) = resource.actions.iter().find(|(n, _)| n == name)?;
                 let op = self.operation(op_id)?;
                 let b = op.binding.as_ref()?;
+                // A binding with `If-Match` takes the version as that
+                // header, never also in the body.
                 let mut bind = serde_json::Map::new();
-                if op.input.get(EXPECTED_VERSION_FIELD).is_some() {
+                if b.if_match.is_none() && op.input.get(EXPECTED_VERSION_FIELD).is_some() {
                     bind.insert(EXPECTED_VERSION_FIELD.into(), json!("/version"));
                 }
                 let mut described = json!({
@@ -281,6 +283,9 @@ impl<S> Registry<S> {
                     "path": b.path,
                     "bind": bind,
                 });
+                if b.if_match.is_some() {
+                    described["ifMatch"] = json!({ "pointer": "/version", "etagOf": op.output.id });
+                }
                 if let Some((field, value)) = &action.visible_when {
                     described["visibleWhen"] =
                         json!({ "pointer": format!("/{field}"), "equals": value });

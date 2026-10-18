@@ -20,11 +20,11 @@ use trestle_core::Problem;
 use trestle_core::identity::{ActorId, Identity};
 use trestle_core::invocation::Invocation;
 use trestle_core::operation::{
-    BoxFuture, ContextDescriptor, DynConn, DynContext, DynOperation, Effects, Mode,
+    BoxFuture, ContextDescriptor, DynConn, DynContext, DynOperation, DynPolicy, Effects, Mode,
     OperationDescriptor,
 };
 use trestle_core::pagination::{decode_cursor, encode_cursor};
-use trestle_core::registry::{App as CoreApp, AppBuilder, Http};
+use trestle_core::registry::{AdminView, App as CoreApp, AppBuilder, Http};
 use trestle_historical::schema::{Column, Model};
 use trestle_protocol::{Audience, ContractDoc, Field, FormPresentation, Widget};
 use uuid::Uuid;
@@ -497,6 +497,13 @@ where
                     if spec.app != self.id {
                         continue;
                     }
+                    let admin = intent.admin.iter().find(|a| a.model == *model);
+                    // Admin buttons call these same operations (ADR-029).
+                    let audiences: &[Audience] = if admin.is_some() {
+                        &[Audience::Product, Audience::Admin]
+                    } else {
+                        &[Audience::Product]
+                    };
                     if *forms {
                         let fields: Vec<&str> = spec.fields.iter().map(|f| f.id.as_str()).collect();
                         let name = noun(model);
@@ -519,12 +526,99 @@ where
                             app.form(form_fields(form, spec, intent, &fields));
                         }
                     }
+                    let mut view = admin.map(|a| {
+                        AdminView::new(&a.title, spec.label.as_deref().unwrap_or("id"))
+                            .columns(&a.columns.iter().map(String::as_str).collect::<Vec<_>>())
+                            .filters(&a.filters.iter().map(String::as_str).collect::<Vec<_>>())
+                    });
+                    if let Some(v) = view.take() {
+                        let fields: Vec<&str> = spec.fields.iter().map(|f| f.id.as_str()).collect();
+                        let name = noun(model);
+                        let mut v = v;
+                        for (op, form, title, submit) in [
+                            (
+                                Crud::Create,
+                                "admin_create",
+                                format!("New {name}"),
+                                "Create",
+                            ),
+                            (Crud::Update, "admin_edit", format!("Edit {name}"), "Save"),
+                        ] {
+                            if !ops.contains(&op) {
+                                continue;
+                            }
+                            let id = format!("{model}.{form}.form");
+                            let presentation = FormPresentation::for_operation(
+                                &id,
+                                &format!("{model}.{}", op.as_str()),
+                            )
+                            .audience(Audience::Admin)
+                            .title(&title)
+                            .submit(submit);
+                            app.form(form_fields(presentation, spec, intent, &fields));
+                            v = if op == Crud::Create {
+                                v.create_form(&id)
+                            } else {
+                                v.edit_form(&id)
+                            };
+                        }
+                        view = Some(v);
+                    }
+                    // Every CRUD endpoint is a resource: the conventional
+                    // bindings, and the admin profile when one is declared.
+                    let mut resource = app.resource(model.as_str(), spec.path());
                     for op in ops {
                         let permission = if op.writes() { write } else { read };
-                        let (built, http) =
-                            crud_operation::<S>(&self.resolved, spec, endpoint, *op, permission);
-                        app.dyn_operation(built, Some(http));
+                        let built = crud_operation::<S>(
+                            &self.resolved,
+                            spec,
+                            endpoint,
+                            *op,
+                            permission,
+                            audiences,
+                        );
+                        resource = match op {
+                            Crud::List => resource.list(built),
+                            Crud::Get => resource.retrieve(built),
+                            Crud::Create => resource.create(built),
+                            Crud::Update => resource.update(built),
+                            Crud::Delete => resource.delete(built),
+                        };
                     }
+                    let (Some(admin), Some(mut view)) = (admin, view) else {
+                        continue;
+                    };
+                    for action in &admin.actions {
+                        let endpoint = intent
+                            .endpoints
+                            .iter()
+                            .find(|e| matches!(e, EndpointSpec::Action { id, .. } if id == action))
+                            .expect("validated");
+                        let EndpointSpec::Action { when, .. } = endpoint else {
+                            unreachable!("an action")
+                        };
+                        let name = action.rsplit('.').next().unwrap_or(action);
+                        let label = words(name);
+                        // One starting state is something the shell can show
+                        // the button for; the server still decides.
+                        view = match when.as_slice() {
+                            [(field, values)] if values.len() == 1 => {
+                                view.action_when(name, &label, field, values[0].clone())
+                            }
+                            _ => view.action(name, &label),
+                        };
+                        let (built, http) =
+                            action_operation::<S>(&self.resolved, endpoint, audiences);
+                        resource = resource.action_at(name, built, http);
+                    }
+                    resource.admin_dyn(
+                        view,
+                        Arc::new(IntentPolicy {
+                            id: policy_id(&admin.permission),
+                            permission: admin.permission.clone(),
+                            resolved: self.resolved.clone(),
+                        }),
+                    );
                 }
                 EndpointSpec::Custom {
                     id,
@@ -574,12 +668,9 @@ where
                 EndpointSpec::Action {
                     id,
                     model,
-                    path,
-                    permission,
-                    set,
-                    when,
                     accept,
                     forms,
+                    ..
                 } => {
                     if id.split_once('.').map(|(a, _)| a) != Some(self.id.as_str()) {
                         continue;
@@ -589,34 +680,13 @@ where
                         .iter()
                         .find(|m| m.id == *model)
                         .expect("validated");
-                    let mut contract = ContractDoc::input(id, "1").field(Field::uuid("id"));
-                    for name in accept {
-                        let f = spec.field(name).expect("validated");
-                        contract = contract.field(field_contract(f, false));
+                    // An action in an admin view is registered with its
+                    // model's resource, above.
+                    if !intent.admin.iter().any(|a| a.actions.contains(id)) {
+                        let (op, http) =
+                            action_operation::<S>(&self.resolved, endpoint, &[Audience::Product]);
+                        app.dyn_operation(op, Some(http));
                     }
-                    let contract = contract.field(Field::digits("expected_version"));
-                    let op = IntentOp::<S> {
-                        info: OperationDescriptor::new(id.as_str(), "1", Mode::Write)
-                            .audiences(&[Audience::Product])
-                            .summary(format!("{id}: an action on {model}"))
-                            .effects(Effects::new().writes(model.as_str())),
-                        policy: policy_id(permission),
-                        permission: permission.clone(),
-                        input: contract,
-                        output: representation(spec),
-                        model: spec.clone(),
-                        resolved: self.resolved.clone(),
-                        kind: Kind::Action(Arc::new(Action {
-                            set: set.clone(),
-                            when: when.clone(),
-                            accept: accept.clone(),
-                        })),
-                        _state: PhantomData,
-                    };
-                    let http = Http::post(path.clone())
-                        .if_match("expected_version")
-                        .etag("version");
-                    app.dyn_operation(Arc::new(op), Some(http));
                     if *forms {
                         let verb = words(id.rsplit('.').next().unwrap_or(id));
                         let form = FormPresentation::for_operation(&format!("{id}.form"), id)
@@ -924,13 +994,76 @@ struct IntentOp<S> {
     _state: PhantomData<fn() -> S>,
 }
 
+/// A declared action (ADR-025): POST on one row with `If-Match`.
+fn action_operation<S>(
+    resolved: &Arc<Resolved>,
+    endpoint: &EndpointSpec,
+    audiences: &[Audience],
+) -> (Arc<dyn DynOperation<S>>, Http)
+where
+    S: Clone + Send + Sync + 'static,
+    PgPool: FromRef<S>,
+    Identity: FromRef<S>,
+{
+    let EndpointSpec::Action {
+        id,
+        model,
+        path,
+        permission,
+        set,
+        when,
+        accept,
+        ..
+    } = endpoint
+    else {
+        unreachable!("action endpoint")
+    };
+    let spec = resolved
+        .intent
+        .models
+        .iter()
+        .find(|m| m.id == *model)
+        .expect("validated");
+    let mut contract = ContractDoc::input(id, "1").field(Field::uuid("id"));
+    for name in accept {
+        let f = spec.field(name).expect("validated");
+        contract = contract.field(field_contract(f, false));
+    }
+    let contract = contract.field(Field::digits("expected_version"));
+    let op = IntentOp::<S> {
+        info: OperationDescriptor::new(id.as_str(), "1", Mode::Write)
+            .audiences(audiences)
+            .summary(format!("{id}: an action on {model}"))
+            .effects(Effects::new().writes(model.as_str())),
+        policy: policy_id(permission),
+        permission: permission.clone(),
+        input: contract,
+        output: representation(spec),
+        model: spec.clone(),
+        resolved: resolved.clone(),
+        kind: Kind::Action(Arc::new(Action {
+            set: set.clone(),
+            when: when.clone(),
+            accept: accept.clone(),
+        })),
+        _state: PhantomData,
+    };
+    let http = Http::post(path.clone())
+        .if_match("expected_version")
+        .etag("version");
+    (Arc::new(op), http)
+}
+
+/// A CRUD operation. Its binding is the resource convention
+/// (`ResourceRegistration`), which `trestle.toml` documents.
 fn crud_operation<S>(
     resolved: &Arc<Resolved>,
     model: &Arc<ModelSpec>,
     endpoint: &EndpointSpec,
     op: Crud,
     permission: &str,
-) -> (Arc<dyn DynOperation<S>>, Http)
+    audiences: &[Audience],
+) -> Arc<dyn DynOperation<S>>
 where
     S: Clone + Send + Sync + 'static,
     PgPool: FromRef<S>,
@@ -945,10 +1078,8 @@ where
     else {
         unreachable!("crud endpoint")
     };
-    let collection = model.path();
-    let item = format!("{collection}/{{id}}");
     let rep = representation(model);
-    let (input, output, http, summary): (ContractDoc, Arc<ContractDoc>, Http, String) = match op {
+    let (input, output, summary): (ContractDoc, Arc<ContractDoc>, String) = match op {
         Crud::List => {
             let mut doc = ContractDoc::input(&format!("{}.list", model.id), "1");
             for name in filter {
@@ -961,33 +1092,21 @@ where
             let page = ContractDoc::output(&format!("{}.page", model.id), "1")
                 .field(Field::items("items", &rep, MAX_LIMIT as u32))
                 .field(Field::text("next_cursor").nullable());
-            (
-                doc,
-                Arc::new(page),
-                Http::get(collection.clone()),
-                format!("List {}.", model.id),
-            )
+            (doc, Arc::new(page), format!("List {}.", model.id))
         }
         Crud::Get => (
             ContractDoc::input(&format!("{}.get", model.id), "1").field(Field::uuid("id")),
             rep.clone(),
-            Http::get(item.clone()).etag("version"),
             format!("Get one {}.", model.id),
         ),
         Crud::Create => (
             create_contract(model),
             rep.clone(),
-            Http::post(collection.clone())
-                .created(item.clone())
-                .etag("version"),
             format!("Create a {}.", model.id),
         ),
         Crud::Update => (
             update_contract(model, true),
             rep.clone(),
-            Http::patch(item.clone())
-                .if_match("expected_version")
-                .etag("version"),
             format!("Change a {}.", model.id),
         ),
         Crud::Delete => (
@@ -995,9 +1114,6 @@ where
                 .field(Field::uuid("id"))
                 .field(Field::digits("expected_version")),
             rep.clone(),
-            Http::delete(item.clone())
-                .if_match("expected_version")
-                .no_content(),
             format!("Delete a {}.", model.id),
         ),
     };
@@ -1025,7 +1141,7 @@ where
         "1",
         if op.writes() { Mode::Write } else { Mode::Read },
     )
-    .audiences(&[Audience::Product])
+    .audiences(audiences)
     .summary(summary);
     if let Some(effects) = effects {
         info = info.effects(effects);
@@ -1041,7 +1157,7 @@ where
         kind: Kind::Crud(op, filter.clone(), order.clone(), hooks),
         _state: PhantomData,
     };
-    (Arc::new(built), http)
+    Arc::new(built)
 }
 
 /// The admitted request context of an intent operation.
@@ -1078,16 +1194,106 @@ async fn membership_role(
     Ok(role)
 }
 
-impl<S> IntentOp<S> {
-    fn permits(&self, role: Option<&str>) -> bool {
-        self.permission == AUTHENTICATED
-            || role.is_some_and(|r| {
-                self.resolved
-                    .intent
-                    .roles
-                    .get(r)
-                    .is_some_and(|perms| perms.contains(&self.permission))
-            })
+/// Whether `role` (in the caller's tenant) grants `permission`.
+fn permits(resolved: &Resolved, permission: &str, role: Option<&str>) -> bool {
+    permission == AUTHENTICATED
+        || role.is_some_and(|r| {
+            resolved
+                .intent
+                .roles
+                .get(r)
+                .is_some_and(|perms| perms.contains(permission))
+        })
+}
+
+/// What every intent operation reads from a request: the actor, and the
+/// tenant header with `[tenancy]`.
+fn context_of(resolved: &Resolved) -> ContextDescriptor {
+    let ctx = ContextDescriptor::authenticated();
+    if resolved.intent.tenancy.is_some() {
+        ctx.header(
+            "Trestle-Tenant",
+            "Tenant to act in. Must be one of the caller's memberships; grants nothing by itself.",
+            Some("uuid"),
+        )
+    } else {
+        ctx
+    }
+}
+
+/// The caller's actor, tenant and role there; a tenant without membership
+/// is refused like an unknown one.
+async fn resolve<S>(
+    resolved: &Resolved,
+    invocation: &Invocation,
+    state: &S,
+) -> Result<DynContext, Problem>
+where
+    PgPool: FromRef<S>,
+{
+    let actor = invocation.actor()?;
+    if resolved.intent.tenancy.is_none() {
+        return Ok(Arc::new(IntentContext {
+            actor,
+            tenant: None,
+            role: None,
+        }) as DynContext);
+    }
+    let tenant = invocation.tenant().ok_or_else(|| {
+        Problem::malformed(
+            "tenant_required",
+            "Select a tenant with the Trestle-Tenant header.",
+        )
+    })?;
+    let pool = PgPool::from_ref(state);
+    let mut conn = pool.acquire().await?;
+    // Unknown tenants and tenants without membership look the same.
+    let role = membership_role(&mut conn, resolved, tenant, actor, false)
+        .await?
+        .ok_or_else(|| Problem::forbidden("tenant_not_permitted"))?;
+    Ok(Arc::new(IntentContext {
+        actor,
+        tenant: Some(tenant),
+        role: Some(role),
+    }) as DynContext)
+}
+
+/// Who sees a model in the admin shell (`[[admin]] permission`, ADR-029).
+/// It shows; it does not grant: each button's operation checks its own.
+struct IntentPolicy {
+    id: String,
+    permission: String,
+    resolved: Arc<Resolved>,
+}
+
+impl<S> DynPolicy<S> for IntentPolicy
+where
+    S: Send + Sync + 'static,
+    PgPool: FromRef<S>,
+{
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn context(&self) -> ContextDescriptor {
+        context_of(&self.resolved)
+    }
+
+    fn resolve_context<'a>(
+        &'a self,
+        invocation: &'a Invocation,
+        state: &'a S,
+    ) -> BoxFuture<'a, Result<DynContext, Problem>> {
+        Box::pin(resolve(&self.resolved, invocation, state))
+    }
+
+    fn admit(&self, ctx: &DynContext) -> Result<(), Problem> {
+        let ctx = ctx_of(ctx)?;
+        if permits(&self.resolved, &self.permission, ctx.role.as_deref()) {
+            Ok(())
+        } else {
+            Err(Problem::forbidden("permission_denied"))
+        }
     }
 }
 
@@ -1106,16 +1312,7 @@ where
     }
 
     fn context(&self) -> ContextDescriptor {
-        let ctx = ContextDescriptor::authenticated();
-        if self.resolved.intent.tenancy.is_some() {
-            ctx.header(
-                "Trestle-Tenant",
-                "Tenant to act in. Must be one of the caller's memberships; grants nothing by itself.",
-                Some("uuid"),
-            )
-        } else {
-            ctx
-        }
+        context_of(&self.resolved)
     }
 
     fn input(&self) -> &ContractDoc {
@@ -1131,38 +1328,12 @@ where
         invocation: &'a Invocation,
         state: &'a S,
     ) -> BoxFuture<'a, Result<DynContext, Problem>> {
-        Box::pin(async move {
-            let actor = invocation.actor()?;
-            if self.resolved.intent.tenancy.is_none() {
-                return Ok(Arc::new(IntentContext {
-                    actor,
-                    tenant: None,
-                    role: None,
-                }) as DynContext);
-            }
-            let tenant = invocation.tenant().ok_or_else(|| {
-                Problem::malformed(
-                    "tenant_required",
-                    "Select a tenant with the Trestle-Tenant header.",
-                )
-            })?;
-            let pool = PgPool::from_ref(state);
-            let mut conn = pool.acquire().await?;
-            // Unknown tenants and tenants without membership look the same.
-            let role = membership_role(&mut conn, &self.resolved, tenant, actor, false)
-                .await?
-                .ok_or_else(|| Problem::forbidden("tenant_not_permitted"))?;
-            Ok(Arc::new(IntentContext {
-                actor,
-                tenant: Some(tenant),
-                role: Some(role),
-            }) as DynContext)
-        })
+        Box::pin(resolve(&self.resolved, invocation, state))
     }
 
     fn admit(&self, ctx: &DynContext) -> Result<(), Problem> {
         let ctx = ctx_of(ctx)?;
-        if self.permits(ctx.role.as_deref()) {
+        if permits(&self.resolved, &self.permission, ctx.role.as_deref()) {
             Ok(())
         } else {
             Err(Problem::forbidden("permission_denied"))
@@ -1182,7 +1353,7 @@ where
             let role = membership_role(conn, &self.resolved, tenant, ctx.actor, true)
                 .await?
                 .ok_or_else(|| Problem::forbidden("tenant_not_permitted"))?;
-            if self.permits(Some(&role)) {
+            if permits(&self.resolved, &self.permission, Some(&role)) {
                 Ok(())
             } else {
                 Err(Problem::forbidden("permission_denied"))
