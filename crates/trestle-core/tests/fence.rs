@@ -219,6 +219,80 @@ impl Operation for CountNotes {
     }
 }
 
+/// `notes.add` built at runtime, so the fence is checked on the dynamic
+/// executor path too.
+struct DynAddNote {
+    info: OperationDescriptor,
+}
+
+impl DynOperation<State> for DynAddNote {
+    fn info(&self) -> &OperationDescriptor {
+        &self.info
+    }
+
+    fn policy_id(&self) -> &str {
+        "notes.anyone"
+    }
+
+    fn context(&self) -> ContextDescriptor {
+        Member::describe()
+    }
+
+    fn input(&self) -> &ContractDoc {
+        NewNote::contract()
+    }
+
+    fn output(&self) -> &ContractDoc {
+        Note::contract()
+    }
+
+    fn resolve_context<'a>(
+        &'a self,
+        invocation: &'a Invocation,
+        state: &'a State,
+    ) -> BoxFuture<'a, Result<DynContext, Problem>> {
+        Box::pin(async move {
+            let member = Member::resolve(invocation, state).await?;
+            Ok(Arc::new(member) as DynContext)
+        })
+    }
+
+    fn admit(&self, _: &DynContext) -> Result<(), Problem> {
+        Ok(())
+    }
+
+    fn recheck<'a>(
+        &'a self,
+        _: &'a mut PgConnection,
+        _: &'a DynContext,
+    ) -> BoxFuture<'a, Result<(), Problem>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn run(
+        self: Arc<Self>,
+        mut conn: DynConn,
+        ctx: DynContext,
+        input: Value,
+    ) -> BoxFuture<'static, (DynConn, Result<Value, Problem>)> {
+        Box::pin(async move {
+            let member = ctx.downcast_ref::<Member>().expect("member context");
+            let inserted: Result<Uuid, _> = sqlx::query_scalar(
+                "INSERT INTO notes (team, body, created_by) VALUES ($1, $2, $3) RETURNING id",
+            )
+            .bind(member.team)
+            .bind(input["body"].as_str())
+            .bind(member.actor.0)
+            .fetch_one(conn.conn())
+            .await;
+            let result = inserted
+                .map(|id| json!({ "id": id }))
+                .map_err(Problem::from);
+            (conn, result)
+        })
+    }
+}
+
 struct NotesApp;
 
 impl App<State> for NotesApp {
@@ -230,6 +304,14 @@ impl App<State> for NotesApp {
         app.operation(AddNote)
             .http(Http::post("/notes").created("/notes/{id}"));
         app.operation(CountNotes);
+        app.dyn_operation(
+            Arc::new(DynAddNote {
+                info: OperationDescriptor::new("notes.add_dyn", "1", Mode::Write)
+                    .audiences(&[Audience::Product])
+                    .summary("Add a note (runtime-built)."),
+            }),
+            Some(Http::post("/dyn-notes")),
+        );
     }
 }
 
@@ -415,6 +497,26 @@ async fn an_older_build_stops_writing_once_a_fence_migration_applies() {
         .await
         .expect_err("fenced");
     assert_eq!(refused.code(), "schema_fenced");
+
+    // The same refusal on the dynamic executor path.
+    let (status, problem, _) = env
+        .send(Method::POST, "/dyn-notes", Some(json!({ "body": "dyn" })))
+        .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{problem}");
+    assert_eq!(problem["code"], "schema_fenced");
+    let refused = env
+        .registry
+        .invoke(
+            &env.state,
+            "notes.add_dyn",
+            &env.alice(),
+            &json!({ "body": "dyn" }),
+        )
+        .await
+        .expect_err("fenced");
+    assert_eq!(refused.code(), "schema_fenced");
+    assert_eq!(env.notes().await, 1, "nothing written by the dynamic path");
+
     let count = env
         .registry
         .invoke(&env.state, "notes.count", &env.alice(), &json!({}))
@@ -454,9 +556,13 @@ async fn an_older_build_stops_writing_once_a_fence_migration_applies() {
         env.send(Method::GET, "/readyz", None).await.0,
         StatusCode::OK
     );
+    let (status, _, _) = env
+        .send(Method::POST, "/dyn-notes", Some(json!({ "body": "e" })))
+        .await;
+    assert_eq!(status, StatusCode::OK, "the dynamic path writes again");
     let pass = env.worker().run_once(4).await.unwrap();
     assert_eq!(pass.claimed, 1);
-    assert_eq!(env.notes().await, 3);
+    assert_eq!(env.notes().await, 4);
 
     fence::uninstall();
     env.state.pool.close().await;
