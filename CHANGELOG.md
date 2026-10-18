@@ -14,6 +14,18 @@ promise.
 
 ## [Unreleased]
 
+### Added
+- The intent as a value (ADR-030):
+  - `trestle::intent::IntentDoc` (with `ProjectDoc`, `TenancyDoc`, `ModelDoc`,
+    `FieldDoc`, `EndpointDoc` and `AdminDoc`) is the `trestle.toml` schema as
+    public data;
+  - `to_toml()` renders the canonical file, and `validate(name)` checks it
+    with the same `intent::parse` the file goes through;
+  - `Project::intent_doc(name, doc)` serves a document exactly like its
+    rendering, with handlers, hooks, migrations and tenancy;
+  - `trestle::intent::toml` re-exports the `toml` crate for `default`, `set`
+    and `when` values.
+
 ## [0.4.0] - 2026-10-17
 
 ### Added

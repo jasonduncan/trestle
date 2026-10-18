@@ -250,6 +250,16 @@ impl<S: 'static, X, C> Project<S, X, C> {
         self
     }
 
+    /// Uses this intent document (named `name` in messages), for code that
+    /// builds the intent instead of reading a file (ADR-030). It is
+    /// validated and served exactly like its [`IntentDoc::to_toml`] text.
+    ///
+    /// [`IntentDoc::to_toml`]: crate::intent::IntentDoc::to_toml
+    pub fn intent_doc(mut self, name: &str, doc: crate::intent::IntentDoc) -> Self {
+        self.intent = IntentSource::Doc(name.to_owned(), Box::new(doc));
+        self
+    }
+
     /// Ignores any intent file: a project made only of Rust apps.
     pub fn without_intent(mut self) -> Self {
         self.intent = IntentSource::None;
@@ -1578,6 +1588,7 @@ enum IntentSource {
     Default,
     File(PathBuf),
     Text(String, String),
+    Doc(String, Box<crate::intent::IntentDoc>),
     None,
 }
 
@@ -1586,6 +1597,7 @@ impl IntentSource {
         let (name, text) = match self {
             IntentSource::None => return Ok(None),
             IntentSource::Text(name, text) => (name.clone(), text.clone()),
+            IntentSource::Doc(name, doc) => (name.clone(), doc.to_toml().map_err(|e| e.problems)?),
             IntentSource::File(path) => read_intent(path)?,
             IntentSource::Default => {
                 let path = std::env::var_os(crate::intent::FILE_ENV)

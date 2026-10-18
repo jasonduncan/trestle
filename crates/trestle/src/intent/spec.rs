@@ -8,12 +8,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 use std::sync::Arc;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use toml::Spanned;
 
 /// Permission that any signed-in actor holds. Usable without `[tenancy]`.
 pub const AUTHENTICATED: &str = "authenticated";
 
+/// The file as read. [`super::doc::IntentDoc`] is the same schema as public
+/// data: change both together (`tests/intent_doc.rs` reads a file that uses
+/// every key).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct File {
@@ -55,7 +58,7 @@ struct ProjectSection {
 }
 
 /// `[auth]`: how people sign in. Names needs, never secrets.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct AuthSection {
     /// Email and password accounts (default on).
@@ -64,12 +67,12 @@ pub struct AuthSection {
     /// Opt-in OpenID Connect provider: `"google"`, or a table naming the
     /// issuer and the environment variables that hold the client ID and
     /// secret. Never the values themselves.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oidc: Option<Oidc>,
 }
 
 /// `[auth] oidc`.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum Oidc {
     /// A well-known provider by name. Only `"google"` today.
@@ -78,7 +81,7 @@ pub enum Oidc {
 }
 
 /// `[auth.oidc]` as a table.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct OidcProvider {
     pub issuer: String,

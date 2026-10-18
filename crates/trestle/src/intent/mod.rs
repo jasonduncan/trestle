@@ -5,9 +5,13 @@
 //! Rust handles only what the file can't say, through handlers and hooks
 //! registered by name.
 
+pub mod doc;
 mod runtime;
 pub mod spec;
 
+pub use toml;
+
+pub use doc::{AdminDoc, EndpointDoc, FieldDoc, IntentDoc, ModelDoc, ProjectDoc, TenancyDoc};
 pub use runtime::{
     Ctx, HandlerFn, Handlers, HookFn, Input, IntentApp, MAX_LIMIT, Resolved, Row, TENANT_HEADER,
 };
