@@ -106,6 +106,28 @@ pub struct RelationSource {
     pub operation: String,
     /// Item field shown to people.
     pub label: String,
+    pub lookup: Option<RelationLookup>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelationLookup {
+    pub resolve_operation: String,
+    pub search_field: String,
+}
+
+/// Bounded form layout; fields still come exclusively from the input contract.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LayoutNode {
+    Field(String),
+    Section {
+        id: String,
+        label: String,
+        children: Vec<LayoutNode>,
+    },
+    Columns {
+        id: String,
+        children: Vec<LayoutNode>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,6 +138,7 @@ pub struct FormPresentation {
     pub title: String,
     pub fields: Vec<FormField>,
     pub submit_label: String,
+    pub layout: Option<LayoutNode>,
 }
 
 impl FormPresentation {
@@ -127,6 +150,7 @@ impl FormPresentation {
             title: String::new(),
             fields: Vec::new(),
             submit_label: "Submit".to_owned(),
+            layout: None,
         }
     }
 
@@ -168,8 +192,38 @@ impl FormPresentation {
             source: Some(RelationSource {
                 operation: operation.to_owned(),
                 label: label_field.to_owned(),
+                lookup: None,
             }),
         });
+        self
+    }
+
+    /// Search and selected-value resolution through two authorized reads.
+    pub fn relation_lookup(
+        self,
+        pointer: &str,
+        label: &str,
+        search: &str,
+        resolve: &str,
+        label_field: &str,
+        search_field: &str,
+    ) -> Self {
+        let mut form = self.relation(pointer, label, search, label_field);
+        form.fields
+            .last_mut()
+            .unwrap()
+            .source
+            .as_mut()
+            .unwrap()
+            .lookup = Some(RelationLookup {
+            resolve_operation: resolve.into(),
+            search_field: search_field.into(),
+        });
+        form
+    }
+
+    pub fn layout(mut self, layout: LayoutNode) -> Self {
+        self.layout = Some(layout);
         self
     }
 
@@ -183,6 +237,16 @@ impl FormPresentation {
             .filter_map(|f| f.widget.feature())
             .collect();
         features.sort_unstable();
+        if self.layout.is_some() {
+            features.push("forms.layout@1");
+        }
+        if self
+            .fields
+            .iter()
+            .any(|f| f.source.as_ref().is_some_and(|s| s.lookup.is_some()))
+        {
+            features.push("forms.relation-lookup@1");
+        }
         features.dedup();
         features
     }
@@ -207,6 +271,45 @@ impl FormPresentation {
     pub fn problems(&self, input: &ContractDoc, bound: &[&str]) -> Vec<String> {
         let id = &self.id;
         let mut problems = Vec::new();
+        if let Some(layout) = &self.layout {
+            fn visit(
+                node: &LayoutNode,
+                depth: usize,
+                nodes: &mut usize,
+                fields: &mut Vec<String>,
+            ) -> bool {
+                *nodes += 1;
+                if depth > 8 || *nodes > 64 {
+                    return false;
+                }
+                match node {
+                    LayoutNode::Field(pointer) => {
+                        fields.push(pointer.clone());
+                        true
+                    }
+                    LayoutNode::Section { children, .. } => {
+                        children.iter().all(|n| visit(n, depth + 1, nodes, fields))
+                    }
+                    LayoutNode::Columns { children, .. } => {
+                        !children.is_empty()
+                            && children.len() <= 4
+                            && children.iter().all(|n| visit(n, depth + 1, nodes, fields))
+                    }
+                }
+            }
+            let mut fields = vec![];
+            if !visit(layout, 0, &mut 0, &mut fields) {
+                problems.push(format!("form {id}: layout exceeds bounds"));
+            }
+            fields.sort();
+            let mut expected: Vec<String> = self.fields.iter().map(|f| f.pointer.clone()).collect();
+            expected.sort();
+            if fields != expected {
+                problems.push(format!(
+                    "form {id}: layout must contain every presented field exactly once"
+                ));
+            }
+        }
         if self.fields.len() > limits::FORM_FIELDS {
             problems.push(format!(
                 "form {id} has {} fields; the limit is {}",
@@ -289,14 +392,42 @@ impl FormPresentation {
                         "value": "id",
                         "label": source.label,
                     });
+                    if let Some(lookup) = &source.lookup {
+                        child["options"]["lookup"] = json!({ "resolveOperation": lookup.resolve_operation,
+                            "resolvePath": sources.get(&lookup.resolve_operation), "searchField": lookup.search_field });
+                    }
                 }
                 child
             })
             .collect();
+        fn render(node: &LayoutNode, fields: &[Value]) -> Value {
+            match node {
+                LayoutNode::Field(pointer) => fields
+                    .iter()
+                    .find(|f| f["pointer"] == *pointer)
+                    .cloned()
+                    .unwrap_or(Value::Null),
+                LayoutNode::Section {
+                    id,
+                    label,
+                    children,
+                } => {
+                    json!({ "kind": "section", "id": id, "label": label, "children": children.iter().map(|n| render(n, fields)).collect::<Vec<_>>() })
+                }
+                LayoutNode::Columns { id, children } => {
+                    json!({ "kind": "columns", "id": id, "children": children.iter().map(|n| render(n, fields)).collect::<Vec<_>>() })
+                }
+            }
+        }
+        let layout = self
+            .layout
+            .as_ref()
+            .map(|node| render(node, &children))
+            .unwrap_or_else(|| json!({ "kind": "vertical", "children": children }));
         json!({
             "kind": "form",
             "title": self.title,
-            "layout": { "kind": "vertical", "children": children },
+            "layout": layout,
             "submit": { "label": self.submit_label },
         })
     }
@@ -325,6 +456,40 @@ mod tests {
     #[test]
     fn valid_form_has_no_problems() {
         assert!(form().problems(&input(), &[]).is_empty());
+    }
+
+    #[test]
+    fn layouts_cannot_drop_repeat_or_add_editable_fields() {
+        let layout = |fields: &[&str]| LayoutNode::Section {
+            id: "details".into(),
+            label: "Details".into(),
+            children: vec![LayoutNode::Columns {
+                id: "main".into(),
+                children: fields
+                    .iter()
+                    .map(|field| LayoutNode::Field((*field).into()))
+                    .collect(),
+            }],
+        };
+        assert!(
+            form()
+                .layout(layout(&["/title", "/grade_level"]))
+                .problems(&input(), &[])
+                .is_empty()
+        );
+        for fields in [
+            vec!["/title"],
+            vec!["/title", "/title"],
+            vec!["/title", "/school_id"],
+        ] {
+            assert!(
+                form()
+                    .layout(layout(&fields))
+                    .problems(&input(), &[])
+                    .iter()
+                    .any(|problem| problem.contains("exactly once"))
+            );
+        }
     }
 
     #[test]

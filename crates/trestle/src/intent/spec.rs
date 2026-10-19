@@ -32,6 +32,8 @@ struct File {
     endpoints: Vec<EndpointSection>,
     #[serde(default)]
     admin: Vec<AdminSection>,
+    #[serde(default)]
+    views: Vec<super::doc::ViewDoc>,
 }
 
 /// `[[admin]]`: a model in the admin shell (ADR-029).
@@ -209,6 +211,7 @@ struct EndpointSection {
     #[serde(default)]
     filter: Vec<Spanned<String>>,
     order: Option<Spanned<String>>,
+    search: Option<Spanned<String>>,
     #[serde(default)]
     hooks: BTreeMap<String, Spanned<String>>,
     path: Option<Spanned<String>>,
@@ -243,6 +246,7 @@ pub struct Intent {
     pub models: Vec<Arc<ModelSpec>>,
     pub endpoints: Vec<EndpointSpec>,
     pub admin: Vec<AdminSpec>,
+    pub views: Vec<super::doc::ViewDoc>,
 }
 
 /// A model shown in the admin shell (ADR-029): its CRUD endpoint's list,
@@ -425,6 +429,7 @@ pub enum EndpointSpec {
         read: String,
         write: String,
         filter: Vec<String>,
+        search: Option<String>,
         /// Column and descending.
         order: (String, bool),
         hooks: BTreeMap<String, Named>,
@@ -1003,6 +1008,16 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
                 ));
             }
         }
+        let search = e.search.as_ref().map(|s| {
+            let field = s.get_ref();
+            if !model.field(field).is_some_and(|f| f.ty == FieldType::Text) {
+                problems.push(format!("{}: search must name a text field", lines.at(s)));
+            }
+            if filter.iter().any(|f| f == "q") || model.field("q").is_some() {
+                problems.push(format!("{}: search reserves the input q", lines.at(s)));
+            }
+            field.clone()
+        });
         let order = match &e.order {
             None => ("created_at".to_owned(), true),
             Some(o) => {
@@ -1056,6 +1071,7 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
             read,
             write,
             filter,
+            search,
             order,
             hooks,
             forms: e.forms,
@@ -1070,6 +1086,31 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
         &mut problems,
     );
     check_forms(file, &models, &endpoints, &admin, &mut problems);
+    let mut view_ids = BTreeSet::new();
+    for view in &raw.views {
+        if !trestle_protocol::valid_stable_id(&view.id)
+            || !view_ids.insert(&view.id)
+            || !matches!(view.kind.as_str(), "collection" | "record")
+            || trestle_protocol::Audience::parse(&view.audience).is_none()
+        {
+            problems.push(format!("{file}: invalid or duplicate view {}", view.id));
+        }
+        if view.permission != AUTHENTICATED && !permissions.contains(&view.permission) {
+            problems.push(format!(
+                "{file}: view {} names an ungranted permission",
+                view.id
+            ));
+        }
+        if !models
+            .iter()
+            .any(|m| view.id.starts_with(&format!("{}.", m.app)))
+        {
+            problems.push(format!(
+                "{file}: view {} needs an installed intent app",
+                view.id
+            ));
+        }
+    }
 
     if let Some(oidc) = &raw.auth.oidc
         && let Err(e) = oidc.provider()
@@ -1087,6 +1128,7 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
             models,
             endpoints,
             admin,
+            views: raw.views,
         })
     } else {
         Err(IntentError { problems })
@@ -1190,8 +1232,15 @@ fn admin_specs(
                 model: m,
                 ops,
                 filter,
+                search,
                 ..
-            } if m == id && ops.contains(&Crud::List) => Some(filter),
+            } if m == id && ops.contains(&Crud::List) => {
+                let mut fields = filter.clone();
+                if search.is_some() {
+                    fields.push("q".into());
+                }
+                Some(fields)
+            }
             _ => None,
         });
         let Some(endpoint_filters) = listed else {

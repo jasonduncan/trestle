@@ -46,6 +46,18 @@ pub struct HttpBinding {
     pub no_content: bool,
     /// Accepts an `Idempotency-Key` header (design doc §6.4).
     pub idempotency_key: bool,
+    pub operation_version: bool,
+    pub precondition_target: Option<PreconditionTarget>,
+}
+
+/// Explicit concurrency representation for commands that return a receipt.
+/// The retrieve identity maps from the command's named input field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreconditionTarget {
+    pub operation: String,
+    pub representation: String,
+    pub parameter: String,
+    pub input_field: String,
 }
 
 /// Header carrying a client's idempotency key.
@@ -113,8 +125,23 @@ pub fn form_interaction(
     let mut features: Vec<&str> = CORE_FEATURES.to_vec();
     features.extend(form.features());
     if let Some(field) = &binding.if_match {
-        http["precondition"] = json!({ "header": "If-Match", "field": field, "etagOf": output.id });
+        let representation = binding
+            .precondition_target
+            .as_ref()
+            .map(|t| t.representation.as_str())
+            .unwrap_or(&output.id);
+        http["precondition"] =
+            json!({ "header": "If-Match", "field": field, "etagOf": representation });
         features.push("http.precondition@1");
+        if let Some(target) = &binding.precondition_target {
+            http["precondition"]["target"] = json!({ "operation": target.operation, "path": sources.get(&target.operation),
+                "parameter": target.parameter, "inputField": target.input_field });
+            features.push("http.precondition-target@1");
+        }
+    }
+    if binding.operation_version {
+        http["operationVersionHeader"] = json!("Trestle-Operation-Version");
+        features.push("http.operation-version@1");
     }
     let mut success = json!({
         "status": binding.success_status,
@@ -125,7 +152,7 @@ pub fn form_interaction(
     }
     let mut descriptor = json!({
         "protocol": PROTOCOL,
-        "protocolVersion": PROTOCOL_VERSION,
+        "protocolVersion": if binding.operation_version || binding.precondition_target.is_some() || form.layout.is_some() || form.fields.iter().any(|f| f.source.as_ref().is_some_and(|s| s.lookup.is_some())) { "1.1" } else { PROTOCOL_VERSION },
         "requiredFeatures": features,
         "interactionId": form.id,
         "audience": form.audience.as_str(),
@@ -182,6 +209,8 @@ mod tests {
             if_match: None,
             no_content: false,
             idempotency_key: false,
+            operation_version: false,
+            precondition_target: None,
         };
         let op = || OperationRef {
             id: "notes.add",
@@ -221,6 +250,8 @@ mod tests {
             if_match: None,
             no_content: false,
             idempotency_key: false,
+            operation_version: false,
+            precondition_target: None,
         };
         let op = || OperationRef {
             id: "lessons.create",

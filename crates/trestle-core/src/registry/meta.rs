@@ -288,6 +288,66 @@ where
     )
 }
 
+type ViewIndex<S> = Vec<(trestle_protocol::view::ViewDoc, AdminCheck<S>)>;
+
+pub(crate) fn ui_manifest_route<S>(index: ViewIndex<S>) -> MethodRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    let index = Arc::new(index);
+    get(move |State(state): State<S>, request: Request| {
+        let index = index.clone();
+        async move {
+            let (mut parts, _) = request.into_parts();
+            let mut views = vec![];
+            let mut authentication = None;
+            for (doc, check) in index.iter() {
+                match check(&mut parts, &state).await {
+                    Ok(()) => views.push(json!({ "viewId": doc.view_id, "revision": doc.revision,
+                        "audience": doc.audience, "kind": doc.kind, "title": doc.title,
+                        "url": format!("/_meta/v1/ui/views/{}", doc.view_id) })),
+                    Err(problem) if problem.status() == http::StatusCode::UNAUTHORIZED => {
+                        authentication = Some(problem);
+                    }
+                    Err(_) => {} // Publication refuses discovery; no policy details leak.
+                }
+            }
+            if views.is_empty()
+                && let Some(problem) = authentication
+            {
+                return no_store(problem.into_response());
+            }
+            no_store(Json(json!({ "protocol": "trestle.views", "protocolVersion": "1.0", "views": views })).into_response())
+        }
+    })
+}
+
+pub(crate) fn ui_view_route<S>(index: ViewIndex<S>) -> MethodRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    let index = Arc::new(index);
+    get(
+        move |State(state): State<S>, id: Result<Path<String>, PathRejection>, request: Request| {
+            let index = index.clone();
+            async move {
+                let id = id.map(|Path(id)| id).unwrap_or_default();
+                let (mut parts, _) = request.into_parts();
+                let Some((doc, check)) = index.iter().find(|(doc, _)| doc.view_id == id) else {
+                    return no_store(Problem::not_found().into_response());
+                };
+                match check(&mut parts, &state).await {
+                    Ok(()) => no_store(Json(doc).into_response()),
+                    Err(problem) if problem.status() == http::StatusCode::UNAUTHORIZED => {
+                        no_store(problem.into_response())
+                    }
+                    Err(_) => no_store(Problem::not_found().into_response()),
+                }
+            }
+        },
+    )
+}
+
 fn no_store(mut response: Response) -> Response {
     response.headers_mut().insert(
         header::CACHE_CONTROL,

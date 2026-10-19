@@ -26,6 +26,13 @@ tenancy), a small `src/main.rs`, committed migrations, and a `.env` with
 fresh development keys and a development token. The generated `README.md`
 walks through the first tenant and the first request.
 
+The local views implementation adds `trestle new notes --admin` for a separate
+React admin host. Existing explicit admin registrations gain routed collection
+and record pages; application views can add related sections and compiled
+extensions. See the [views guide](docs/guide/views-implementation.md) for local
+package installation, compatibility rules and validation commands. The frontend
+packages have not been published by this change.
+
 To depend on Trestle directly, add the `trestle-framework` package from
 crates.io. Its library is named `trestle`, so code uses `use trestle::...`:
 

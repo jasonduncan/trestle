@@ -27,6 +27,7 @@ pub struct Invocation {
     actor: Option<ActorId>,
     tenant: Option<Uuid>,
     idempotency_key: Option<String>,
+    expected_operation_version: Option<String>,
 }
 
 impl Invocation {
@@ -43,6 +44,7 @@ impl Invocation {
             actor: Some(actor),
             tenant: None,
             idempotency_key: None,
+            expected_operation_version: None,
         }
     }
 
@@ -73,6 +75,38 @@ impl Invocation {
 
     pub fn idempotency_key(&self) -> Option<&str> {
         self.idempotency_key.as_deref()
+    }
+
+    /// Pin a command's semantics. Checked after context resolution and before
+    /// receipt selection or execution, for HTTP and trusted callers alike.
+    pub fn with_operation_version(mut self, version: impl Into<String>) -> Self {
+        self.expected_operation_version = Some(version.into());
+        self
+    }
+
+    pub fn check_operation_version(&self, actual: &str) -> Result<(), Problem> {
+        if self
+            .expected_operation_version
+            .as_deref()
+            .is_some_and(|v| v != actual)
+        {
+            return Err(Problem::conflict("operation_version_stale"));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn http_operation_version(mut self, parts: &Parts) -> Result<Self, Problem> {
+        if let Some(value) = parts.headers.get("Trestle-Operation-Version") {
+            let value = value
+                .to_str()
+                .ok()
+                .filter(|v| !v.is_empty() && v.len() <= 128)
+                .ok_or_else(|| {
+                    Problem::malformed("operation_version_invalid", "Invalid operation version.")
+                })?;
+            self.expected_operation_version = Some(value.into());
+        }
+        Ok(self)
     }
 
     /// Reads what `descriptor` declares, and nothing else: credentials only
@@ -114,6 +148,7 @@ impl Invocation {
             actor,
             tenant,
             idempotency_key: None,
+            expected_operation_version: None,
         })
     }
 }

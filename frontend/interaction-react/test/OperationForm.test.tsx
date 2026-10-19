@@ -6,14 +6,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { OperationForm } from "../src/OperationForm";
 import type { Reply, Transport } from "../src/transport";
-import { publishedDescriptor, repoJson } from "./support";
+import { publishedDescriptor, repoJson, savedLesson, frameworkProblem } from "./support";
 
 afterEach(cleanup);
 
 const ok = (body: unknown, status = 200): Reply => ({
   kind: "response",
   status,
-  body,
+  body: frameworkProblem(body, status),
   bytes: JSON.stringify(body).length,
 });
 
@@ -61,7 +61,7 @@ function fakeTransport(descriptors: any[], replies: Reply[] = []) {
     },
     submit: async (descriptor, body, record) => {
       submits.push({ descriptor, body, record });
-      return replies.shift() ?? ok({ id: "01a0dc49-2bf1-7112-b58a-ea138be5bdf1" }, 201);
+      return replies.shift() ?? ok(savedLesson(), 201);
     },
   };
   return { transport, loads, lists, submits };
@@ -74,6 +74,21 @@ async function fill(label: RegExp, text: string) {
 }
 
 describe("OperationForm", () => {
+  it("groups the same contract fields into labeled sections and columns", async () => {
+    const descriptor = publishedDescriptor();
+    const children = descriptor.presentation.layout.children;
+    descriptor.protocolVersion = "1.1";
+    descriptor.requiredFeatures.push("forms.layout@1");
+    descriptor.presentation.layout = { kind: "section", id: "details", label: "Lesson details", children: [{ kind: "columns", id: "main", children: [
+      { kind: "section", id: "left", label: "Core fields", children: children.slice(0, 2) },
+      { kind: "section", id: "right", label: "More fields", children: children.slice(2) },
+    ] }] };
+    const { transport } = fakeTransport([descriptor]);
+    render(<OperationForm interaction="lessons.create.form" transport={transport} />);
+    expect(await screen.findByRole("group", { name: "Lesson details" })).toBeDefined();
+    expect(screen.getByLabelText("Title")).toBeDefined();
+    expect(screen.getByLabelText("Grade level")).toBeDefined();
+  });
   it("renders the published form with labels and help", async () => {
     const { transport } = fakeTransport([withAvailability(publishedDescriptor())]);
     render(<OperationForm interaction="lessons.create.form" transport={transport} />);
@@ -261,6 +276,6 @@ describe("OperationForm", () => {
   it("shows why a form cannot be loaded", async () => {
     const { transport } = fakeTransport([ok({ status: 403, code: "tenant_not_permitted" }, 403)]);
     render(<OperationForm interaction="lessons.create.form" transport={transport} />);
-    expect((await screen.findByRole("alert")).textContent).toBe("You're not a member of the selected school.");
+    expect((await screen.findByRole("alert")).textContent).toBe("You're not a member of the selected tenant.");
   });
 });

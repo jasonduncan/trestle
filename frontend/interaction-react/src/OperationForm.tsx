@@ -5,10 +5,12 @@
 // through the descriptor's binding with its revision, and maps problem+json
 // responses back onto fields. It never retries a write on its own.
 
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type FormEvent } from "react";
 
-import { decodeDescriptor, type Descriptor, type FieldSchema, type PresentedField } from "./protocol";
-import { asProblem, etagVersion, type RecordContext, type Transport } from "./transport";
+import { operationRuntime } from "@trestle/client";
+
+import { decodeDescriptor, type Descriptor, type FormLayout, type FieldSchema, type PresentedField } from "./protocol";
+import { asProblem, etagVersion, fillPath, type RecordContext, type Transport } from "./transport";
 import { validateInstance, type FieldError } from "./validate";
 import { defaultWidgets, words, type Widget, type WidgetRegistry } from "./widgets";
 
@@ -23,6 +25,11 @@ export interface OperationFormProps {
    * field values. Only fields the person changes are sent (§9.3).
    */
   record?: RecordContext & { values?: Record<string, unknown> };
+  expectedRevision?: string;
+  flowId?: string;
+  controllerKey?: string;
+  boundInputs?: Record<string, unknown>;
+  onDirtyChange?: (dirty: boolean) => void;
   onSuccess?: (output: unknown, descriptor: Descriptor, etag?: string) => void;
 }
 
@@ -42,7 +49,7 @@ type Values = Record<string, string | boolean>;
 /** Friendly text for stable problem codes; anything else uses detail/title. */
 const MESSAGES: Record<string, string> = {
   permission_denied: "You don't have permission to do this.",
-  tenant_not_permitted: "You're not a member of the selected school.",
+  tenant_not_permitted: "You're not a member of the selected tenant.",
   credentials_missing: "Please sign in.",
   credentials_invalid: "Your session is no longer valid. Please sign in again.",
   outcome_unknown: "We couldn't confirm whether this was saved. Check before trying again.",
@@ -51,15 +58,14 @@ const MESSAGES: Record<string, string> = {
   stale_version: "Someone changed this since you opened it. Reload to see the latest version, then try again.",
 };
 
-const UNKNOWN_OUTCOME = "We couldn't confirm whether this was saved. Check before trying again.";
 
-function prepare(descriptor: Descriptor, widgets: WidgetRegistry): { fields: RenderField[]; unsupported: string[] } {
+function prepare(descriptor: Descriptor, widgets: WidgetRegistry, boundInputs: Record<string, unknown> = {}): { fields: RenderField[]; unsupported: string[] } {
   const unsupported = descriptor.missingFeatures.map((f) => `needs renderer feature ${f}`);
   const fields: RenderField[] = [];
   for (const presented of descriptor.presentation.fields) {
     const field = descriptor.input.schema.fields.find((f) => f.name === presented.name);
     const widget = widgets[presented.widget];
-    if (!field) continue;
+    if (!field || Object.hasOwn(boundInputs, field.name)) continue;
     if (!widget || !widget.accepts(field)) {
       // An optional field this app cannot edit is left out; a required one
       // makes the form unusable (§9.2).
@@ -69,7 +75,7 @@ function prepare(descriptor: Descriptor, widgets: WidgetRegistry): { fields: Ren
     fields.push({ field, presented, widget });
   }
   // Path fields and the precondition version come from the record, not a person.
-  const bound = new Set([...descriptor.operation.pathParams, descriptor.operation.precondition?.field]);
+  const bound = new Set([...descriptor.operation.pathParams, descriptor.operation.precondition?.field, ...Object.keys(boundInputs)]);
   for (const field of descriptor.input.schema.fields) {
     if (bound.has(field.name)) continue;
     if (field.required && !fields.some((f) => f.field.name === field.name) && !unsupported.some((u) => u.includes(field.name))) {
@@ -102,26 +108,49 @@ export function OperationForm({
   apiPrefix,
   record,
   onSuccess,
+  expectedRevision,
+  flowId = "default",
+  controllerKey,
+  boundInputs,
+  onDirtyChange,
 }: OperationFormProps) {
   const baseId = useId();
+  const runtime = operationRuntime(transport);
+  const epoch = useSyncExternalStore(runtime.subscribe, runtime.epoch);
+  const observedEpoch = useRef(epoch);
+  const target = JSON.stringify(record?.path ?? {});
+  const controller = useMemo(() => operationRuntime(transport).operation(controllerKey ?? interaction + ":" + target + ":" + flowId, transport), [transport, controllerKey, interaction, target, flowId]);
+  const attempt = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
+  const unresolved = ["submitting", "outcome_unknown", "committed_unreadable", "queued"].includes(attempt.state);
   const [loaded, setLoaded] = useState<Loaded>({ phase: "loading" });
   const [values, setValues] = useState<Values>({});
   const [fieldErrors, setFieldErrors] = useState<Record<string, FieldError[]>>({});
   const [formErrors, setFormErrors] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [status, setStatus] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  const submitting = attempt.state === "submitting";
   const [focusErrors, setFocusErrors] = useState(0);
   const summaryRef = useRef<HTMLDivElement>(null);
+  const loadGeneration = useRef(0);
   const current = useRef<{ values: Values; fields: RenderField[] }>({ values: {}, fields: [] });
   /** Edit forms: the values as loaded, to send only what changed. */
   const baseline = useRef<Values>({});
   const [etag, setEtag] = useState(record?.etag);
   const recordValues = record?.values;
+  useEffect(() => {
+    if (observedEpoch.current === epoch) return;
+    observedEpoch.current = epoch;
+    loadGeneration.current++;
+    current.current = { values: {}, fields: [] }; baseline.current = {};
+    setValues({}); setEtag(undefined); setFieldErrors({}); setFormErrors([]);
+    setLoaded({ phase: "blocked", message: "Access context changed. Reload before continuing." });
+  }, [epoch]);
 
   const load = useCallback(
     async (keep: boolean) => {
+      const generation = ++loadGeneration.current;
       const reply = await transport.getInteraction(interaction);
+      if (generation !== loadGeneration.current) return;
       if (reply.kind === "network-error") {
         setLoaded({ phase: "blocked", message: "This form could not be loaded. Check your connection and try again." });
         return;
@@ -137,7 +166,24 @@ export function OperationForm({
         setLoaded({ phase: "blocked", message: `This version of the app can't show this form (${decoded.error}).` });
         return;
       }
-      const { fields, unsupported } = prepare(decoded.descriptor, widgets);
+      const mixedRevision = expectedRevision && decoded.descriptor.revision !== expectedRevision;
+      if (mixedRevision && !keep) {
+        setLoaded({ phase: "blocked", message: "The view and form are from different releases. Reload the workspace before continuing." });
+        return;
+      }
+      const precondition = decoded.descriptor.operation.precondition;
+      if (precondition?.target) {
+        const target = precondition.target;
+        const value = boundInputs?.[target.inputField] ?? record?.path?.[target.inputField] ?? recordValues?.[target.inputField];
+        const current = value === undefined ? undefined : await transport.list(fillPath(target.path, { [target.parameter]: value }));
+        if (generation !== loadGeneration.current) return;
+        if (current?.kind !== "response" || current.status !== 200 || !current.etag?.startsWith('"' + precondition.etagOf + ':')) {
+          setLoaded({ phase: "blocked", message: "The concurrency target is unavailable. Refresh your access or record." }); return;
+        }
+        setEtag(current.etag);
+      }
+      const { fields, unsupported } = prepare(decoded.descriptor, widgets, boundInputs);
+      if (mixedRevision) unsupported.push("The workspace and form are from different releases. Copy your retained entries before reloading the workspace.");
       baseline.current = initialValues(fields, {}, [], recordValues);
       const next = keep
         ? initialValues(fields, current.current.values, current.current.fields, recordValues)
@@ -146,13 +192,28 @@ export function OperationForm({
       setValues(next);
       setLoaded({ phase: "ready", descriptor: decoded.descriptor, fields, unsupported });
     },
-    [interaction, transport, widgets, apiPrefix, recordValues],
+    [interaction, transport, widgets, apiPrefix, recordValues, expectedRevision, boundInputs],
   );
 
   useEffect(() => {
     setLoaded({ phase: "loading" });
     void load(false);
+    return () => { loadGeneration.current++; };
   }, [load]);
+
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
+      if (JSON.stringify(current.current.values) !== JSON.stringify(baseline.current)) { event.preventDefault(); event.returnValue = ""; }
+    };
+    const navigate = (event: Event) => {
+      const dirty = JSON.stringify(current.current.values) !== JSON.stringify(baseline.current);
+      const unresolved = ["submitting", "outcome_unknown", "queued"].includes(controller.getSnapshot().state);
+      if (dirty && !unresolved && !window.confirm("Discard unsaved changes?")) event.preventDefault();
+    };
+    window.addEventListener("beforeunload", warn);
+    window.addEventListener("trestle:navigate", navigate);
+    return () => { window.removeEventListener("beforeunload", warn); window.removeEventListener("trestle:navigate", navigate); };
+  }, []);
 
   useEffect(() => {
     if (focusErrors > 0) summaryRef.current?.focus();
@@ -175,6 +236,7 @@ export function OperationForm({
     const next = { ...current.current.values, [name]: value };
     current.current.values = next;
     setValues(next);
+    onDirtyChange?.(JSON.stringify(next) !== JSON.stringify(baseline.current));
   };
 
   const showErrors = (errors: FieldError[], fallback: string[]) => {
@@ -194,10 +256,10 @@ export function OperationForm({
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (submitting) return;
+    if (unresolved || unsupported.length || descriptor.availability?.available === false) return;
     setNotice(null);
     const editing = descriptor.operation.method === "PATCH";
-    const payload: Record<string, unknown> = {};
+    const payload: Record<string, unknown> = { ...boundInputs };
     for (const { field, widget } of fields) {
       const raw = values[field.name] ?? widget.empty(field);
       if (editing && raw === baseline.current[field.name]) continue;
@@ -223,51 +285,86 @@ export function OperationForm({
       return;
     }
 
-    setSubmitting(true);
-    setStatus("Saving…");
-    const reply = await transport.submit(descriptor, local.value, { path: record?.path, etag });
-    setSubmitting(false);
-    if (reply.kind === "network-error") {
-      setFieldErrors({});
-      setFormErrors([UNKNOWN_OUTCOME]);
-      setStatus("");
-      setFocusErrors((n) => n + 1);
+    const prepared = controller.prepare(descriptor, local.value, { path: record?.path, etag });
+    if (!prepared) {
+      const snapshot = controller.getSnapshot();
+      showErrors(snapshot.errors, [snapshot.message]);
       return;
     }
-    if (reply.status === descriptor.operation.successStatus) {
+    await controller.execute(prepared);
+    const outcome = controller.getSnapshot();
+    if (outcome.state === "succeeded" || outcome.state === "queued") {
+      onDirtyChange?.(false);
       setFieldErrors({});
       setFormErrors([]);
       if (editing) {
         // The saved values are the new baseline; the new ETag guards the next edit.
         baseline.current = { ...values };
-        setEtag(reply.etag);
+        setEtag(outcome.etag);
       } else {
         const cleared = initialValues(fields, {}, []);
         current.current.values = cleared;
         setValues(cleared);
       }
       setStatus("Saved.");
-      onSuccess?.(reply.body, descriptor, reply.etag);
+      onSuccess?.(outcome.result, descriptor, outcome.etag);
       return;
     }
-    const problem = asProblem(reply.body);
     setStatus("");
-    if (reply.status === 409 && problem.code === "interaction_stale") {
-      // The server refused this revision before doing anything. Reload the
-      // form, keep compatible entries, and let the person review (§11.4).
-      setFieldErrors({});
-      setFormErrors([]);
+    if (outcome.code === "interaction_stale") {
+      setFieldErrors({}); setFormErrors([]);
       await load(true);
       setNotice("This form changed since you opened it. Review your entries, then submit again.");
       return;
     }
-    const message = (problem.code && MESSAGES[problem.code]) ?? problem.detail ?? problem.title ?? `The request failed (${reply.status}).`;
-    const errors = problem.errors ?? [];
-    showErrors(errors, errors.length > 0 ? [] : [message]);
+    showErrors(outcome.errors, outcome.errors.length ? [] : [outcome.message]);
   };
 
   const allErrors = fields.flatMap((f) => (fieldErrors[f.field.name] ?? []).map((e) => ({ name: f.field.name, label: f.presented.label, message: e.message })));
   const blocked = unsupported.length > 0;
+
+  const renderField = ({ field, presented, widget }: RenderField) => {
+        const id = fieldId(field.name);
+        const errors = fieldErrors[field.name] ?? [];
+        const helpId = presented.help ? `${id}-help` : undefined;
+        const errorId = errors.length > 0 ? `${id}-error` : undefined;
+        const describedBy = [helpId, errorId].filter(Boolean).join(" ") || undefined;
+        return (
+          <div className="trestle-field" key={field.name}>
+            <label htmlFor={id}>
+              {presented.label}
+              {field.required ? "" : " (optional)"}
+            </label>
+            {presented.help && (
+              <p className="trestle-help" id={helpId}>
+                {presented.help}
+              </p>
+            )}
+            {widget.render({
+              id,
+              field,
+              presented,
+              transport,
+              value: values[field.name] ?? widget.empty(field),
+              onChange: (value) => setValue(field.name, value),
+              invalid: errors.length > 0,
+              describedBy,
+            })}
+            {errors.length > 0 && (
+              <p className="trestle-error" id={errorId}>
+                {errors.map((e) => e.message).join(" ")}
+              </p>
+            )}
+          </div>
+        );
+  };
+
+  const renderLayout = (node: FormLayout): ReactNode => {
+    if (node.kind === "field") { const field = fields.find((f) => f.presented.pointer === node.pointer); return field ? renderField(field) : null; }
+    const children = node.children?.map((child, i) => <div key={child.id ?? child.pointer ?? i}>{renderLayout(child)}</div>);
+    if (node.kind === "section") return <fieldset className="trestle-section"><legend>{node.label}</legend>{children}</fieldset>;
+    return <div className={node.kind === "columns" ? "trestle-columns" : "trestle-vertical"}>{children}</div>;
+  };
 
   return (
     <form className="trestle-form" aria-labelledby={titleId} noValidate onSubmit={(e) => void submit(e)}>
@@ -309,46 +406,12 @@ export function OperationForm({
           {(descriptor.availability?.reason && MESSAGES[descriptor.availability.reason]) ?? "You can't submit this form right now."}
         </p>
       )}
-      {fields.map(({ field, presented, widget }) => {
-        const id = fieldId(field.name);
-        const errors = fieldErrors[field.name] ?? [];
-        const helpId = presented.help ? `${id}-help` : undefined;
-        const errorId = errors.length > 0 ? `${id}-error` : undefined;
-        const describedBy = [helpId, errorId].filter(Boolean).join(" ") || undefined;
-        return (
-          <div className="trestle-field" key={field.name}>
-            <label htmlFor={id}>
-              {presented.label}
-              {field.required ? "" : " (optional)"}
-            </label>
-            {presented.help && (
-              <p className="trestle-help" id={helpId}>
-                {presented.help}
-              </p>
-            )}
-            {widget.render({
-              id,
-              field,
-              presented,
-              transport,
-              value: values[field.name] ?? widget.empty(field),
-              onChange: (value) => setValue(field.name, value),
-              invalid: errors.length > 0,
-              describedBy,
-            })}
-            {errors.length > 0 && (
-              <p className="trestle-error" id={errorId}>
-                {errors.map((e) => e.message).join(" ")}
-              </p>
-            )}
-          </div>
-        );
-      })}
-      <button type="submit" disabled={submitting || blocked || !available}>
+      {descriptor.presentation.layout ? renderLayout(descriptor.presentation.layout) : fields.map(renderField)}
+      <button type="submit" disabled={unresolved || blocked || !available}>
         {descriptor.presentation.submitLabel}
       </button>
       <p className="trestle-status" aria-live="polite">
-        {status}
+        {unresolved ? attempt.message : status}
       </p>
     </form>
   );

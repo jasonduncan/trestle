@@ -11,6 +11,11 @@ mod meta;
 mod resource;
 mod routes;
 mod sdk;
+mod view;
+pub use view::{
+    PresentationOverride, PublishedView, SectionDefinition, UI_MANIFEST_PATH, UI_VIEW_PATH,
+    ViewDefinition,
+};
 
 pub use meta::{
     ADMIN_INTERACTION_PATH, ADMIN_MANIFEST_PATH, Availability, INTERACTION_PATH, MANIFEST_PATH,
@@ -79,6 +84,8 @@ pub struct AppBuilder<S> {
     operations: Vec<RegisteredOperation<S>>,
     forms: Vec<RegisteredForm>,
     resources: Vec<RegisteredResource<S>>,
+    views: Vec<view::ViewRegistration<S>>,
+    view_overrides: Vec<PresentationOverride>,
     unmanaged: Vec<UnmanagedRoute<S>>,
     jobs: Vec<RegisteredJob<S>>,
 }
@@ -101,6 +108,8 @@ impl<S> AppBuilder<S> {
             operations: Vec::new(),
             forms: Vec::new(),
             resources: Vec::new(),
+            views: Vec::new(),
+            view_overrides: Vec::new(),
             unmanaged: Vec::new(),
             jobs: Vec::new(),
         }
@@ -196,6 +205,7 @@ impl<S> AppBuilder<S> {
                         });
                     };
                     let ctx = O::Context::resolve(invocation, state).await?;
+                    invocation.check_operation_version(O::INFO.version)?;
                     let input = validate::<O::Input>(input)?;
                     let keyed =
                         execute_keyed(&PgPool::from_ref(state), &*op, &ctx, input, invocation, key)
@@ -248,6 +258,7 @@ impl<S> AppBuilder<S> {
                         return invoke_dyn(state, op, invocation, input).await;
                     };
                     let ctx = op.resolve_context(invocation, state).await?;
+                    invocation.check_operation_version(&op.info().version)?;
                     let id = op.info().id.clone();
                     let keyed = execute_dyn_keyed(
                         &PgPool::from_ref(state),
@@ -588,6 +599,23 @@ impl<S: 'static> Project<S> {
             ));
         }
         check_resources(&builders, &mut issues);
+        for builder in &builders {
+            for view in &builder.views {
+                let definition = &view.definition;
+                if !valid_stable_id(&definition.id) || owner(&definition.id) != &*builder.app {
+                    issues.push(format!(
+                        "view {} must be namespaced to app {}",
+                        definition.id, builder.app
+                    ));
+                }
+                if !visible(builder, owner(&definition.query)) {
+                    issues.push(format!(
+                        "view {} uses an operation from an app it does not require",
+                        definition.id
+                    ));
+                }
+            }
+        }
         check_jobs(&builders, &mut issues);
         check_effects(&builders, desired.as_ref(), &mut issues);
 
@@ -645,10 +673,13 @@ impl<S: 'static> Project<S> {
             operations: Vec::new(),
             forms: Vec::new(),
             resources: Vec::new(),
+            views: Vec::new(),
             unmanaged: Vec::new(),
             schema: Vec::new(),
             jobs: Vec::new(),
         };
+        let mut view_registrations = Vec::new();
+        let mut view_overrides = Vec::new();
         for index in order {
             let builder = slots[index].take().expect("each app appears once in order");
             registry.apps.push(AppInfo {
@@ -671,9 +702,14 @@ impl<S: 'static> Project<S> {
             registry.operations.extend(builder.operations);
             registry.forms.append(&mut published[index]);
             registry.resources.extend(builder.resources);
+            view_registrations.extend(builder.views);
+            view_overrides.extend(builder.view_overrides);
             registry.unmanaged.extend(builder.unmanaged);
             registry.jobs.extend(builder.jobs);
         }
+        registry
+            .assemble_views(view_registrations, view_overrides)
+            .map_err(|issues| AssemblyError { issues })?;
         Ok(registry)
     }
 }
@@ -803,6 +839,42 @@ fn check_operations<S>(builders: &[AppBuilder<S>], issues: &mut Vec<String>) {
             }
             if let Some(binding) = &op.binding {
                 check_binding(id, &op.input, &op.output, binding, issues);
+                if let Some(target) = &binding.precondition_target {
+                    let source = builders
+                        .iter()
+                        .flat_map(|b| &b.operations)
+                        .find(|o| o.info.id.as_ref() == target.operation);
+                    let valid = source.is_some_and(|source| {
+                        source.info.mode == crate::operation::Mode::Read
+                            && source.output.id == target.representation
+                            && op
+                                .info
+                                .audiences
+                                .iter()
+                                .all(|a| source.info.audiences.contains(a))
+                            && source.binding.as_ref().is_some_and(|b| {
+                                b.method == "GET"
+                                    && b.etag.is_some()
+                                    && b.path_params() == [target.parameter.as_str()]
+                            })
+                            && source
+                                .input
+                                .fields
+                                .iter()
+                                .all(|f| !f.required || f.name == target.parameter)
+                            && source
+                                .input
+                                .get(&target.parameter)
+                                .zip(op.input.get(&target.input_field))
+                                .is_some_and(|(a, b)| a.ty == b.ty)
+                    });
+                    if !valid || binding.if_match.is_none() {
+                        issues.push(format!(
+                            "operation {id}: invalid precondition target {}",
+                            target.operation
+                        ));
+                    }
+                }
             }
         }
     }
@@ -951,6 +1023,40 @@ fn check_forms<S>(builders: &[AppBuilder<S>], issues: &mut Vec<String>) {
                                 && item.get(&source.label).is_some()
                         })
                 });
+                if let Some(lookup) = &source.lookup {
+                    let resolve = builders
+                        .iter()
+                        .flat_map(|b| &b.operations)
+                        .find(|o| o.info.id.as_ref() == lookup.resolve_operation);
+                    let search_valid = list.is_some_and(|o| {
+                        o.info.mode == crate::operation::Mode::Read
+                            && o.input.get(&lookup.search_field).is_some_and(|f| {
+                                matches!(
+                                    f.ty,
+                                    FieldType::Text {
+                                        max_chars: Some(_),
+                                        ..
+                                    }
+                                )
+                            })
+                            && o.input.get("cursor").is_some()
+                            && o.input.get("limit").is_some()
+                    });
+                    let resolve_valid = resolve.is_some_and(|o| {
+                        o.info.mode == crate::operation::Mode::Read
+                            && o.binding
+                                .as_ref()
+                                .is_some_and(|b| b.method == "GET" && b.path_params() == ["id"])
+                            && o.output.get("id").is_some_and(|f| f.ty == FieldType::Uuid)
+                            && o.output.get(&source.label).is_some()
+                            && visible(builder, owner(&o.info.id))
+                    });
+                    if !search_valid || !resolve_valid {
+                        issues.push(format!(
+                            "form {id}: invalid relation search/resolve binding"
+                        ));
+                    }
+                }
                 if !valid {
                     issues.push(format!(
                         "form {id}: relation options come from {}, which must be a GET list operation whose items have id and {}",
@@ -1028,7 +1134,7 @@ fn publish_forms<S>(
                     let form = &registered.form;
                     let op = operations.iter().find(|o| *o.info.id == *form.operation)?;
                     let binding = op.binding.as_ref()?;
-                    let descriptor = form_interaction(
+                    let mut descriptor = form_interaction(
                         form,
                         OperationRef {
                             id: &op.info.id,
@@ -1039,6 +1145,50 @@ fn publish_forms<S>(
                         &op.output,
                         &sources,
                     );
+                    // New lookup editors carry the actual resolved read contracts and
+                    // bindings. Leave every legacy descriptor byte unchanged.
+                    fn bind_lookups<S>(
+                        node: &mut Value,
+                        operations: &[&RegisteredOperation<S>],
+                    ) -> bool {
+                        let mut changed = false;
+                        if let Some(options) = node.get_mut("options")
+                            && options.get("lookup").is_some()
+                        {
+                            let search = options["operation"].as_str().unwrap_or_default();
+                            let resolve = options["lookup"]["resolveOperation"]
+                                .as_str()
+                                .unwrap_or_default();
+                            let bindings: Vec<Value> = [search, resolve]
+                                .iter()
+                                .map(|id| {
+                                    operations
+                                        .iter()
+                                        .find(|o| o.info.id.as_ref() == *id)
+                                        .and_then(|o| view::invocation(o, None).ok())
+                                        .and_then(|doc| serde_json::to_value(doc).ok())
+                                        .unwrap_or(Value::Null)
+                                })
+                                .collect();
+                            options["lookup"]["searchBinding"] = bindings[0].clone();
+                            options["lookup"]["resolveBinding"] = bindings[1].clone();
+                            changed = true;
+                        }
+                        if let Some(children) =
+                            node.get_mut("children").and_then(Value::as_array_mut)
+                        {
+                            for child in children {
+                                changed |= bind_lookups(child, operations);
+                            }
+                        }
+                        changed
+                    }
+                    if bind_lookups(&mut descriptor["presentation"]["layout"], &operations) {
+                        descriptor.as_object_mut().unwrap().remove("revision");
+                        let hash = trestle_protocol::digest(&descriptor);
+                        descriptor["revision"] =
+                            serde_json::json!(format!("r-{}", &hash["sha256:".len()..][..16]));
+                    }
                     let size = descriptor.to_string().len();
                     if size > limits::DESCRIPTOR_BYTES {
                         issues.push(format!(
@@ -1178,6 +1328,20 @@ fn check_resources<S>(builders: &[AppBuilder<S>], issues: &mut Vec<String>) {
                 }
             }
             for admin_action in &view.actions {
+                if let Some(id) = &admin_action.form {
+                    let target = resource
+                        .actions
+                        .iter()
+                        .find(|(n, _)| n == &admin_action.name)
+                        .map(|(_, id)| id.as_ref());
+                    if !forms.iter().any(|f| {
+                        &f.form.id == id
+                            && f.form.audience == Audience::Admin
+                            && Some(f.form.operation.as_str()) == target
+                    }) {
+                        issues.push(format!("resource {id}: invalid action form {id}"));
+                    }
+                }
                 let name = &admin_action.name;
                 if let Some((field, _)) = &admin_action.visible_when
                     && item.is_none_or(|item| item.get(field).is_none())
@@ -1195,7 +1359,10 @@ fn check_resources<S>(builders: &[AppBuilder<S>], issues: &mut Vec<String>) {
                     )),
                     Some(action) => {
                         for field in action.input.fields.iter().filter(|f| f.required) {
-                            if field.name != "id" && field.name != EXPECTED_VERSION_FIELD {
+                            if field.name != "id"
+                                && field.name != EXPECTED_VERSION_FIELD
+                                && admin_action.form.is_none()
+                            {
                                 issues.push(format!(
                                     "resource {id}: admin action {name} needs input {}, which the admin shell cannot supply yet",
                                     field.name
@@ -1284,6 +1451,8 @@ fn check_routes<S>(builders: &[AppBuilder<S>], issues: &mut Vec<String>) {
         ("GET".into(), MANIFEST_PATH.into(), "system".into()),
         ("GET".into(), INTERACTION_PATH.into(), "system".into()),
         ("GET".into(), ADMIN_MANIFEST_PATH.into(), "system".into()),
+        ("GET".into(), UI_MANIFEST_PATH.into(), "system".into()),
+        ("GET".into(), UI_VIEW_PATH.into(), "system".into()),
         ("GET".into(), ADMIN_INTERACTION_PATH.into(), "system".into()),
     ];
     let mut claim = |method: &str, path: &str, owner: String, issues: &mut Vec<String>| {
@@ -1340,6 +1509,7 @@ pub struct Registry<S> {
     operations: Vec<RegisteredOperation<S>>,
     forms: Vec<PublishedForm>,
     resources: Vec<RegisteredResource<S>>,
+    views: Vec<PublishedView<S>>,
     unmanaged: Vec<UnmanagedRoute<S>>,
     schema: Vec<MigrationRef>,
     jobs: Vec<RegisteredJob<S>>,
@@ -1444,6 +1614,8 @@ impl<S> Registry<S> {
             INTERACTION_PATH,
             ADMIN_MANIFEST_PATH,
             ADMIN_INTERACTION_PATH,
+            UI_MANIFEST_PATH,
+            UI_VIEW_PATH,
         ]
         .into_iter()
         .map(|path| RouteInfo {
@@ -1513,6 +1685,24 @@ where
                 })
                 .collect(),
         );
+        add(
+            UI_MANIFEST_PATH,
+            meta::ui_manifest_route(
+                self.views
+                    .iter()
+                    .map(|v| (v.document.clone(), v.check.clone()))
+                    .collect(),
+            ),
+        );
+        add(
+            UI_VIEW_PATH,
+            meta::ui_view_route(
+                self.views
+                    .iter()
+                    .map(|v| (v.document.clone(), v.check.clone()))
+                    .collect(),
+            ),
+        );
         add(MANIFEST_PATH, meta::manifest_route(index.clone()));
         add(INTERACTION_PATH, meta::interaction_route(index));
 
@@ -1538,6 +1728,9 @@ where
                         r.admin_view().is_some_and(|v| {
                             v.edit_form.as_deref() == Some(&f.form.id)
                                 || v.create_form.as_deref() == Some(&f.form.id)
+                                || v.actions
+                                    .iter()
+                                    .any(|a| a.form.as_deref() == Some(&f.form.id))
                         })
                     })?;
                     Some(meta::AdminFormEntry {

@@ -634,7 +634,11 @@ enum BuiltIn<X: Args> {
         json: bool,
     },
     /// Assemble and validate the registry. Offline.
-    Check,
+    Check {
+        /// Verify the compiled frontend feature/component manifest offline.
+        #[arg(long)]
+        renderer: Option<PathBuf>,
+    },
     /// Describe the assembled registry. Offline.
     Inspect {
         #[command(subcommand)]
@@ -647,6 +651,11 @@ enum BuiltIn<X: Args> {
     },
     /// Interaction descriptors (trestle.interactions/1.0). Offline.
     Interactions {
+        #[command(subcommand)]
+        action: Export,
+    },
+    /// Explicit application views. Offline.
+    Views {
         #[command(subcommand)]
         action: Export,
     },
@@ -832,6 +841,8 @@ enum SchemaCommand {
 enum Inspect {
     /// Installed apps in lifecycle order.
     Apps,
+    /// Explicit view sources and renderer requirements.
+    Views,
     /// Every route: managed, unmanaged (with waiver) and system.
     Routes,
     /// One operation: contracts, policy, binding, forms, effects.
@@ -971,8 +982,15 @@ where
                 ))
             }
         }
-        BuiltIn::Check => {
+        BuiltIn::Check { renderer } => {
             let mut problems = source.staleness(migrations_dir);
+            if let Some(path) = renderer {
+                let manifest: trestle_protocol::view::RendererManifest = serde_json::from_str(
+                    &std::fs::read_to_string(path).map_err(|e| e.to_string())?,
+                )
+                .map_err(|e| e.to_string())?;
+                problems.extend(registry.check_renderer(&manifest));
+            }
             match history() {
                 Ok(set) => {
                     problems.extend(trestle_historical::load::unused_steps(
@@ -1013,6 +1031,12 @@ where
                 "{}",
                 to_pretty(&registry.interactions_export(audience.into()))
             );
+            Ok(())
+        }
+        BuiltIn::Views {
+            action: Export::Export { audience },
+        } => {
+            print!("{}", to_pretty(&registry.views_export(audience.into())));
             Ok(())
         }
         BuiltIn::Openapi {
@@ -1268,6 +1292,17 @@ fn inspect<S>(registry: &Registry<S>, what: Inspect) -> Result<(), String> {
                     dash(&app.requires.join(", ")),
                     dash(&app.operations.join(", ")),
                     schema.join(", ")
+                );
+            }
+        }
+        Inspect::Views => {
+            for view in registry.views() {
+                println!(
+                    "{} {} {} {}",
+                    view.document.view_id,
+                    view.document.source.invocation.operation_id,
+                    view.document.revision,
+                    view.document.required_features.join(",")
                 );
             }
         }

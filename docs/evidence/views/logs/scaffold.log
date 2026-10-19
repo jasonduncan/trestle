@@ -1,0 +1,44 @@
+Created demo in /private/var/folders/d1/14469w611y9132985d0dxw1h0000gn/T/tmp.vgKBO6ZxMO/demo.
+
+Next:
+  cd /private/var/folders/d1/14469w611y9132985d0dxw1h0000gn/T/tmp.vgKBO6ZxMO/demo
+  createdb demo
+  trestle migrate
+  trestle check
+  cargo test
+
+.env holds development keys and a dev token (never commit it).
+   Compiling trestle-protocol v0.5.1 (/Users/jason/PDLabsShare/Projects/trestle/crates/trestle-protocol)
+   Compiling trestle-mail v0.5.1 (/Users/jason/PDLabsShare/Projects/trestle/crates/trestle-mail)
+   Compiling trestle-historical v0.5.1 (/Users/jason/PDLabsShare/Projects/trestle/crates/trestle-historical)
+   Compiling trestle-core v0.5.1 (/Users/jason/PDLabsShare/Projects/trestle/crates/trestle-core)
+   Compiling trestle-identity v0.5.1 (/Users/jason/PDLabsShare/Projects/trestle/crates/trestle-identity)
+   Compiling trestle-framework v0.5.1 (/Users/jason/PDLabsShare/Projects/trestle/crates/trestle)
+   Compiling demo v0.1.0 (/private/var/folders/d1/14469w611y9132985d0dxw1h0000gn/T/tmp.vgKBO6ZxMO/demo)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 34.02s
+     Running unittests src/main.rs (/Users/jason/PDLabsShare/Projects/trestle/target/scaffold/debug/deps/demo-50e1c2ee06c646e3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/api.rs (/Users/jason/PDLabsShare/Projects/trestle/target/scaffold/debug/deps/api-829e1860d9a8c564)
+
+running 1 test
+test a_member_creates_a_note ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.89s
+
+Registry OK: demo 0.0.0
+  apps (lifecycle order): workspace, directory, notes
+  operations:             directory.mine, notes.note.list, notes.note.get, notes.note.create, notes.note.update, notes.note.delete
+  forms:                  notes.note.admin_create.form, notes.note.admin_edit.form
+  routes:                 6 managed, 0 unmanaged, 6 system
+  required migrations:
+  contracts digest:       sha256:a1aceb36d8e163ed19c05729dd9005795fcbdb2c0019f0468ce253e9b7b811f5
+  interactions digest:    sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945
+Applied workspace.0001_initial
+Applied notes.0001_initial
+unverified: check and default expressions are not compared, only constraint names
+Verified: ledger and schema match committed history.
+Scaffold OK

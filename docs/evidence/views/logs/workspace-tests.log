@@ -1,0 +1,823 @@
+   Compiling trestle-protocol v0.5.1 (/Users/jason/PDLabsShare/Projects/trestle/crates/trestle-protocol)
+   Compiling trestle-historical v0.5.1 (/Users/jason/PDLabsShare/Projects/trestle/crates/trestle-historical)
+   Compiling trestle-core v0.5.1 (/Users/jason/PDLabsShare/Projects/trestle/crates/trestle-core)
+   Compiling pilot-migrations v0.0.1 (/Users/jason/PDLabsShare/Projects/trestle/examples/pilot-migrations)
+   Compiling trestle-identity v0.5.1 (/Users/jason/PDLabsShare/Projects/trestle/crates/trestle-identity)
+   Compiling trestle-framework v0.5.1 (/Users/jason/PDLabsShare/Projects/trestle/crates/trestle)
+   Compiling pilot v0.0.1 (/Users/jason/PDLabsShare/Projects/trestle/examples/pilot)
+   Compiling trestle-cli v0.5.1 (/Users/jason/PDLabsShare/Projects/trestle/crates/trestle-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2m 19s
+     Running unittests src/main.rs (target/debug/deps/loadtest-8b144ae82b2dc985)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/pilot-b598c29cd55f1dd1)
+
+running 14 tests
+test mail::tests::sending_needs_configuration ... ok
+test mail::tests::messages_name_the_account_and_carry_the_link ... ok
+test lessons::export::tests::cells_are_quoted_and_formulas_neutralized ... ok
+test lessons::contracts::tests::view_serializes_within_its_contract ... ok
+test lessons::contracts::tests::rejects_ownership_fields ... ok
+test lessons::contracts::tests::decodes_valid_input ... ok
+test lessons::contracts::tests::patch_keeps_missing_null_and_value_apart ... ok
+test server::tests::production_requires_an_identity_provider ... ok
+test server::tests::development_needs_some_identity ... ok
+test server::tests::id_tokens_cannot_double_as_api_tokens ... ok
+test server::tests::password_sign_in_alone_is_enough_for_production ... ok
+test server::tests::production_configuration_passes_when_complete ... ok
+test server::tests::production_requires_https_provider_and_origin ... ok
+test server::tests::production_refuses_dev_tokens_missing_keys_and_plaintext_databases ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/pilot-3c52dde156472a7f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/accounts.rs (target/debug/deps/accounts-c6153f11eee072e2)
+
+running 8 tests
+test sign_in_needs_the_allowed_origin_and_a_json_object ... ok
+test the_sign_in_screen_learns_which_methods_exist ... ok
+test disabled_accounts_cannot_sign_in_or_use_links ... ok
+test an_invited_person_sets_a_password_and_works_normally ... ok
+test sign_in_attempts_are_limited_per_client_address ... ok
+test reset_links_replace_older_ones_and_end_every_session ... ok
+test changing_a_password_needs_the_current_one_and_ends_other_sessions ... ok
+test sign_in_failures_look_alike_and_lock_the_account ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.62s
+
+     Running tests/additive.rs (target/debug/deps/additive-8a225fa80dd60d80)
+
+running 2 tests
+test callers_see_only_their_own_schools ... ok
+test clients_built_before_the_field_keep_working_and_never_clear_it ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+
+     Running tests/conformance.rs (target/debug/deps/conformance-9b983655eb7c06d2)
+
+running 1 test
+test create_contract_agrees_across_schema_managed_route_and_manual_handler ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.47s
+
+     Running tests/identity.rs (target/debug/deps/identity-dcf6a6ff620accc5)
+
+running 6 tests
+test a_callback_completes_only_in_the_browser_that_started_it ... ok
+test tampered_or_refused_logins_create_no_session ... ok
+test browser_login_creates_a_session_that_authorizes_api_calls ... ok
+test sessions_expire_idle_out_and_can_be_revoked ... ok
+test provider_access_tokens_authenticate_api_clients ... ok
+test logout_without_a_session_is_harmless_and_login_routes_need_configuration ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.93s
+
+     Running tests/intent_parity.rs (target/debug/deps/intent_parity-1f57c15492626900)
+
+running 2 tests
+test the_intent_schema_matches_pilots_database ... ok
+test both_apps_behave_the_same_on_one_database ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+
+     Running tests/invocation.rs (target/debug/deps/invocation-d780627ed28713c3)
+
+running 4 tests
+test unknown_operations_are_not_found ... ok
+test http_and_direct_invocation_reach_the_same_decision ... ok
+test direct_reads_are_tenant_scoped_like_http ... ok
+test http_reads_only_what_the_context_declares ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.53s
+
+     Running tests/lessons_api.rs (target/debug/deps/lessons_api-ae2092bb9e070299)
+
+running 13 tests
+test audit_failure_rolls_back_the_lesson ... ok
+test teacher_creates_and_reads_lesson_with_audit ... ok
+test contract_rules_count_characters_and_report_every_field ... ok
+test revoked_membership_is_enforced_on_the_next_write ... ok
+test authentication_and_tenant_selection_are_required ... ok
+test database_constraint_failure_becomes_a_field_error ... ok
+test operation_rechecks_membership_inside_its_transaction ... ok
+test other_tenant_cannot_access_lesson ... ok
+test readiness_reports_schema_capabilities ... ok
+test malformed_and_misshapen_bodies_fail_without_writes ... ok
+test unknown_routes_ids_and_methods_are_problems ... ok
+test unknown_and_ownership_fields_are_rejected_without_writes ... ok
+test viewer_cannot_create ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.47s
+
+     Running tests/meta.rs (target/debug/deps/meta-793c83e8f8cfc242)
+
+running 4 tests
+test availability_is_advisory_and_submission_is_reauthorized ... ok
+test served_descriptor_is_the_exported_descriptor_plus_availability ... ok
+test manifest_lists_visible_interactions_with_advisory_availability ... ok
+test submissions_from_unknown_form_revisions_are_refused_without_effect ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.13s
+
+     Running tests/offline.rs (target/debug/deps/offline-db40ca1c8acf19f2)
+
+running 1 test
+test checks_and_exports_need_no_database_or_network ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.57s
+
+     Running tests/perimeter.rs (target/debug/deps/perimeter-a793c48b025510a8)
+
+running 5 tests
+test saturation_sheds_load_before_work_starts ... ok
+test metrics_use_route_templates_and_operation_ids_never_record_ids ... ok
+test responses_are_private_unsniffable_and_referrer_free ... ok
+test each_credential_has_its_own_rate_limit ... ok
+test rotating_bogus_credentials_do_not_escape_the_limit ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.52s
+
+     Running tests/published.rs (target/debug/deps/published-d3550ca75e16c38e)
+
+running 3 tests
+test generated_client_matches_the_registry ... ok
+test retained_revisions_are_recorded_and_still_compatible ... ok
+test published_documents_match_committed_snapshots ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/registry.rs (target/debug/deps/registry-26c7b75b46af377d)
+
+running 6 tests
+test lessons_without_its_dependencies_fails_assembly ... ok
+test every_operation_declares_its_effects ... ok
+test operations_are_inspectable ... ok
+test a_second_app_is_checked_against_the_first ... ok
+test published_documents_do_not_leak_policy_or_ownership ... ok
+test pilot_assembles_in_dependency_order ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/resources.rs (target/debug/deps/resources-6d5c53c92f51ad46)
+
+running 9 tests
+test forbidden_fields_cannot_be_patched_or_created ... ok
+test a_hand_written_axum_route_reuses_the_operations ... ok
+test delete_requires_the_current_version ... ok
+test lists_page_with_signed_cursors_bound_to_the_query ... ok
+test hidden_relation_targets_are_refused_and_invisible ... ok
+test patch_distinguishes_missing_null_and_value_and_requires_a_precondition ... ok
+test publish_is_a_domain_action_with_version_and_state_conflicts ... ok
+test admin_profile_is_owner_only_and_uses_the_same_operations ... ok
+test lesson_filters_apply_inside_the_tenant_scope ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.23s
+
+     Running tests/schema.rs (target/debug/deps/schema-35f26828c91caedf)
+
+running 6 tests
+test typed_columns_match_the_model ... ok
+test destructive_changes_block_generation ... ok
+test models_match_committed_history ... ok
+test presentation_changes_create_no_migration ... ok
+test generated_migration_applies_on_top_of_committed_history_and_verifies ... ok
+test scoped_list_query_filters_orders_and_bounds ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+
+     Running unittests src/lib.rs (target/debug/deps/pilot_migrations-1f991d7a0fafa595)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/pilot_migrate-f123ecf67711cfe0)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/golden.rs (target/debug/deps/golden-185ea3d126be96cd)
+
+running 6 tests
+test the_golden_files_agree_with_each_other ... ok
+test embedded_files_match_the_directory ... ok
+test order_is_unchanged ... ok
+test embedded_history_has_the_golden_digests ... ok
+test directory_history_has_the_golden_digests ... ok
+test a_legacy_ledger_accepts_the_runtime_loader ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+     Running tests/replay.rs (target/debug/deps/replay-8642e674a3705517)
+
+running 2 tests
+test legacy_digests_are_unchanged ... ok
+test history_replays_into_empty_database_and_matches_its_manifests ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+     Running unittests src/lib.rs (target/debug/deps/trestle_cli-eb3c189d7e4aa29b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/trestle-17cf179c533eca55)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/wrapper.rs (target/debug/deps/wrapper-abf3c1a1e278a1c9)
+
+running 9 tests
+test a_local_checkout_can_be_the_dependency ... ok
+test git_and_tag_override_the_registry ... ok
+test the_template_has_no_cargo_toml ... ok
+test inside_a_project_commands_go_to_cargo_run_from_the_root ... ok
+test outside_a_project_only_new_and_help_work ... ok
+test a_built_binary_is_used_when_given ... ok
+test new_writes_the_template ... ok
+test the_template_passes_check ... ok
+test the_template_serves_its_api ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running unittests src/lib.rs (target/debug/deps/trestle_core-02dabc4609e9b388)
+
+running 32 tests
+test identity::tests::dev_token_spec_is_validated ... ok
+test admission::tests::the_address_header_must_parse_as_an_ip_address ... ok
+test identity::tests::dev_tokens_authenticate_known_bearer ... ok
+test invocation::tests::declared_credentials_and_tenant_are_read ... ok
+test identity::tests::dev_tokens_reject_missing_unknown_and_wrong_scheme ... ok
+test invocation::tests::undeclared_inputs_are_never_read ... ok
+test admission::tests::unauthenticated_defaults_are_explicit_and_independent_of_key_limits ... ok
+test pagination::tests::cursors_round_trip_and_resist_tampering_and_reuse ... ok
+test problem::tests::pointer_escapes_reserved_characters ... ok
+test pagination::tests::page_contract_is_derived_per_item_type ... ok
+test patch::tests::distinguishes_missing_null_and_value ... ok
+test metrics::tests::renders_counters_histograms_and_gauges ... ok
+test problem::tests::serializes_problem_shape ... ok
+test query::tests::keyset_after_matches_direction ... ok
+test query::tests::scope_comes_first_and_ordering_is_deterministic ... ok
+test registry::routes::tests::binding_lists_adapter_statuses ... ok
+test registry::routes::tests::fills_location_from_output ... ok
+test registry::routes::tests::url_text_becomes_typed_where_the_contract_says_so ... ok
+test invocation::tests::declared_inputs_are_checked ... ok
+test registry::sdk::tests::a_union_is_a_discriminated_union_on_its_tag ... ok
+test registry::sdk::tests::names_are_stable_identifiers ... ok
+test metrics::tests::concurrent_updates_are_not_lost ... ok
+test registry::tests::apps_register_only_inside_their_namespace ... ok
+test registry::tests::rust_type_must_match_its_contract ... ok
+test registry::tests::waived_unmanaged_routes_are_inventoried ... ok
+test registry::tests::routes_must_be_unique_bound_and_waived ... ok
+test registry::tests::missing_and_cyclic_dependencies_fail ... ok
+test registry::tests::form_references_are_checked ... ok
+test registry::tests::assembles_in_dependency_order_and_describes_itself ... ok
+test registry::tests::retained_revisions_are_validated_and_accepted ... ok
+test admission::tests::buckets_empty_refill_and_stay_independent ... ok
+test admission::tests::the_number_of_keys_is_capped_even_when_all_are_fresh ... ok
+
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.75s
+
+     Running tests/effects.rs (target/debug/deps/effects-4b36e8c67bd4ccc1)
+
+running 6 tests
+test declarations_are_sorted_and_unique ... ok
+test declarations_must_name_things_that_exist ... ok
+test inspect_shows_what_was_declared ... ok
+test a_read_cannot_write ... ok
+test a_declared_write_enqueues_only_what_it_emits ... ok
+test with_read_only_reads_off_a_read_runs_without_a_transaction ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
+
+     Running tests/executor.rs (target/debug/deps/executor-998f4bf449d6130f)
+
+running 5 tests
+test valid_dyn_output_commits ... ok
+test valid_typed_output_commits ... ok
+test invalid_dyn_output_rolls_back_the_write ... ok
+test invalid_typed_output_rolls_back_the_write ... ok
+test invalid_typed_output_fails_a_read ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
+
+     Running tests/fence.rs (target/debug/deps/fence-49e1bd650dd84a81)
+
+running 1 test
+test an_older_build_stops_writing_once_a_fence_migration_applies ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+     Running tests/idempotency.rs (target/debug/deps/idempotency-8c6d799c1bd4d474)
+
+running 13 tests
+test keyed_operations_document_the_header ... ok
+test keys_need_the_receipt_table_and_a_write ... ok
+test dynamic_operations_replay_too ... ok
+test direct_invocation_honors_keys_where_accepted ... ok
+test expired_receipts_no_longer_replay_and_can_be_purged ... ok
+test keys_are_scoped_to_the_caller ... ok
+test keys_are_refused_where_they_are_not_accepted_or_malformed ... ok
+test a_rolled_back_attempt_leaves_no_receipt ... ok
+test a_repeat_replays_the_committed_answer ... ok
+test a_key_reused_with_different_input_is_a_conflict ... ok
+test operation_jobs_are_exactly_once_for_operations_that_accept_keys ... ok
+test concurrent_duplicates_are_serialized ... ok
+test replays_are_reauthorized ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.81s
+
+     Running tests/jobs.rs (target/debug/deps/jobs-d25d79b6c7d6af2a)
+
+running 12 tests
+test job_kinds_are_namespaced_and_unique ... ok
+test a_dedupe_key_enqueues_once ... ok
+test attempts_are_bounded_and_client_errors_do_not_retry ... ok
+test expired_leases_without_attempts_left_are_failed ... ok
+test a_stale_claim_cannot_record_its_result ... ok
+test shutdown_stops_claiming_and_drains_running_jobs ... ok
+test enqueue_belongs_to_the_operations_transaction ... ok
+test operation_jobs_are_reauthorized_when_they_run ... ok
+test purging_removes_only_finished_jobs_past_retention ... ok
+test failures_retry_with_one_idempotency_key_until_they_succeed ... ok
+test a_drain_that_times_out_leaves_the_job_to_its_lease ... ok
+test work_lost_with_its_worker_runs_again ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.61s
+
+     Running unittests src/lib.rs (target/debug/deps/trestle-d56713f80e724984)
+
+running 13 tests
+test mail::tests::messages_name_the_product_and_carry_the_link ... ok
+test mail::tests::sending_needs_configuration ... ok
+test mail::tests::debug_hides_the_email_url ... ok
+test serve::tests::development_needs_some_identity ... ok
+test serve::tests::production_requires_an_identity_provider ... ok
+test serve::tests::password_sign_in_alone_is_enough_for_production ... ok
+test serve::tests::production_requires_a_decision_about_client_addresses ... ok
+test serve::tests::production_requires_https_provider_and_origin ... ok
+test serve::tests::production_refuses_dev_tokens_missing_keys_and_plaintext_databases ... ok
+test serve::tests::production_configuration_passes_when_complete ... ok
+test serve::tests::id_tokens_cannot_double_as_api_tokens ... ok
+test serve::tests::rate_limits_must_be_finite ... ok
+test serve::tests::jobs_refuse_to_start_without_the_job_table ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/assembly_memory.rs (target/debug/deps/assembly_memory-31292449d6ade411)
+
+running 1 test
+test repeated_assembly_from_an_intent_does_not_grow_the_heap ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/facade.rs (target/debug/deps/facade-1d4fc7044d8720c9)
+
+running 8 tests
+test assembly_problems_are_reported ... ok
+test usage_errors_are_reported_by_the_parser ... ok
+test an_app_on_the_default_state_assembles ... ok
+test the_command_line_has_every_built_in_command ... ok
+test project_commands_are_added_and_replace_built_ins ... ok
+test offline_commands_run_without_a_database ... ok
+test makemigrations_check_reports_pending_models_and_writes_nothing ... ok
+test the_default_state_serves_the_registry ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s
+
+     Running tests/intent.rs (target/debug/deps/intent-491db5387000214f)
+
+running 16 tests
+test passwords_are_on_by_default_and_oidc_is_opt_in ... ok
+test google_reads_its_client_from_named_variables ... ok
+test a_custom_provider_names_variables_not_values ... ok
+test every_problem_is_reported_with_its_line ... ok
+test the_design_example_parses ... ok
+test permissions_other_than_authenticated_need_tenancy ... ok
+test unknown_keys_are_errors_with_a_line ... ok
+test unique_sets_are_named_per_tenant_and_checked ... ok
+test handlers_are_linked_by_name_both_ways ... ok
+test the_readme_intent_example_is_valid ... ok
+test the_intent_feeds_the_registry ... ok
+test intent_operations_decide_the_same_without_http ... ok
+test a_crud_server_from_the_intent_file ... ok
+test an_overflowing_version_is_refused_not_ignored ... ok
+test non_object_filters_and_values_are_refused ... ok
+test a_read_endpoint_cannot_write ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.21s
+
+     Running tests/intent_actions.rs (target/debug/deps/intent_actions-618a175a0d6bbdf2)
+
+running 3 tests
+test actions_are_checked_when_the_file_is_read ... ok
+test an_action_is_a_write_bound_with_if_match ... ok
+test a_transition_runs_once_from_its_states_with_the_current_version ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+     Running tests/intent_admin.rs (target/debug/deps/intent_admin-06419ac491e13755)
+
+running 3 tests
+test admin_sections_are_checked_when_the_file_is_read ... ok
+test an_admin_section_describes_the_resource_the_shell_renders ... ok
+test the_admin_shell_sees_what_its_permission_shows_and_buttons_still_authorize ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+     Running tests/intent_doc.rs (target/debug/deps/intent_doc-1af0012e7786befa)
+
+running 7 tests
+test reading_a_document_refuses_unknown_keys_with_a_line ... ok
+test a_named_provider_and_the_defaults_render_as_written ... ok
+test the_every_key_fixture_is_a_valid_intent ... ok
+test a_document_is_refused_like_its_file_with_lines_in_its_rendering ... ok
+test a_document_built_in_code_assembles_like_the_notes_file ... ok
+test a_document_reads_every_key_and_assembles_like_its_file ... ok
+test a_project_from_a_document_serves_like_its_file ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+     Running tests/intent_forms.rs (target/debug/deps/intent_forms-63fb76d43e096e09)
+
+running 3 tests
+test forms_need_a_widget_for_every_field ... ok
+test create_update_and_action_forms_follow_the_field_types ... ok
+test the_create_form_matches_the_fixture_the_renderer_reads ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/intent_permission.rs (target/debug/deps/intent_permission-8a2cbb1821940e5b)
+
+running 6 tests
+test an_intent_app_needs_an_intent ... ok
+test a_permission_must_be_granted_by_a_role ... ok
+test the_admin_view_shows_and_the_operation_authorizes ... ok
+test refused_and_invalid_writes_leave_nothing ... ok
+test rust_operations_use_the_intents_roles_and_tenancy ... ok
+test a_stale_context_is_rechecked_in_the_transaction ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.57s
+
+     Running tests/intent_relations.rs (target/debug/deps/intent_relations-2c50bcd47c2781be)
+
+running 7 tests
+test refs_between_apps_go_one_way ... ok
+test refs_and_orders_are_checked ... ok
+test a_ref_field_is_an_indexed_foreign_key ... ok
+test a_ref_may_name_another_apps_model ... ok
+test references_must_name_a_row_in_the_callers_tenant ... ok
+test lists_page_with_signed_cursors ... ok
+test a_ref_to_another_apps_model_names_a_row_in_the_callers_tenant ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.56s
+
+     Running tests/intent_types.rs (target/debug/deps/intent_types-beb25233bd246cd9)
+
+running 4 tests
+test decimal_settings_and_defaults_are_checked ... ok
+test money_fields_are_checked ... ok
+test the_intent_declares_columns_and_contracts_of_each_type ... ok
+test crud_keeps_every_value_in_its_contract_form ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+     Running tests/migrations.rs (target/debug/deps/migrations-820cfa2aaf8c0588)
+
+running 6 tests
+test a_step_must_be_registered_under_its_own_name ... ok
+test embedded_migrations_match_the_directory ... ok
+test a_stale_embedded_copy_fails_check ... ok
+test check_requires_migrations_for_every_model ... ok
+test data_steps_are_linked_by_name_and_checked ... ok
+test runtime_migrations_apply_and_verify ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+
+     Running tests/reconcile.rs (target/debug/deps/reconcile-09c354e01318703a)
+
+running 7 tests
+test usage_and_unreachable_database ... ok
+test generated_migrations_auto_apply_in_production ... ok
+test foreign_apps_share_the_database ... ok
+test exit_codes_are_the_contract ... ok
+test approval_is_by_exact_plan_digest ... ok
+test the_plan_asserts_its_source_state_and_preconditions ... ok
+test serve_refuses_a_build_the_schema_fence_shuts_out ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.42s
+
+     Running tests/views.rs (target/debug/deps/views-a338b6d5ba4c2c83)
+
+running 5 tests
+test installing_only_models_exposes_no_views ... ok
+test renderer_pairing_checks_features_required_components_and_input_contracts ... ok
+test invalid_view_bindings_fail_before_any_database_is_needed ... ok
+test registered_views_match_shared_fixtures_and_round_trip ... ok
+test presentation_overrides_bind_stable_ids_and_refuse_removed_targets ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+     Running tests/views_live.rs (target/debug/deps/views_live-c14ac9b7ed67f34a)
+
+running 1 test
+test reference_apps_keep_scope_and_contracts_at_release_fixture_size ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.61s
+
+     Running unittests src/lib.rs (target/debug/deps/trestle_historical-18c57d71da9f30d8)
+
+running 22 tests
+test load::tests::a_missing_directory_is_an_empty_history ... ok
+test fence::tests::statements_quote_ids_and_sort_them ... ok
+test planner::tests::referenced_models_are_created_first ... ok
+test planner::tests::storage_renames_are_renames_not_drop_and_add ... ok
+test planner::tests::a_new_required_field_needs_a_backfill_strategy ... ok
+test planner::tests::identical_states_plan_nothing ... ok
+test planner::tests::removals_are_blocked_unless_approved ... ok
+test planner::tests::type_changes_are_blocked ... ok
+test schema::tests::desired_state_checks_definitions ... ok
+test load::tests::loads_orders_and_links_data_steps ... ok
+test load::tests::digests_are_the_bytes_of_the_files ... ok
+test load::tests::reports_every_problem_with_a_fix ... ok
+test schema::tests::replay_applies_deltas_and_rejects_inconsistent_history ... ok
+test schema::tests::stable_ids_are_independent_of_storage_names ... ok
+test sql::tests::literals_are_escaped_and_typed ... ok
+test sql::tests::refuses_unsafe_identifiers_from_artifacts ... ok
+test sql::tests::renders_create_with_checks_references_and_indexes ... ok
+test tests::accepts_dependency_ordered_set ... ok
+test tests::rejects_duplicates_bad_names_and_bad_dependencies ... ok
+test schema::tests::state_ops_round_trip_as_json ... ok
+test tests::digest_is_stable_and_content_sensitive ... ok
+test load::tests::symlinks_are_refused ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/batched.rs (target/debug/deps/batched-12944561f1a283f2)
+
+running 4 tests
+test batched_steps_run_alone_and_not_atomically ... ok
+test a_batch_that_does_not_advance_is_stopped ... ok
+test a_ledger_without_checkpoints_is_upgraded ... ok
+test a_failed_batch_keeps_earlier_batches_and_the_rerun_resumes_after_them ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.25s
+
+     Running tests/classify.rs (target/debug/deps/classify-e96d79f9574200ea)
+
+running 2 tests
+test every_operation_is_classified ... ok
+test generated_sql_is_auto_and_edits_need_approval ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/evolution.rs (target/debug/deps/evolution-a6fc468db915ce85)
+
+running 4 tests
+test generated_sql_renames_instead_of_dropping ... ok
+test replaying_the_same_models_plans_nothing ... ok
+test a_failing_data_step_rolls_back_its_migration ... ok
+test fresh_replay_and_populated_upgrade_converge ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.68s
+
+     Running tests/fence.rs (target/debug/deps/fence-858cd9815b7e7594)
+
+running 7 tests
+test manifests_without_a_fence_keep_their_digests ... ok
+test builds_without_the_newest_fence_are_refused_before_begin ... ok
+test a_non_atomic_fence_migration_fences_before_its_steps_and_records_once ... ok
+test fence_migrations_record_their_app_and_count_generations ... ok
+test a_fence_migration_that_cannot_lock_in_time_raises_nothing ... ok
+test a_fence_migration_waits_for_writes_already_past_the_check ... ok
+test a_write_that_arrives_during_a_fence_migration_waits_then_sees_the_fence ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.08s
+
+     Running tests/impact.rs (target/debug/deps/impact-30fa6054c5908f89)
+
+running 7 tests
+test malformed_preconditions_are_problems ... ok
+test a_check_on_a_table_an_earlier_step_creates_is_not_counted_yet ... ok
+test migrate_refuses_to_apply_over_drift ... ok
+test impact_counts_what_each_step_would_touch ... ok
+test preconditions_stop_a_migration_before_it_changes_anything ... ok
+test a_non_atomic_migration_checks_before_its_first_step_and_fence ... ok
+test a_backfill_counts_rows_to_fill_and_unblocks_not_null ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.62s
+
+     Running tests/non_atomic.rs (target/debug/deps/non_atomic-b10ebe32aa26d08d)
+
+running 6 tests
+test steps_split_on_marker_lines ... ok
+test check_rules_for_non_atomic_migrations ... ok
+test a_first_step_that_was_attempted_keeps_its_digest ... ok
+test an_old_ledger_is_upgraded_in_place ... ok
+test timeouts_come_from_the_manifest ... ok
+test a_failed_step_is_partial_and_the_rerun_resumes_and_repairs_the_index ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.63s
+
+     Running tests/online.rs (target/debug/deps/online-a12ebeac96a35967)
+
+running 5 tests
+test an_index_alone_is_one_online_migration ... ok
+test without_online_the_change_stays_one_atomic_migration ... ok
+test an_online_change_splits_into_an_atomic_and_a_concurrent_migration ... ok
+test the_online_pair_applies_to_a_populated_table ... ok
+test a_row_that_breaks_the_new_check_stops_validation_until_fixed ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+     Running tests/runner.rs (target/debug/deps/runner-6e47394932ecfaa9)
+
+running 5 tests
+test changed_applied_migration_is_refused ... ok
+test failed_migration_rolls_back_completely_and_can_be_retried ... ok
+test concurrent_runners_apply_each_migration_once ... ok
+test fresh_database_replays_then_second_run_is_a_no_op ... ok
+test applied_migration_unknown_to_this_build_is_refused ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.70s
+
+     Running tests/types.rs (target/debug/deps/types-16cf788aa7029ed4)
+
+running 2 tests
+test literals_are_checked_against_the_column ... ok
+test columns_render_verify_and_round_trip_through_the_sdk ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+     Running unittests src/lib.rs (target/debug/deps/trestle_identity-60d3b5d216256b2e)
+
+running 24 tests
+test oidc::tests::provider_text_is_bounded_and_printable ... ok
+test oidc::tests::provider_urls_require_https_except_loopback_in_development ... ok
+test password::tests::a_cancelled_hash_keeps_its_permit_until_the_work_ends ... ok
+test password::tests::emails_are_normalized_and_shaped ... ok
+test lifecycle_tests::disabling_works_without_the_api_keys_app ... ok
+test lifecycle_tests::disabling_an_account_revokes_its_api_keys ... ok
+test password::tests::links_carry_the_token_in_the_fragment ... ok
+test password::tests::password_rules_match_djangos_validators ... ok
+test random::tests::pkce_matches_rfc_7636_appendix_b ... ok
+test random::tests::tokens_are_unique_and_well_formed ... ok
+test routes::tests::return_to_is_a_same_site_path ... ok
+test session::tests::configuration_is_validated ... ok
+test session::tests::cookies_are_found_across_headers ... ok
+test session::tests::cookies_are_host_only_secure_and_http_only ... ok
+test session::tests::csrf_tokens_are_bound_to_session_and_key ... ok
+test tests::actors_are_stable_and_distinct_per_account ... ok
+test lifecycle_tests::an_expired_lock_starts_the_count_again ... ok
+test lifecycle_tests::a_sign_in_in_flight_during_disable_gets_no_session ... ok
+test password::tests::hashes_verify_and_are_salted ... ok
+test lifecycle_tests::a_sign_in_in_flight_during_a_reset_gets_no_session ... ok
+test lifecycle_tests::a_delayed_rehash_does_not_overwrite_a_reset ... ok
+test lifecycle_tests::a_password_change_does_not_overwrite_a_concurrent_reset ... ok
+test lifecycle_tests::every_failed_sign_in_makes_the_same_write ... ok
+test lifecycle_tests::sign_in_attempts_are_limited_per_account_from_any_address ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.76s
+
+     Running unittests src/lib.rs (target/debug/deps/trestle_mail-3962a6e11b06fbe8)
+
+running 5 tests
+test tests::recipients_cannot_inject_headers ... ok
+test tests::the_sender_must_be_a_mailbox ... ok
+test tests::development_allows_a_loopback_catcher_without_credentials ... ok
+test tests::production_accepts_only_encrypted_smtp ... ok
+test tests::credentials_are_percent_decoded_and_never_described ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/smtp.rs (target/debug/deps/smtp-d5dae7225759aed2)
+
+running 5 tests
+test plaintext_to_a_loopback_catcher_delivers ... ok
+test starttls_is_required_and_never_falls_back_to_plaintext ... ok
+test the_file_backend_writes_one_message_per_file ... ok
+test an_untrusted_server_certificate_is_refused ... ok
+test implicit_tls_with_a_pinned_ca_delivers_and_authenticates ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running unittests src/lib.rs (target/debug/deps/trestle_protocol-acdf8cf0d6353011)
+
+running 26 tests
+test contract::tests::compatibility_allows_widening_and_new_optional_fields_only ... ok
+test contract::tests::definition_problems_are_reported ... ok
+test contract::tests::accepts_and_normalizes ... ok
+test contract::tests::example_satisfies_contract ... ok
+test contract::tests::missing_null_range_and_unknown_are_invalid_in_declaration_order ... ok
+test contract::tests::json_schema_matches_specimen_shape ... ok
+test contract::tests::counts_code_points_not_bytes ... ok
+test contract::tests::wrong_types_are_shape_errors_and_take_precedence ... ok
+test contract::tests::optional_nullable_and_formats ... ok
+test form::tests::composite_widgets_fit_only_their_types ... ok
+test form::tests::renders_presentation_json ... ok
+test form::tests::scalar_widgets_fit_their_types_and_name_their_features ... ok
+test form::tests::unknown_fields_wrong_widgets_and_missing_required_fields_fail ... ok
+test form::tests::valid_form_has_no_problems ... ok
+test contract::tests::digest_depends_on_rules_not_declaration_order ... ok
+test interaction::tests::template_params ... ok
+test scalar::tests::dates_are_real_calendar_days ... ok
+test contract::tests::lists_validate_elements_with_nested_pointers ... ok
+test scalar::tests::decimals_count_digits_on_each_side_of_the_point ... ok
+test scalar::tests::durations_are_days_and_clock_time ... ok
+test contract::tests::ir_round_trips ... ok
+test scalar::tests::instants_normalize_to_utc ... ok
+test tests::stable_ids ... ok
+test tests::digest_ignores_key_order_but_not_array_order ... ok
+test interaction::tests::only_bindings_that_accept_a_key_describe_one ... ok
+test interaction::tests::descriptor_follows_specimen_and_revision_tracks_content ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/scalars.rs (target/debug/deps/scalars-98487df1cc71e5d2)
+
+running 5 tests
+test the_ir_round_trips_and_older_clients_are_judged_by_digits ... ok
+test unions_round_trip_check_their_variants_and_evolve_by_variant ... ok
+test unions_agree_with_every_fixture ... ok
+test composites_agree_with_every_fixture ... ok
+test the_server_and_json_schema_agree_with_every_fixture ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+   Doc-tests pilot
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests pilot_migrations
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests trestle_cli
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests trestle_core
+
+running 1 test
+test crates/trestle-core/src/operation.rs - operation::Operation (line 199) ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 1 test
+test crates/trestle-core/src/operation.rs - operation::Operation (line 255) - compile fail ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.11s
+
+all doctests ran in 5.60s; merged doctests compilation took 4.18s
+   Doc-tests trestle
+
+running 3 tests
+test crates/trestle/src/app.rs - app::App (line 15) ... ignored
+test crates/trestle/src/lib.rs - (line 5) - compile ... ok
+test crates/trestle/src/testing.rs - testing (line 7) - compile ... ok
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 9.76s; merged doctests compilation took 9.33s
+   Doc-tests trestle_historical
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests trestle_identity
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests trestle_mail
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests trestle_protocol
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

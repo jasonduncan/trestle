@@ -69,6 +69,7 @@ fn surface(project: trestle::Project) -> Value {
             registry.openapi(Audience::Admin),
         ],
         "admin": registry.admin_export(),
+        "views": [registry.views_export(Audience::Product), registry.views_export(Audience::Admin)],
     })
 }
 

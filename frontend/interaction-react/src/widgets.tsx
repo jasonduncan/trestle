@@ -1,3 +1,4 @@
+import { validateInstance } from "./validate";
 // Local widget registry (§9.2). A widget key in a descriptor is a request
 // for a renderer shipped in this bundle, never a package name or URL.
 // Applications may add or override widgets by key.
@@ -131,6 +132,60 @@ type Options = { state: "loading" } | { state: "error" } | { state: "ready"; ite
  * chosen ID is revalidated on write (§9.3). Values stay IDs; labels are text.
  */
 function RelationSelect(props: WidgetProps) {
+  return props.presented.options?.lookup ? <RelationLookup {...props} /> : <LegacyRelationSelect {...props} />;
+}
+
+function RelationLookup(props: WidgetProps) {
+  const source = props.presented.options!;
+  const lookup = source.lookup!;
+  const [term, setTerm] = useState("");
+  const [cursor, setCursor] = useState<string | undefined>();
+  const [next, setNext] = useState<string | null>(null);
+  const [options, setOptions] = useState<Options>({ state: "loading" });
+  const [selected, setSelected] = useState<{ value: string; label: string } | null>(null);
+  const value = String(props.value ?? "");
+  useEffect(() => {
+    let current = true;
+    setSelected(null);
+    if (value) void props.transport.list(lookup.resolvePath.replace("{id}", encodeURIComponent(value))).then((reply) => {
+      if (!current) return;
+      const record = reply.kind === "response" && reply.status === 200 && validateInstance(lookup.resolveBinding.output.schema, reply.body).ok ? reply.body as Record<string, unknown> : null;
+      setSelected({ value, label: record?.[source.value] === value && typeof record[source.label] === "string" ? String(record[source.label]) : "Selection unavailable" });
+    });
+    return () => { current = false; };
+  }, [value, props.transport, lookup.resolvePath, source.value, source.label]);
+  useEffect(() => {
+    let current = true;
+    setOptions({ state: "loading" });
+    const timer = setTimeout(() => {
+      void props.transport.list(source.path, { limit: "100", [lookup.searchField]: term, ...(cursor ? { cursor } : {}) }).then((reply) => {
+        if (!current) return;
+        const page = reply.kind === "response" && reply.status === 200 && validateInstance(lookup.searchBinding.output.schema, reply.body).ok ? reply.body as Record<string, unknown> : null;
+        if (!page || !Array.isArray(page.items) || page.items.length > 100 || (page.next_cursor !== null && typeof page.next_cursor !== "string")) { setOptions({ state: "error" }); return; }
+        const items: { value: string; label: string }[] = [];
+        for (const item of page.items) {
+          if (!item || typeof item !== "object" || typeof item[source.value] !== "string" || typeof item[source.label] !== "string") { setOptions({ state: "error" }); return; }
+          items.push({ value: item[source.value], label: item[source.label] });
+        }
+        setOptions({ state: "ready", items }); setNext(page.next_cursor as string | null);
+      });
+    }, 250);
+    return () => { current = false; clearTimeout(timer); };
+  }, [props.transport, source.path, source.value, source.label, lookup.searchField, term, cursor]);
+  return <div className="trestle-relation">
+    <input aria-label={"Search " + props.presented.label} type="search" maxLength={200} value={term} onChange={(event) => { setTerm(event.target.value); setCursor(undefined); }} />
+    <select {...common(props)} value={value} onChange={(event) => props.onChange(event.target.value)} aria-busy={options.state === "loading"}>
+      <option value="">{props.field.required ? "Choose…" : "None"}</option>
+      {options.state === "ready" && options.items.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+      {value && (options.state !== "ready" || !options.items.some((o) => o.value === value)) && <option value={value}>{selected?.label ?? "Resolving selection…"}</option>}
+    </select>
+    <p role="status">{options.state === "loading" ? "Searching…" : options.state === "error" ? "Choices are unavailable." : !options.items.length ? "No matches." : ""}</p>
+    {next && options.state === "ready" && <button type="button" onClick={() => setCursor(next)}>More choices</button>}
+    {cursor && <button type="button" onClick={() => setCursor(undefined)}>First choices</button>}
+  </div>;
+}
+
+function LegacyRelationSelect(props: WidgetProps) {
   const source = props.presented.options;
   const [options, setOptions] = useState<Options>({ state: "loading" });
   useEffect(() => {

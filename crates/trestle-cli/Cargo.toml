@@ -11,7 +11,7 @@ authors.workspace = true
 readme = "README.md"
 keywords = ["web","framework","scaffold","cli"]
 categories = ["command-line-utilities","web-programming"]
-include = ["src/**","template/**","Cargo.toml","README.md"]
+include = ["src/**","template/**","template-admin/**","Cargo.toml","README.md"]
 
 [[bin]]
 name = "trestle"

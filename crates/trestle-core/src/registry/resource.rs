@@ -62,6 +62,7 @@ pub struct AdminView {
 pub struct AdminAction {
     pub name: String,
     pub label: String,
+    pub form: Option<String>,
     /// Advisory display rule (§9.3): show the button only when the listed
     /// item's field equals this value. The server still decides.
     pub visible_when: Option<(String, serde_json::Value)>,
@@ -100,6 +101,18 @@ impl AdminView {
         self.actions.push(AdminAction {
             name: name.to_owned(),
             label: label.to_owned(),
+            form: None,
+            visible_when: None,
+        });
+        self
+    }
+
+    /// A domain action with explicit editable input presentation.
+    pub fn action_form(mut self, name: &str, label: &str, form: &str) -> Self {
+        self.actions.push(AdminAction {
+            name: name.into(),
+            label: label.into(),
+            form: Some(form.into()),
             visible_when: None,
         });
         self
@@ -116,6 +129,7 @@ impl AdminView {
         self.actions.push(AdminAction {
             name: name.to_owned(),
             label: label.to_owned(),
+            form: None,
             visible_when: Some((field.to_owned(), value)),
         });
         self

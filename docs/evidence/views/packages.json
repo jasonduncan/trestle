@@ -1,0 +1,16 @@
+{
+  "result": "passed",
+  "packageNames": [
+    "@trestle/client",
+    "@trestle/interaction-react",
+    "@trestle/admin-react"
+  ],
+  "checks": [
+    "packed ESM",
+    "external install",
+    "public declarations",
+    "CSS export",
+    "production bundle",
+    "scaffold frontend typecheck and production build"
+  ]
+}

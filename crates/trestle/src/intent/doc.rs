@@ -33,6 +33,63 @@ pub struct IntentDoc {
     pub endpoints: Vec<EndpointDoc>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub admin: Vec<AdminDoc>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub views: Vec<ViewDoc>,
+}
+
+/// `[[views]]`: a published presentation over existing registered operations.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ViewDoc {
+    pub id: String,
+    pub kind: String,
+    pub audience: String,
+    pub permission: String,
+    pub resource: String,
+    pub query: String,
+    pub title: String,
+    #[serde(default = "default_identity")]
+    pub identity: String,
+    #[serde(default = "default_identity")]
+    pub label: String,
+    #[serde(default)]
+    pub columns: Vec<String>,
+    #[serde(default)]
+    pub filters: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record_view: Option<String>,
+    #[serde(default)]
+    pub record_input: BTreeMap<String, String>,
+    #[serde(default)]
+    pub actions: Vec<String>,
+    #[serde(default)]
+    pub action_input: BTreeMap<String, BTreeMap<String, String>>,
+    #[serde(default)]
+    pub sections: Vec<ViewSectionDoc>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ViewSectionDoc {
+    pub id: String,
+    pub title: String,
+    pub query: String,
+    #[serde(default)]
+    pub collection: bool,
+    #[serde(default = "default_identity")]
+    pub identity: String,
+    #[serde(default = "default_identity")]
+    pub label: String,
+    pub columns: Vec<String>,
+    pub input: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub component: Option<String>,
+    #[serde(default)]
+    pub required_component: bool,
+}
+
+fn default_identity() -> String {
+    "id".into()
 }
 
 /// `[project]`.
@@ -123,6 +180,9 @@ pub struct EndpointDoc {
     pub filter: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub order: Option<String>,
+    /// Bounded case-insensitive substring search on this published text field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search: Option<String>,
     /// Hook point → handler name.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub hooks: BTreeMap<String, String>,

@@ -1,0 +1,10 @@
+import { build } from "vite";
+import { readFileSync, writeFileSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
+await build({ root: "views-demo" });
+const manifest = JSON.parse(readFileSync("admin-react/dist/renderer.json", "utf8"));
+manifest.components = { "fixture.account_summary": "support.account@1", "fixture.export_panel": "support.case@1" };
+const hash = createHash("sha256");
+for (const file of readdirSync("views-demo/dist/assets").sort()) hash.update(readFileSync("views-demo/dist/assets/" + file));
+manifest.digest = hash.digest("hex");
+writeFileSync("views-demo/dist/renderer.json", JSON.stringify(manifest, null, 2));

@@ -1,0 +1,5 @@
+
+> test:packages
+> node test-packages.mjs
+
+External package install, declarations and production build passed.

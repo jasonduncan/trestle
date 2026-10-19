@@ -44,6 +44,7 @@ fields = [
 
 [[endpoints]]
 model = "crm.account"
+search = "name"
 crud = ["list", "get", "create", "update", "delete"]
 read = "crm.read"
 write = "crm.write"
@@ -84,3 +85,32 @@ title = "Deals"
 columns = ["title", "amount", "stage"]
 filters = ["stage"]
 actions = ["crm.win"]
+
+[[views]]
+id = "crm.deal.queue"
+kind = "collection"
+audience = "product"
+permission = "crm.read"
+resource = "crm.deal"
+query = "crm.deal.list"
+title = "Deal queue"
+identity = "id"
+label = "title"
+columns = ["title", "stage"]
+filters = ["stage"]
+record_view = "crm.deal.detail"
+record_input = { id = "/id" }
+actions = ["crm.win.form"]
+action_input = { "crm.win.form" = { id = "/id" } }
+
+[[views]]
+id = "crm.deal.detail"
+kind = "record"
+audience = "product"
+permission = "crm.read"
+resource = "crm.deal"
+query = "crm.deal.get"
+title = "Deal"
+label = "title"
+columns = ["title", "stage"]
+sections = [{ id = "account", title = "Account", query = "crm.account.get", collection = false, identity = "id", label = "name", columns = ["name"], input = { id = "/account" }, component = "fixture.account_summary", required_component = false }]

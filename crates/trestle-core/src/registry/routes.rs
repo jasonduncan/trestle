@@ -46,6 +46,8 @@ pub struct Http {
     if_match: Option<String>,
     no_content: bool,
     idempotency_key: bool,
+    operation_version: bool,
+    precondition_target: Option<trestle_protocol::interaction::PreconditionTarget>,
 }
 
 impl Http {
@@ -80,6 +82,8 @@ impl Http {
             if_match: None,
             no_content: false,
             idempotency_key: false,
+            operation_version: false,
+            precondition_target: None,
         }
     }
 
@@ -114,6 +118,29 @@ impl Http {
         self
     }
 
+    /// Advertises an expected operation version. Legacy descriptors keep 1.0.
+    pub fn version_pinned(mut self) -> Self {
+        self.operation_version = true;
+        self
+    }
+
+    /// Bind If-Match to a separately registered retrieve representation.
+    pub fn precondition_target(
+        mut self,
+        target: trestle_protocol::interaction::PreconditionTarget,
+        expected_version: &str,
+    ) -> Self {
+        self.precondition_target = Some(target);
+        self.if_match = Some(expected_version.into());
+        self
+    }
+
+    /// 202 Accepted; the output contract supplies a durable work reference.
+    pub fn accepted(mut self) -> Self {
+        self.success = StatusCode::ACCEPTED;
+        self
+    }
+
     /// Success is 204 with no body.
     pub fn no_content(mut self) -> Self {
         self.success = StatusCode::NO_CONTENT;
@@ -134,6 +161,9 @@ impl Http {
         };
         let params = HttpBinding::template_params(&self.path);
         let mut errors = vec![400, 500, 503];
+        if self.operation_version {
+            errors.push(409);
+        }
         if context.authenticated {
             errors.extend([401, 403]);
         }
@@ -172,6 +202,8 @@ impl Http {
             if_match: self.if_match.clone(),
             no_content: self.no_content,
             idempotency_key: self.idempotency_key,
+            operation_version: self.operation_version,
+            precondition_target: self.precondition_target.clone(),
         }
     }
 }
@@ -276,8 +308,11 @@ where
     let output_contract = O::Output::contract();
     let (mut parts, body) = request.into_parts();
     // Identity and tenant before anything else is read (§6.2).
-    let invocation = Invocation::from_http(&mut parts, state, descriptor).await?;
+    let invocation = Invocation::from_http(&mut parts, state, descriptor)
+        .await?
+        .http_operation_version(&parts)?;
     let ctx = O::Context::resolve(&invocation, state).await?;
+    invocation.check_operation_version(O::INFO.version)?;
     let key = idempotency_key(&parts, binding)?;
     let (instance, path) = prepare(
         state,
@@ -380,8 +415,11 @@ where
     let input_contract = op.input();
     let output_contract = op.output();
     let (mut parts, body) = request.into_parts();
-    let invocation = Invocation::from_http(&mut parts, state, descriptor).await?;
+    let invocation = Invocation::from_http(&mut parts, state, descriptor)
+        .await?
+        .http_operation_version(&parts)?;
     let ctx = op.resolve_context(&invocation, state).await?;
+    invocation.check_operation_version(&op.info().version)?;
     let key = idempotency_key(&parts, binding)?;
     let (instance, path) = prepare(
         state,
@@ -528,7 +566,14 @@ async fn prepare<S: Send + Sync>(
         .map(|(k, v)| (k.to_owned(), v.to_owned()))
         .collect();
     let version = match &binding.if_match {
-        Some(_) => Some(if_match_version(&parts, output_id)?),
+        Some(_) => Some(if_match_version(
+            &parts,
+            binding
+                .precondition_target
+                .as_ref()
+                .map(|t| t.representation.as_str())
+                .unwrap_or(output_id),
+        )?),
         None => None,
     };
 

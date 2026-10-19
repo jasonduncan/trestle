@@ -1,0 +1,23 @@
+
+> typecheck
+> npm run typecheck --workspaces --if-present
+
+
+> @trestle/client@0.0.1 typecheck
+> tsc --noEmit
+
+
+> @trestle/interaction-react@0.0.1 typecheck
+> tsc --noEmit
+
+
+> @trestle/admin-react@0.0.1 typecheck
+> tsc --noEmit
+
+
+> trestle-product@0.0.1 typecheck
+> tsc --noEmit
+
+
+> trestle-admin@0.0.1 typecheck
+> tsc --noEmit

@@ -8,6 +8,8 @@ use std::process::ExitCode;
 use clap::Parser;
 use include_dir::{Dir, include_dir};
 
+static ADMIN_TEMPLATE: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/template-admin");
+
 static TEMPLATE: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/template");
 
 /// The Trestle release this wrapper scaffolds against by default.
@@ -23,6 +25,9 @@ pub const DEFAULT_GIT: &str = "https://github.com/jasonduncan/trestle";
 pub struct NewArgs {
     /// Project name: lowercase letters, digits, `-` and `_`.
     pub name: String,
+    /// Add the separate React admin host and an authorized workspace directory.
+    #[arg(long)]
+    pub admin: bool,
     /// Directory to create (default: ./NAME).
     #[arg(long)]
     pub path: Option<PathBuf>,
@@ -131,6 +136,21 @@ pub fn create(args: &NewArgs, dir: &Path) -> Result<(), String> {
     let write = |name: &str, text: String| {
         std::fs::write(dir.join(name), text).map_err(|e| format!("{name}: {e}"))
     };
+    if args.admin {
+        write_dir(&ADMIN_TEMPLATE, dir, &vars)?;
+        let manifest =
+            std::fs::read_to_string(dir.join("Cargo.toml")).map_err(|e| e.to_string())?;
+        write("Cargo.toml", manifest.replace("[dependencies]", "[dependencies]\nserde = { version = \"1\", features = [\"derive\"] }\nsqlx = { version = \"0.8\", default-features = false, features = [\"runtime-tokio\", \"postgres\", \"uuid\"] }"))?;
+        let intent =
+            std::fs::read_to_string(dir.join("trestle.toml")).map_err(|e| e.to_string())?;
+        write(
+            "trestle.toml",
+            intent.replace(
+                "member = [\"notes.read\", \"notes.write\"]",
+                "member = [\"notes.read\", \"notes.write\", \"notes.admin\"]",
+            ) + "\n[[admin]]\nmodel = \"notes.note\"\npermission = \"notes.admin\"\ncolumns = [\"title\", \"pinned\"]\n",
+        )?;
+    }
     write(".env", dev_env(&args.name))?;
     Ok(())
 }

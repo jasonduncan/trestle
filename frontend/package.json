@@ -3,15 +3,23 @@
   "private": true,
   "license": "MIT OR Apache-2.0",
   "workspaces": [
+    "client",
     "interaction-react",
+    "admin-react",
     "product",
     "admin"
   ],
   "scripts": {
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "build": "npm run build --workspace product && npm run build --workspace admin",
-    "e2e": "node e2e/run-demo.mjs"
+    "build": "npm run build:packages && npm run build --workspace product && npm run build --workspace admin",
+    "e2e": "node e2e/run-demo.mjs",
+    "build:packages": "node build-packages.mjs",
+    "pretest": "npm run build:packages",
+    "build:views": "npm run build:packages && node build-views.mjs",
+    "test:packages": "node test-packages.mjs",
+    "test:views": "npm run build:views && node e2e/run-views.mjs",
+    "test:compatibility": "node test-compatibility.mjs"
   },
   "dependencies": {
     "react": "^19.3.0",

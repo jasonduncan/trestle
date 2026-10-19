@@ -1,0 +1,92 @@
+[project]
+name = "maintenance"
+[tenancy]
+model = "workspace"
+[roles]
+technician = ["maintenance.read", "maintenance.write", "maintenance.admin"]
+viewer = ["maintenance.read", "maintenance.admin"]
+[[models]]
+id = "maintenance.asset"
+label = "name"
+fields = [{ id = "name", type = "text", max = 100 }]
+[[models]]
+id = "maintenance.work_order"
+label = "title"
+fields = [
+  { id = "title", type = "text", max = 200 },
+  { id = "asset", type = "ref", to = "maintenance.asset" },
+  { id = "state", type = "enum", values = ["scheduled", "completed"], default = "scheduled" },
+  { id = "notes", type = "text", optional = true },
+  { id = "technician", type = "ref", to = "maintenance.technician", optional = true },
+]
+[[endpoints]]
+model = "maintenance.asset"
+crud = ["list", "get", "create", "update", "delete"]
+read = "maintenance.read"
+write = "maintenance.write"
+forms = true
+search = "name"
+[[endpoints]]
+model = "maintenance.work_order"
+crud = ["list", "get", "create", "update", "delete"]
+read = "maintenance.read"
+write = "maintenance.write"
+filter = ["state"]
+search = "title"
+forms = true
+[[endpoints]]
+id = "maintenance.complete"
+model = "maintenance.work_order"
+path = "POST /api/v1/work_orders/{id}/complete"
+permission = "maintenance.write"
+set = { state = "completed" }
+when = { state = ["scheduled"] }
+accept = ["notes"]
+forms = true
+[[admin]]
+model = "maintenance.asset"
+permission = "maintenance.admin"
+title = "Assets"
+columns = ["name"]
+[[admin]]
+model = "maintenance.work_order"
+permission = "maintenance.admin"
+title = "Work orders"
+columns = ["title", "state", "notes"]
+filters = ["state", "q"]
+actions = ["maintenance.complete"]
+
+[[models]]
+id = "maintenance.technician"
+label = "name"
+fields = [{ id = "name", type = "text", max = 100 }]
+[[endpoints]]
+model = "maintenance.technician"
+crud = ["list", "get"]
+read = "maintenance.read"
+search = "name"
+[[views]]
+id = "maintenance.queue"
+kind = "collection"
+audience = "product"
+permission = "maintenance.read"
+resource = "maintenance.work_order"
+query = "maintenance.work_order.list"
+title = "Maintenance workspace"
+label = "title"
+columns = ["title", "state"]
+filters = ["state", "q"]
+record_view = "maintenance.detail"
+record_input = { id = "/id" }
+[[views]]
+id = "maintenance.detail"
+kind = "record"
+audience = "product"
+permission = "maintenance.read"
+resource = "maintenance.work_order"
+query = "maintenance.work_order.get"
+title = "Work order"
+label = "title"
+columns = ["title", "state", "notes"]
+actions = ["maintenance.complete.form"]
+sections = [{ id = "asset", title = "Asset", query = "maintenance.asset.get", columns = ["name"], label = "name", input = { id = "/asset" } }]

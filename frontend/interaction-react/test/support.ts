@@ -24,3 +24,10 @@ export function publishedAdminDescriptor(id = "lessons.admin_edit.form"): any {
   if (!descriptor) throw new Error(`no admin descriptor ${id}`);
   return structuredClone(descriptor);
 }
+
+export function savedLesson(overrides: Record<string, unknown> = {}) {
+  return { id: "01a0dc49-2bf1-7112-b58a-ea138be5bdf1", title: "Fractions", grade_level: 4, subtitle: null, unit_id: null, duration_minutes: null, status: "draft", version: "1", ...overrides };
+}
+export function frameworkProblem(body: unknown, status: number): unknown {
+  return status >= 400 ? { type: "urn:trestle:problem:validation", status, ...(body as object) } : body;
+}

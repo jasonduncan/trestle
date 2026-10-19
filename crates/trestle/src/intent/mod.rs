@@ -11,7 +11,10 @@ pub mod spec;
 
 pub use toml;
 
-pub use doc::{AdminDoc, EndpointDoc, FieldDoc, IntentDoc, ModelDoc, ProjectDoc, TenancyDoc};
+pub use doc::{
+    AdminDoc, EndpointDoc, FieldDoc, IntentDoc, ModelDoc, ProjectDoc, TenancyDoc, ViewDoc,
+    ViewSectionDoc,
+};
 pub use runtime::{
     Ctx, HandlerFn, Handlers, HookFn, Input, IntentApp, MAX_LIMIT, Permission, Resolved, Row,
     TENANT_HEADER,

@@ -1,0 +1,377 @@
+{
+  "baselineCommit": "a59936cb73263a4340f4ffbce5a3cf74548d0361",
+  "files": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "67572ca37bcc09d04dc9a311cbe0c66f82a53e2cbe3f0bbcf4197c282499ad72"
+    },
+    {
+      "path": "README.md",
+      "sha256": "60d6e2ec83b8b3201c28b76a2d1b05282a382350497ea4858ba26c04fa179d2d"
+    },
+    {
+      "path": "crates/trestle-cli/Cargo.toml",
+      "sha256": "ea8c5e97f3f13f7339f5daa5b43a5cb6c4509950d891a16f2114bad7df2e1588"
+    },
+    {
+      "path": "crates/trestle-cli/src/scaffold.rs",
+      "sha256": "e67bb330129789a5069061a3c1934e5b69e7fc60bd95c75d7e0f22cdcc2074b4"
+    },
+    {
+      "path": "crates/trestle-cli/template-admin/frontend/README.md",
+      "sha256": "0fcc68570fcc6abcf51bdc1926808afcf69f5907458098527990f8009771dc21"
+    },
+    {
+      "path": "crates/trestle-cli/template-admin/frontend/index.html",
+      "sha256": "cea905d54223e8a02579e289c227e8c26ed126ef0a33eb8c2a6a7e32bd881100"
+    },
+    {
+      "path": "crates/trestle-cli/template-admin/frontend/main.tsx",
+      "sha256": "b569ab4cdf810899829d7f764dc01abc09740f34277e5739e34280f270a349d1"
+    },
+    {
+      "path": "crates/trestle-cli/template-admin/frontend/package.json",
+      "sha256": "87e70ac84fb463f003405b2c0ab377167587a9d99da9357de99c051f4b5a43fd"
+    },
+    {
+      "path": "crates/trestle-cli/template-admin/frontend/vite.config.ts",
+      "sha256": "e3a7c39b1127ddd6b25aa42b669546206db597f2b5c5b7a8358e628971fcd545"
+    },
+    {
+      "path": "crates/trestle-cli/template-admin/src/admin.rs",
+      "sha256": "c88ef341d17c0aaca02a9434c07bb28758cc247a27e00b6c1e8e40905704016e"
+    },
+    {
+      "path": "crates/trestle-cli/template-admin/src/main.rs",
+      "sha256": "c409dbe28adbcb630a0110d04b98fac4041efec2db90bb3bf8d5aec49cdef5e8"
+    },
+    {
+      "path": "crates/trestle-cli/tests/wrapper.rs",
+      "sha256": "bce6c27300047c49b9872f893a3e0b40949a23ccc75eb776d5ce5b60af26faea"
+    },
+    {
+      "path": "crates/trestle-core/src/invocation.rs",
+      "sha256": "7c13856e9f8e4250d1b89ea135b45c9ccb3cd8e1183a2ecb22cfbdb2ec24c855"
+    },
+    {
+      "path": "crates/trestle-core/src/operation.rs",
+      "sha256": "cd4a0e74083edf1c91b4e0cf048f5587ef18b8c1148c21762842696bbe07c040"
+    },
+    {
+      "path": "crates/trestle-core/src/registry/meta.rs",
+      "sha256": "53d57f6a836e32d7f72f106935762069eb077a1de256a61efd2a7941e9d56920"
+    },
+    {
+      "path": "crates/trestle-core/src/registry/mod.rs",
+      "sha256": "ec18c1d45f50be9a3adabecf53c951ba22a6a528c338327ae36962c511a32652"
+    },
+    {
+      "path": "crates/trestle-core/src/registry/resource.rs",
+      "sha256": "d43d7076a3ed7ec3b19ea0c059ff86d98791f057576a479ba868ed09c204147d"
+    },
+    {
+      "path": "crates/trestle-core/src/registry/routes.rs",
+      "sha256": "ab1c07e13b13871b91ed9dce1824429684ec088712f668953c8da528899a8aee"
+    },
+    {
+      "path": "crates/trestle-core/src/registry/view.rs",
+      "sha256": "32f2fe33d2fc9894b38d6de0071903743a479f0958e57f84fd5984a33ab93718"
+    },
+    {
+      "path": "crates/trestle-core/tests/idempotency.rs",
+      "sha256": "b60eff1ecccc4966e0ba4d48ef8eb499016df33546eb96a100a19800805f570a"
+    },
+    {
+      "path": "crates/trestle-protocol/src/form.rs",
+      "sha256": "804581f880d6fc3b3b16e3c197dfa6619f890f89d25ed945ee844ac0fad19fa7"
+    },
+    {
+      "path": "crates/trestle-protocol/src/interaction.rs",
+      "sha256": "91d309a43875916698943ae35118564c622c1d96e401cd613153fead9d752e5d"
+    },
+    {
+      "path": "crates/trestle-protocol/src/lib.rs",
+      "sha256": "e4cbd8db3ee0740ca4b46df2f6520d69f285839a953385684192c9542194a4ee"
+    },
+    {
+      "path": "crates/trestle-protocol/src/view.rs",
+      "sha256": "0f4018432268281963c010f70b4a1d9811e06a607c9069b341248c6b947aa375"
+    },
+    {
+      "path": "crates/trestle/src/intent/doc.rs",
+      "sha256": "dbbf5f52db37caa28fab5dc8cb26462d2b735707b37406ff8de9d13eee51647a"
+    },
+    {
+      "path": "crates/trestle/src/intent/mod.rs",
+      "sha256": "6685482a3410e63310947a66f3e120db03f91f85ee159c865a6b15238e13a3b8"
+    },
+    {
+      "path": "crates/trestle/src/intent/runtime.rs",
+      "sha256": "0efb3f0c995d48c2635bd98194e3baa1c2300e769a7370a06f2f1fdf65f35c4d"
+    },
+    {
+      "path": "crates/trestle/src/intent/spec.rs",
+      "sha256": "609e4d30cbf24d9b2dce29d313dede26dd327fc3c7eaeb081ab0786431ba9e0c"
+    },
+    {
+      "path": "crates/trestle/src/project.rs",
+      "sha256": "721b56765b48965fa4a28cba334a7abc5939add8bad46aa99726a090ace3fbf4"
+    },
+    {
+      "path": "crates/trestle/tests/fixtures/intent_doc/every_key.toml",
+      "sha256": "5ef2ab2edade2cdf4fa9109efcfa46de6a29baf9849679620554364e874d260d"
+    },
+    {
+      "path": "crates/trestle/tests/intent_doc.rs",
+      "sha256": "14ba757050a9839c8b7857613956b0b358aea3453aeefea4d904e8faa482c961"
+    },
+    {
+      "path": "crates/trestle/tests/support/views_app.rs",
+      "sha256": "3b3e3afd3e99ba554394f906759d29a42470c7e77305a4f8444f306957fffa44"
+    },
+    {
+      "path": "crates/trestle/tests/views.rs",
+      "sha256": "2d6ae9d9b1627000fb33da2ead32544f3aab29bc4e76e7c687a602881790c677"
+    },
+    {
+      "path": "crates/trestle/tests/views_live.rs",
+      "sha256": "163aa234c3cf2e3555b3d142158e7a13df31caa4cc4271c6ce41a7c8e7167b92"
+    },
+    {
+      "path": "docs/adr/008-resource-abstraction-and-axum-boundary.md",
+      "sha256": "c43455b4a0299343084bb034e5c5fbb376ccc30f1f38ef960517b27fe7a3743d"
+    },
+    {
+      "path": "docs/adr/013-transport-neutral-invocation.md",
+      "sha256": "1271c3286ea084cb738a44a84ed88b01c0542433a6f89274f09c71eaa294d412"
+    },
+    {
+      "path": "docs/adr/016-idempotency-keys.md",
+      "sha256": "c4ab4c24a63a7d5971ad8e7ce1ff5e7ceffc5167da740cfefee679a17e47d842"
+    },
+    {
+      "path": "docs/adr/026-intent-generated-forms.md",
+      "sha256": "b5431f13f7aedd58131829c3adc8696fc10eb3d83816327a840d758bee0d04bb"
+    },
+    {
+      "path": "docs/adr/029-intent-admin-views.md",
+      "sha256": "025d51a25c415a16dcc15191da0c7d3e1be27bb05750eb54318e469e4e478410"
+    },
+    {
+      "path": "docs/adr/033-admin-and-application-views.md",
+      "sha256": "3641003b81f5eb991c4718825e8269d49043942118788b1a41944ee5bdc6c1bc"
+    },
+    {
+      "path": "docs/design/Trestle_Admin_and_Application_Views_Engineering_Handoff.docx",
+      "sha256": "a9df6a46c9bef288d24af266fa736e5638031cb614be69d76706ed50dd15bde0"
+    },
+    {
+      "path": "docs/guide/views-implementation.md",
+      "sha256": "929204c60cf055c70ea42615eb133ab8ff0b3129c4fa59bb667ec9db7fbf3673"
+    },
+    {
+      "path": "fixtures/views/maintenance.json",
+      "sha256": "184e2505abdd2677e154ea09e7655362583c71da6453568791bf435ee72ab2e0"
+    },
+    {
+      "path": "fixtures/views/maintenance.toml",
+      "sha256": "e756c51b464b1987d303061360cd6a1ec501b1b432ab0ae15623a9132ec5192c"
+    },
+    {
+      "path": "fixtures/views/support.json",
+      "sha256": "5d6eacb91769346cbc576b8f9a9bf4da7e1759a2e615364e44db8ed8671dcaa5"
+    },
+    {
+      "path": "fixtures/views/support.toml",
+      "sha256": "0f42a83ca6338697ac42e6c070decd9c64c7faac1776dab36168e89cb6c3661f"
+    },
+    {
+      "path": "frontend/admin-react/package.json",
+      "sha256": "1ff10cd0600f1302ba8d2af696360add3829a4b2d631f6f4d4e1a2a44204a9b9"
+    },
+    {
+      "path": "frontend/admin-react/src/host.tsx",
+      "sha256": "27f06678f85a641d2fc9ddda0f9c60ab8a1369e0024795a25d4938c87cb5da3d"
+    },
+    {
+      "path": "frontend/admin-react/src/index.tsx",
+      "sha256": "6fb13a748a16750d141f69a336e23448ec5923696bb60177c0b29fbf9c65fc13"
+    },
+    {
+      "path": "frontend/admin-react/src/style.d.ts",
+      "sha256": "35d26ea66c86da9701e4f4b467913481ffeae910761cea34c775c5dacb7f8eaa"
+    },
+    {
+      "path": "frontend/admin-react/src/styles.css",
+      "sha256": "a5e24e4412c1501d555f034804709e697229839a80d837113aa01b815180b60d"
+    },
+    {
+      "path": "frontend/admin-react/test/host.test.tsx",
+      "sha256": "e2e21a815b419cc455b048d2f90c1874b00f7687c19939a88f99e3a60a6fae64"
+    },
+    {
+      "path": "frontend/admin-react/test/queries.test.tsx",
+      "sha256": "0d18458aa039309c6551991ae074e50f023cd3c2e9c2eb8dd2d52192dc337736"
+    },
+    {
+      "path": "frontend/admin-react/tsconfig.build.json",
+      "sha256": "002b3b86f10bea4079587cefc205b7d416131a0da9e15bbe76c7c6eeddadbadd"
+    },
+    {
+      "path": "frontend/admin-react/tsconfig.json",
+      "sha256": "c133c16d6b27d54c913fc9c41547edb61c0c0c57940f4320aa197d9802755245"
+    },
+    {
+      "path": "frontend/admin-react/vitest.config.ts",
+      "sha256": "58640e048fc1b5d2ee49ccf3e51134fdf40e509155139ac66e1a758e27fa198a"
+    },
+    {
+      "path": "frontend/admin/package.json",
+      "sha256": "1622a0abef6ce4db7a3a91c577c4071f15b1d386db09dc005bccc47e9b357755"
+    },
+    {
+      "path": "frontend/admin/src/App.tsx",
+      "sha256": "1f1f24c7a32b0f52c244551c7b58beb9fdadc17b8a984865b55053a0024197ea"
+    },
+    {
+      "path": "frontend/build-packages.mjs",
+      "sha256": "902779034c7c1da247de0b0415dbcf1c915999faa5ffde11b4041a5f44915ec4"
+    },
+    {
+      "path": "frontend/build-views.mjs",
+      "sha256": "6bcbb7e79d95d6b4325c57c19a5c6f29f731f55a4d3cc02be428f324e577674f"
+    },
+    {
+      "path": "frontend/client/package.json",
+      "sha256": "8be14e146ca9575f8bda4fc3d66ea2b884e29d670d4eb944cf177bc7487bd735"
+    },
+    {
+      "path": "frontend/client/src/index.ts",
+      "sha256": "ac7e24e61dc701a1d3a7d9068da261ca2a52db317c79dae3650d16ed20cb4a68"
+    },
+    {
+      "path": "frontend/client/src/operation.ts",
+      "sha256": "3e9180c489c90f81d8f499c65ae55b6dfb12edec5709e8fdd1985844aede35ff"
+    },
+    {
+      "path": "frontend/client/src/protocol.ts",
+      "sha256": "63554c990fba5cdf7c1676cd9e30bb7380a3489a0b3808c43add10bf7582ba34"
+    },
+    {
+      "path": "frontend/client/src/scalar.ts",
+      "sha256": "bf040cb6138e1fb79c50c46f65d543ed4106927676a23eba34c4ce8ab4f18e1a"
+    },
+    {
+      "path": "frontend/client/src/transport.ts",
+      "sha256": "d0565598e0c66efc0c913cd77f154f7bbfcb63c6789d51b39a2c3a51b43ad759"
+    },
+    {
+      "path": "frontend/client/src/validate.ts",
+      "sha256": "b786ca445834cdc11c04feafd21a2e36c0b2b7a9ba40b6daf6e81a15b34cf0f2"
+    },
+    {
+      "path": "frontend/client/src/views.ts",
+      "sha256": "9850d864debd9874447e81319d1de9581781af9a5ba95cc1946ec1a501c647bf"
+    },
+    {
+      "path": "frontend/client/test/operation.test.ts",
+      "sha256": "eb9dfaa66addb0d27a6395aacf0168267e2b45b4e11a6ed470db05db47953e72"
+    },
+    {
+      "path": "frontend/client/test/transport.test.ts",
+      "sha256": "0586d3413c3b1da7d744e45557f80d58a9376ce66ad57f518bd972d267bc4fce"
+    },
+    {
+      "path": "frontend/client/test/views.test.ts",
+      "sha256": "5e678df452b08b2d53f0e981cf9dfa7d61d767eaeeefb3315ebd145945bb7e39"
+    },
+    {
+      "path": "frontend/client/tsconfig.build.json",
+      "sha256": "002b3b86f10bea4079587cefc205b7d416131a0da9e15bbe76c7c6eeddadbadd"
+    },
+    {
+      "path": "frontend/client/tsconfig.json",
+      "sha256": "a64236bb32b1fd3fe1bd1ae873c0d3d45ae03320ee6af3b0223e2e6244083827"
+    },
+    {
+      "path": "frontend/e2e/run-views-live.mjs",
+      "sha256": "fea89e4f30ac0f9cfdec7dd26a1c47a24b36ef3423f13b390dd25530f597332b"
+    },
+    {
+      "path": "frontend/e2e/run-views.mjs",
+      "sha256": "7ec02cdb5a9edf60cd813487bdfd54629af225c623aa71c7d094d1a07af08fff"
+    },
+    {
+      "path": "frontend/interaction-react/package.json",
+      "sha256": "0ac1a05b75bccd1a5b4ff1bab83bdff8b28b5618f33bb097cbcee79b32e8abc7"
+    },
+    {
+      "path": "frontend/interaction-react/src/OperationForm.tsx",
+      "sha256": "3ead77b607eaa7ce7ade0f86cd336ee86ba79691e57931274940a20a70c54819"
+    },
+    {
+      "path": "frontend/interaction-react/src/protocol.ts",
+      "sha256": "4ce2c48c95632a237683d415f5d8f1ab48a287ef8b5f3ce80cf53e8d032421ef"
+    },
+    {
+      "path": "frontend/interaction-react/src/scalar.ts",
+      "sha256": "33b140e2ed2a577bb39244563aaa529cfbe67332b62fddb8c2e512540de896db"
+    },
+    {
+      "path": "frontend/interaction-react/src/transport.ts",
+      "sha256": "c5345c6f430d32a294e33356975629fd85a5f2cea8ba8ff05773eef6d31b4cd3"
+    },
+    {
+      "path": "frontend/interaction-react/src/validate.ts",
+      "sha256": "53327580c51831587daf5388d6e1a93f8728994a47c3695f923936951d3d2bab"
+    },
+    {
+      "path": "frontend/interaction-react/src/widgets.tsx",
+      "sha256": "275f217da3d333b92bfcd042b3307eaed7c95bc6a31d7b273308e7e82aaf9eb3"
+    },
+    {
+      "path": "frontend/interaction-react/test/OperationForm.test.tsx",
+      "sha256": "a862278d6ef8dc35d0c68e81ff6008dbc3d1d26a14caea767983a6f70c0a306d"
+    },
+    {
+      "path": "frontend/interaction-react/test/edit-and-relations.test.tsx",
+      "sha256": "834419adcd837cc0adf8acbe8e4c01b15dfd2137e31d3022584b39d14d0253bd"
+    },
+    {
+      "path": "frontend/interaction-react/test/support.ts",
+      "sha256": "9155581954c4071f5adcdf844cc683883c617d70e8e916966b16919092f7e03f"
+    },
+    {
+      "path": "frontend/interaction-react/tsconfig.build.json",
+      "sha256": "002b3b86f10bea4079587cefc205b7d416131a0da9e15bbe76c7c6eeddadbadd"
+    },
+    {
+      "path": "frontend/package-lock.json",
+      "sha256": "9d9350ba30cdba0988d5ceb98ccce597b6bbd41727e2b4bc9fbbbaffa0d9aab8"
+    },
+    {
+      "path": "frontend/package.json",
+      "sha256": "b48176a23fc056b3abab571933cab53a0152cef7f7657cbc7706c2cc7f51cbd7"
+    },
+    {
+      "path": "frontend/test-compatibility.mjs",
+      "sha256": "909b991404f491540012e8b1941d9a9c9d82de5eace38132dfbea90c2c792bd5"
+    },
+    {
+      "path": "frontend/test-packages.mjs",
+      "sha256": "e160b6cc1a18168d748aef89438b7656c870e2e44ed82a583d4bfa8904d6363f"
+    },
+    {
+      "path": "frontend/views-demo/index.html",
+      "sha256": "23e91c9be0d082422037476cfb39318bb850cc1bbcc7c430c707d3519220a033"
+    },
+    {
+      "path": "frontend/views-demo/main.tsx",
+      "sha256": "c927fb65e002339b8e6ca4aa9e771f1e802a6f9502e09a49d728f91e24347d53"
+    },
+    {
+      "path": "scripts/ci/scaffold.sh",
+      "sha256": "3bd4dcf5adb94ccdebef33d0715739d5a46d338a29145477442d9885528d5b42"
+    }
+  ]
+}

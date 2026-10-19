@@ -70,6 +70,7 @@ fn a_built_binary_is_used_when_given() {
 
 fn new_args(name: &str) -> NewArgs {
     NewArgs {
+        admin: false,
         name: name.into(),
         path: None,
         git: None,

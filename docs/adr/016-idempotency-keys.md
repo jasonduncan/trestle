@@ -4,6 +4,12 @@
 (which recorded idempotency keys as not implemented) · **Depends on:**
 ADR-013, ADR-015
 
+**Extended by [ADR-033](033-admin-and-application-views.md):** immutable browser
+attempts never replay an uncertain write; version expectations are checked before
+receipt selection. Retained response bodies must also satisfy the current output
+contract before disclosure. A refusal leaves the receipt and effect intact and
+does not re-enter execution.
+
 ## Context
 
 §6.4 requires the following.

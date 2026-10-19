@@ -3,6 +3,9 @@
 **Status:** Proposed (2026-10-17) · **Design doc:** §6.2, §12.1, I03, I04 · **Amends:**
 ADR-003 (contexts), ADR-005 (where identity is read)
 
+**Extended by [ADR-033](033-admin-and-application-views.md):** optional expected
+operation versions have equivalent HTTP and direct-invocation refusal semantics.
+
 ## Context
 
 The executor (`execute*`) has never needed HTTP: it takes a pool, an operation,

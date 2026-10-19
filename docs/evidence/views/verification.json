@@ -1,0 +1,97 @@
+{
+  "result": "passed",
+  "validatedAt": "2026-10-19T02:59:39.246652+00:00",
+  "baselineCommit": "a59936cb73263a4340f4ffbce5a3cf74548d0361",
+  "implementation": "Uncommitted working tree; see source-manifest.json",
+  "rust": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "node": "v22.22.3",
+  "postgresql": "16.15 (Homebrew)",
+  "workspaceTests": {
+    "passed": 393,
+    "failed": 0,
+    "ignored": 1,
+    "ignoredReason": "Existing App documentation example"
+  },
+  "frontendTests": {
+    "passed": 175
+  },
+  "verificationOrder": "Full workspace suite, then focused regressions for the final receipt, layout, view, frontend and browser changes; final Clippy and format checks passed.",
+  "commands": [
+    {
+      "command": "cargo test --workspace",
+      "result": "passed"
+    },
+    {
+      "command": "cargo test -p trestle-protocol",
+      "result": "passed"
+    },
+    {
+      "command": "cargo test -p trestle-framework --test views",
+      "result": "passed"
+    },
+    {
+      "command": "cargo test -p trestle-core --test idempotency",
+      "result": "passed"
+    },
+    {
+      "command": "cargo clippy --workspace --all-targets -- -D warnings",
+      "result": "passed"
+    },
+    {
+      "command": "cargo fmt --all --check",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    },
+    {
+      "command": "cargo run -p pilot -- makemigrations --check",
+      "result": "passed"
+    },
+    {
+      "command": "cargo run -p pilot -- check --renderer frontend/admin-react/dist/renderer.json",
+      "result": "passed"
+    },
+    {
+      "command": "bash scripts/ci/scaffold.sh",
+      "result": "passed"
+    },
+    {
+      "command": "npm test",
+      "result": "passed"
+    },
+    {
+      "command": "npm run typecheck",
+      "result": "passed"
+    },
+    {
+      "command": "npm run build",
+      "result": "passed"
+    },
+    {
+      "command": "npm run build:views",
+      "result": "passed"
+    },
+    {
+      "command": "npm run test:compatibility",
+      "result": "passed"
+    },
+    {
+      "command": "npm run test:packages",
+      "result": "passed"
+    },
+    {
+      "command": "TRESTLE_VIEW_BROWSER=1 cargo test -p trestle-framework --test views_live",
+      "result": "passed"
+    }
+  ],
+  "rendererDigest": "d8039055634ca8c7345222bc4dbfadf07e4f771f0a40f37add4c1eeb90e48ed0",
+  "cleanup": {
+    "inactiveDisposableDatabasesRemoved": 11,
+    "testServersStopped": true
+  },
+  "remoteCI": "configured, not run here",
+  "publication": "not performed",
+  "pilotApproval": "project owner only"
+}

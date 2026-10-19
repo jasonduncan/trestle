@@ -1,0 +1,8 @@
+Registry OK: Pilot API 0.0.1
+  apps (lifecycle order): identity, schools, audit, units, lessons
+  operations:             schools.mine, units.list, units.create, units.get, lessons.list, lessons.create, lessons.get, lessons.update, lessons.delete, lessons.publish
+  forms:                  lessons.create.form, lessons.admin_edit.form
+  routes:                 10 managed, 10 unmanaged, 8 system
+  required migrations:    identity.0001_initial, identity.0002_accounts, schools.0001_initial, audit.0001_initial, units.0001_initial, lessons.0001_initial, lessons.0002_subtitle, lessons.0003_unit, lessons.0004_duration
+  contracts digest:       sha256:e14f22ddc3233e1f12ff1a6eed54be1814d974fea436aab87c2ad36b9ae4a3aa
+  interactions digest:    sha256:12a7ccbf43bba723a2cc7c97048dbe64e14fc070c0ec0ca0600523119b02a7eb

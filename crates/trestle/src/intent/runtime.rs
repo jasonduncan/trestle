@@ -245,6 +245,7 @@ impl Ctx {
                 model,
                 scope,
                 &filter,
+                None,
                 ("created_at", true),
                 MAX_LIMIT,
                 None,
@@ -524,6 +525,46 @@ where
         for model in intent.models.iter().filter(|m| m.app == self.id) {
             app.model(model_of(model, intent));
         }
+        for view in intent
+            .views
+            .iter()
+            .filter(|v| v.id.split('.').next() == Some(self.id.as_str()))
+        {
+            let mut definition =
+                trestle_core::registry::ViewDefinition::collection(&view.id, &view.query);
+            definition.kind = view.kind.clone();
+            definition.audience = Audience::parse(&view.audience).expect("validated audience");
+            definition.resource = view.resource.clone();
+            definition.title = view.title.clone();
+            definition.identity = view.identity.clone();
+            definition.label = view.label.clone();
+            definition.columns = view.columns.clone();
+            definition.filters = view.filters.clone();
+            definition.record_view = view.record_view.clone();
+            definition.record_input = view.record_input.clone();
+            definition.actions = view.actions.clone();
+            definition.action_input = view.action_input.clone();
+            definition.sections = view
+                .sections
+                .iter()
+                .map(|s| trestle_core::registry::SectionDefinition {
+                    id: s.id.clone(),
+                    title: s.title.clone(),
+                    query: s.query.clone(),
+                    collection: s.collection,
+                    identity: s.identity.clone(),
+                    label: s.label.clone(),
+                    columns: s.columns.clone(),
+                    input: s.input.clone(),
+                    component: s.component.clone(),
+                    required_component: s.required_component,
+                })
+                .collect();
+            app.view_dyn(
+                definition,
+                Arc::new(Permission::declared(&self.resolved, &view.permission)),
+            );
+        }
         for endpoint in &intent.endpoints {
             match endpoint {
                 EndpointSpec::Crud {
@@ -609,6 +650,28 @@ where
                         }
                         view = Some(v);
                     }
+                    if let Some(admin) = admin {
+                        for action in &admin.actions {
+                            if let Some(EndpointSpec::Action {
+                                accept,
+                                forms: true,
+                                ..
+                            }) = intent.endpoints.iter().find(
+                                |e| matches!(e, EndpointSpec::Action { id, .. } if id == action),
+                            ) && !accept.is_empty()
+                            {
+                                let presentation = FormPresentation::for_operation(
+                                    &format!("{action}.admin.form"),
+                                    action,
+                                )
+                                .audience(Audience::Admin)
+                                .title(&words(action.rsplit('.').next().unwrap_or(action)))
+                                .submit("Confirm");
+                                let fields: Vec<&str> = accept.iter().map(String::as_str).collect();
+                                app.form(form_fields(presentation, spec, intent, &fields));
+                            }
+                        }
+                    }
                     // Every CRUD endpoint is a resource: the conventional
                     // bindings, and the admin profile when one is declared.
                     let mut resource = app.resource(model.as_str(), spec.path());
@@ -652,6 +715,16 @@ where
                             }
                             _ => view.action(name, &label),
                         };
+                        if let EndpointSpec::Action {
+                            accept,
+                            forms: true,
+                            ..
+                        } = endpoint
+                            && !accept.is_empty()
+                        {
+                            view.actions.last_mut().unwrap().form =
+                                Some(format!("{action}.admin.form"));
+                        }
                         let (built, http) =
                             action_operation::<S>(&self.resolved, endpoint, audiences);
                         resource = resource.action_at(name, built, http);
@@ -789,7 +862,19 @@ fn form_fields(
                     .find(|m| m.id == to)
                     .and_then(|m| m.label.clone())
                     .unwrap_or_default();
-                form = form.relation(&pointer, &label, &format!("{to}.list"), &shown);
+                let lookup = intent.endpoints.iter().any(|e| matches!(e, EndpointSpec::Crud { model, search: Some(_), ops, .. } if model == to && ops.contains(&Crud::Get)));
+                form = if lookup {
+                    form.relation_lookup(
+                        &pointer,
+                        &label,
+                        &format!("{to}.list"),
+                        &format!("{to}.get"),
+                        &shown,
+                        "q",
+                    )
+                } else {
+                    form.relation(&pointer, &label, &format!("{to}.list"), &shown)
+                };
                 continue;
             }
         };
@@ -1010,7 +1095,13 @@ fn update_contract(model: &ModelSpec, versioned: bool) -> ContractDoc {
 }
 
 enum Kind {
-    Crud(Crud, Vec<String>, (String, bool), BTreeMap<String, String>),
+    Crud(
+        Crud,
+        Vec<String>,
+        Option<String>,
+        (String, bool),
+        BTreeMap<String, String>,
+    ),
     Handler(String),
     Action(Arc<Action>),
 }
@@ -1109,6 +1200,7 @@ where
 {
     let EndpointSpec::Crud {
         filter,
+        search,
         order,
         hooks,
         ..
@@ -1123,6 +1215,9 @@ where
             for name in filter {
                 let f = model.field(name).expect("validated");
                 doc = doc.field(field_contract(f, false));
+            }
+            if search.is_some() {
+                doc = doc.field(Field::text("q").chars(1, 200).optional());
             }
             doc = doc
                 .field(Field::integer("limit").range(1, MAX_LIMIT).optional())
@@ -1191,7 +1286,7 @@ where
         output,
         model: model.clone(),
         resolved: resolved.clone(),
-        kind: Kind::Crud(op, filter.clone(), order.clone(), hooks),
+        kind: Kind::Crud(op, filter.clone(), search.clone(), order.clone(), hooks),
         _state: PhantomData,
     };
     Arc::new(built)
@@ -1588,7 +1683,7 @@ impl<S> IntentOp<S> {
                 let row = handler(ctx.clone(), Input { data: input }).await?;
                 Ok(row.to_json())
             }
-            Kind::Crud(op, filter, order, hooks) => {
+            Kind::Crud(op, filter, search, order, hooks) => {
                 let id = input
                     .remove("id")
                     .and_then(|v| v.as_str().and_then(|s| s.parse::<Uuid>().ok()));
@@ -1616,13 +1711,22 @@ impl<S> IntentOp<S> {
                             .unwrap_or(50)
                             .clamp(1, MAX_LIMIT);
                         let cursor = input.remove("cursor");
+                        let term = input
+                            .remove("q")
+                            .and_then(|v| v.as_str().map(|s| s.trim().to_lowercase()))
+                            .filter(|s| !s.is_empty());
                         let filter: Map<String, Value> = input
                             .into_iter()
                             .filter(|(k, _)| filter.contains(k))
                             .collect();
                         // A cursor is valid only for exactly this query.
                         let shape = json!({
-                            "op": format!("{}.list", model.id),
+                            "op": &*self.info.id,
+                            "version": &*self.info.version,
+                            "projection": trestle_protocol::digest(&self.output.json_schema()),
+                            "tenant": ctx.tenant(),
+                            "actor": ctx.actor().0,
+                            "search": term,
                             "limit": limit,
                             "filter": filter,
                             "order": [order.0, order.1],
@@ -1638,6 +1742,7 @@ impl<S> IntentOp<S> {
                                     model,
                                     scope,
                                     &filter,
+                                    search.as_deref().zip(term.as_deref()),
                                     (order.0.as_str(), order.1),
                                     limit + 1,
                                     after.as_ref(),
@@ -1827,11 +1932,13 @@ fn position(value: &Value) -> Result<(Value, Uuid), Problem> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn list(
     conn: &mut PgConnection,
     model: &Arc<ModelSpec>,
     scope: &Scope,
     filter: &Map<String, Value>,
+    search: Option<(&str, &str)>,
     order: (&str, bool),
     limit: i64,
     after: Option<&(Value, Uuid)>,
@@ -1861,6 +1968,11 @@ async fn list(
             .ok_or_else(|| internal(&format!("{name:?} is not a field of {}", model.id)))?;
         conditions.push(format!("t.{name} = ($1::jsonb->>'{name}')::{}", f.ty.sql()));
     }
+    if let Some((field, _)) = search {
+        conditions.push(format!(
+            "strpos(lower(t.{field}), $1::jsonb->>'__search') > 0"
+        ));
+    }
     let where_ = if conditions.is_empty() {
         String::new()
     } else {
@@ -1874,8 +1986,11 @@ async fn list(
         order.0,
         limit.clamp(1, MAX_LIMIT + 1)
     );
-    let mut q =
-        sqlx::query_scalar::<_, String>(&sql).bind(Value::Object(filter.clone()).to_string());
+    let mut values = filter.clone();
+    if let Some((_, term)) = search {
+        values.insert("__search".into(), json!(term));
+    }
+    let mut q = sqlx::query_scalar::<_, String>(&sql).bind(Value::Object(values).to_string());
     if let Some((_, t)) = &scope.tenant {
         q = q.bind(*t);
     }

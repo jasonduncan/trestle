@@ -1,0 +1,22 @@
+{
+  "application": "maintenance",
+  "stage": "empty",
+  "rendererDigest": "d8039055634ca8c7345222bc4dbfadf07e4f771f0a40f37add4c1eeb90e48ed0",
+  "backendCommit": "a59936cb73263a4340f4ffbce5a3cf74548d0361",
+  "workingTree": "local implementation under test",
+  "schema": "sha256:301fe726f82b0c0288978df2910697e027bc554d5a8d74ac6c4accbfa0d635ff",
+  "machine": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpus": 10,
+    "memory": 25769803776
+  },
+  "records": 0,
+  "relatedChoices": 0,
+  "checks": [
+    "A01 empty database metadata and create form",
+    "A52 minimum intent admin declaration"
+  ],
+  "browser": "155.0.8059.84",
+  "result": "passed"
+}

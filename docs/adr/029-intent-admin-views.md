@@ -4,6 +4,10 @@
 **Design doc:** §7.1, §10 · **Amends:** the intent format, ADR-026 ·
 **Depends on:** ADR-014, ADR-025, ADR-026
 
+**Extended by [ADR-033](033-admin-and-application-views.md):** existing declarations
+lower to collection/record views with the same policies and legacy audience
+behavior; the reusable admin package consumes the separate view protocol.
+
 ## Context
 
 The admin shell renders resources that Rust apps register with

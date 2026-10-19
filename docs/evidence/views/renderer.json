@@ -1,0 +1,39 @@
+{
+  "protocol": "trestle.renderer",
+  "protocolVersion": "1.0",
+  "packages": {
+    "@trestle/client": "0.0.1",
+    "@trestle/interaction-react": "0.0.1",
+    "@trestle/admin-react": "0.0.1"
+  },
+  "viewVersions": [
+    "1.0"
+  ],
+  "interactionVersions": [
+    "1.0",
+    "1.1"
+  ],
+  "features": [
+    "forms.core@1",
+    "forms.decimal@1",
+    "forms.layout@1",
+    "forms.money@1",
+    "forms.relation-lookup@1",
+    "forms.relation@1",
+    "forms.temporal@1",
+    "forms.union@1",
+    "http.json@1",
+    "http.operation-version@1",
+    "http.precondition-target@1",
+    "http.precondition@1",
+    "views.availability@1",
+    "views.collection@1",
+    "views.record@1",
+    "views.sections@1"
+  ],
+  "components": {
+    "fixture.account_summary": "support.account@1",
+    "fixture.export_panel": "support.case@1"
+  },
+  "digest": "d8039055634ca8c7345222bc4dbfadf07e4f771f0a40f37add4c1eeb90e48ed0"
+}

@@ -403,6 +403,18 @@ fn check_typed_output<O: Operation>(output: &O::Output) -> Result<(), Problem> {
     check_output(O::INFO.id, O::Output::contract(), &value).map(drop)
 }
 
+fn check_replayed_output(
+    operation: &str,
+    contract: &ContractDoc,
+    body: &str,
+) -> Result<(), Problem> {
+    // A retained receipt can outlive an output projection. Never disclose
+    // fields rejected by today's contract, and never re-enter execution when
+    // that stored response can no longer be returned.
+    let output: Value = serde_json::from_str(body).map_err(|_| Problem::internal())?;
+    check_output(operation, contract, &output).map(drop)
+}
+
 /// Everything after decoding: authorization, transaction, run, output
 /// check, commit.
 pub async fn execute_validated<O: Operation>(
@@ -514,6 +526,7 @@ pub async fn execute_keyed<O: Operation>(
         op.policy().recheck(&mut tx, ctx).await?;
         match crate::idempotency::claim(&mut tx, &receipt).await? {
             crate::idempotency::Claim::Replay(body) => {
+                check_replayed_output(info.id, O::Output::contract(), &body)?;
                 count_replay(info.id);
                 Ok(Keyed {
                     body,
@@ -568,6 +581,7 @@ pub async fn execute_dyn_keyed<S: 'static>(
         if let crate::idempotency::Claim::Replay(body) =
             crate::idempotency::claim(&mut tx, &receipt).await?
         {
+            check_replayed_output(&info.id, op.output(), &body)?;
             count_replay(&info.id);
             return Ok(Keyed {
                 body,
@@ -617,6 +631,7 @@ where
         return Err(crate::idempotency::unsupported());
     }
     let ctx = O::Context::resolve(invocation, state).await?;
+    invocation.check_operation_version(O::INFO.version)?;
     execute_json(&PgPool::from_ref(state), op, &ctx, input).await
 }
 
@@ -634,6 +649,7 @@ where
         return Err(crate::idempotency::unsupported());
     }
     let ctx = op.resolve_context(invocation, state).await?;
+    invocation.check_operation_version(&op.info().version)?;
     execute_dyn(&PgPool::from_ref(state), op, ctx, input).await
 }
 

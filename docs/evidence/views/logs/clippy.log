@@ -1,0 +1,6 @@
+    Checking trestle-core v0.5.1 (/Users/jason/PDLabsShare/Projects/trestle/crates/trestle-core)
+    Checking trestle-identity v0.5.1 (/Users/jason/PDLabsShare/Projects/trestle/crates/trestle-identity)
+    Checking trestle-framework v0.5.1 (/Users/jason/PDLabsShare/Projects/trestle/crates/trestle)
+    Checking pilot v0.0.1 (/Users/jason/PDLabsShare/Projects/trestle/examples/pilot)
+    Checking trestle-cli v0.5.1 (/Users/jason/PDLabsShare/Projects/trestle/crates/trestle-cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2m 21s

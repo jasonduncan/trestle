@@ -7,11 +7,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { OperationForm } from "../src/OperationForm";
 import { decodeDescriptor } from "../src/protocol";
 import type { Reply, Transport } from "../src/transport";
-import { publishedAdminDescriptor, publishedDescriptor } from "./support";
+import { publishedAdminDescriptor, publishedDescriptor, savedLesson, frameworkProblem } from "./support";
 
 afterEach(cleanup);
 
-const ok = (body: unknown, status = 200, etag?: string): Reply => ({ kind: "response", status, body, bytes: 1, etag });
+const ok = (body: unknown, status = 200, etag?: string): Reply => ({ kind: "response", status, body: frameworkProblem(body, status), bytes: 1, etag });
 const UNIT_A = "0199aaaa-0000-7000-8000-00000000000a";
 const UNIT_B = "0199aaaa-0000-7000-8000-00000000000b";
 
@@ -60,8 +60,8 @@ describe("edit forms", () => {
   };
 
   it("sends only changed fields, the path ID and If-Match; clearing is null", async () => {
-    const saved = ok({ ...record.values, subtitle: null, grade_level: 5, version: "4" }, 200, '"lessons.view:4"');
-    const { t, submits } = transport(publishedAdminDescriptor(), [saved, ok({}, 200, '"lessons.view:5"')]);
+    const saved = ok(savedLesson({ ...record.values, subtitle: null, grade_level: 5, version: "4" }), 200, '"lessons.view:4"');
+    const { t, submits } = transport(publishedAdminDescriptor(), [saved, ok(savedLesson({ version: "5" }), 200, '"lessons.view:5"')]);
     const onSuccess = vi.fn();
     render(<OperationForm interaction="lessons.admin_edit.form" transport={t} record={record} onSuccess={onSuccess} />);
     const grade = await screen.findByLabelText("Grade level (optional)");

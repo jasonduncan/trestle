@@ -1,0 +1,104 @@
+[project]
+name = "support"
+[tenancy]
+model = "workspace"
+[roles]
+staff = ["support.read", "support.write", "support.admin"]
+viewer = ["support.read", "support.admin"]
+
+[[models]]
+id = "support.account"
+label = "name"
+fields = [{ id = "name", type = "text", max = 100 }]
+[[models]]
+id = "support.case"
+label = "subject"
+fields = [
+  { id = "subject", type = "text", max = 200 },
+  { id = "account", type = "ref", to = "support.account" },
+  { id = "state", type = "enum", values = ["open", "assigned", "closed"], default = "open" },
+  { id = "assignee", type = "ref", to = "support.user", optional = true },
+]
+[[endpoints]]
+model = "support.account"
+crud = ["list", "get", "create", "update", "delete"]
+read = "support.read"
+write = "support.write"
+forms = true
+search = "name"
+[[endpoints]]
+model = "support.case"
+crud = ["list", "get", "create", "update", "delete"]
+read = "support.read"
+write = "support.write"
+filter = ["state"]
+search = "subject"
+forms = true
+[[endpoints]]
+id = "support.assign"
+model = "support.case"
+path = "POST /api/v1/cases/{id}/assign"
+permission = "support.write"
+set = { state = "assigned" }
+when = { state = ["open"] }
+accept = ["assignee"]
+forms = true
+[[admin]]
+model = "support.account"
+permission = "support.admin"
+title = "Accounts"
+columns = ["name"]
+[[admin]]
+model = "support.case"
+permission = "support.admin"
+title = "Cases"
+columns = ["subject", "state", "assignee"]
+filters = ["state", "q"]
+actions = ["support.assign"]
+
+[[views]]
+id = "support.case.queue"
+kind = "collection"
+audience = "product"
+permission = "support.read"
+resource = "support.case"
+query = "support.case.list"
+title = "Case queue"
+label = "subject"
+columns = ["subject", "state", "assignee"]
+filters = ["state", "q"]
+record_view = "support.case.detail"
+record_input = { id = "/id" }
+[[views]]
+id = "support.case.detail"
+kind = "record"
+audience = "product"
+permission = "support.read"
+resource = "support.case"
+query = "support.case.get"
+title = "Case"
+label = "subject"
+columns = ["subject", "state", "assignee"]
+actions = ["support.assign.form"]
+sections = [{ id = "account", title = "Account", query = "support.account.get", columns = ["name"], label = "name", input = { id = "/account" }, component = "fixture.account_summary" }]
+
+# Private durable export state. Installing it publishes no CRUD or admin.
+[[models]]
+id = "support.export"
+fields = [
+  { id = "case_ref", type = "ref", to = "support.case" },
+  { id = "actor", type = "uuid" },
+  { id = "state", type = "enum", values = ["queued", "succeeded", "failed"], default = "queued" },
+  { id = "snapshot", type = "text" },
+  { id = "summary", type = "text", optional = true },
+]
+
+[[models]]
+id = "support.user"
+label = "name"
+fields = [{ id = "name", type = "text", max = 100 }]
+[[endpoints]]
+model = "support.user"
+crud = ["list", "get"]
+read = "support.read"
+search = "name"

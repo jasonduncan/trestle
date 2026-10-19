@@ -494,6 +494,39 @@ async fn a_key_reused_with_different_input_is_a_conflict() {
     env.finish().await;
 }
 
+#[tokio::test]
+async fn incompatible_stored_projections_are_refused_without_running_again() {
+    for path in ["/notes", "/dyn-notes"] {
+        let env = Env::new().await;
+        let first = env
+            .post(
+                path,
+                "alice",
+                Some("projection-change"),
+                json!({ "body": "hello" }),
+            )
+            .await;
+        assert!(first.status.is_success(), "{}", first.text);
+        // Model a retained answer containing a field no longer present in the
+        // current output contract. The receipt and its committed effect stay.
+        sqlx::query("UPDATE trestle_idempotency SET body = (body::jsonb || jsonb_build_object('retired_private', 'formerly permitted'))::text")
+            .execute(&env.state.pool).await.unwrap();
+        let again = env
+            .post(
+                path,
+                "alice",
+                Some("projection-change"),
+                json!({ "body": "hello" }),
+            )
+            .await;
+        assert_eq!(again.status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(!again.text.contains("formerly permitted"));
+        assert!(!again.replayed());
+        assert_eq!(env.notes().await, 1);
+        env.finish().await;
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn concurrent_duplicates_are_serialized() {
     let env = Env::new().await;

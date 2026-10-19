@@ -12,7 +12,7 @@ trap 'psql "$base" -qc "DROP DATABASE IF EXISTS $db WITH (FORCE)"' EXIT
 cargo build -q -p trestle-cli
 trestle="$root/target/debug/trestle"
 cd "$work"
-"$trestle" new demo --trestle-path "$root"
+"$trestle" new demo --admin --trestle-path "$root"
 cd demo
 cp "$root/Cargo.lock" .
 export CARGO_TARGET_DIR="$root/target/scaffold"

@@ -2,6 +2,9 @@
 
 **Status:** Accepted (M4, 2026-09-26) · **Design doc:** §7, §10, §11.2, §12.3, I01, I04, I13
 
+**Extended by [ADR-033](033-admin-and-application-views.md):** checked view
+bindings, action forms and explicit concurrency targets preserve this boundary.
+
 ## Decision
 
 - **Resources are binding conventions, not behavior.**

@@ -88,13 +88,23 @@ jobs:
       - run: cargo deny check advisories bans sources licenses
 
   frontend:
-    name: frontend (tests and typecheck)
+    name: frontend (packages, production builds and live views)
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
     defaults:
       run:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # compatibility executes the pre-views renderer
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
@@ -103,6 +113,23 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run typecheck
+      - run: npm run build
+      - run: npm run test:packages
+      - run: node test-compatibility.mjs
+      - run: npm run build:views
+      - run: npx playwright-core install --with-deps chromium
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Same compiled renderer against both PostgreSQL applications
+        run: cargo test -p trestle-framework --test views_live
+        env:
+          TRESTLE_VIEW_BROWSER: "1"
+          VIEW_CHROME_CHANNEL: bundled
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: view-qualification
+          path: frontend/test-results/
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
