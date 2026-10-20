@@ -1,0 +1,16 @@
+Production TLS require boot problems: []
+Production TLS verify-ca boot problems: []
+test review_production_allows_unverified_database_tls ... ok
+POST lessons with read-scoped key: 201 Created
+test review_read_scoped_api_key_can_write ... ok
+Old reset link after password change: 200 OK
+test review_reset_link_survives_password_change ... ok
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.66s
+Distinct attacker-selected method counter series: 0
+test arbitrary_methods_do_not_create_metric_series ... ok
+Unrelated request while body stalls: 503 Service Unavailable
+test incomplete_body_holds_the_admission_permit ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.01s
+Fresh token accepted using a signing key last fetched 30 days ago
+test oidc::security_review_probe::review_stale_key_has_no_maximum_age ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 24 filtered out; finished in 0.05s
