@@ -48,6 +48,16 @@ describe("decodeDescriptor", () => {
     }
   });
 
+  it("rejects percent-encoded dot segments in any case, and prefix look-alikes (SR-05)", () => {
+    for (const path of [
+      "/api/%2e%2e/admin/", "/api/%2E%2E/%2E%2E/metrics", "/api/%2e%2E/x", "/api/.%2e/x", "/api/%2E./x",
+      "/api/%2e/x", "/api/./x", "/api/v1/%2e%2e/%2e%2e/%2e%2e/metrics", "/api/v1/x/%2E%2E", "/apix/v1/lessons",
+    ]) {
+      rejects((d) => (d.operation.binding.path = path), /escapes the API origin/);
+    }
+    expect(decodes((d) => (d.operation.binding.path = "/api/v1/a%20b/lessons")).ok).toBe(true);
+  });
+
   it("rejects references and unsupported schema keywords", () => {
     rejects((d) => (d.input.schema.properties.title = { $ref: "https://evil.example/s.json" }), /references are not allowed/);
     rejects((d) => (d.input.schema.properties.title.pattern = "^(a+)+$"), /unsupported pattern/);

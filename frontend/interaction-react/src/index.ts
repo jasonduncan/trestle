@@ -16,6 +16,7 @@ export {
   createTransport,
   etagVersion,
   fillPath,
+  PathRefused,
   type Problem,
   type RecordContext,
   type Reply,

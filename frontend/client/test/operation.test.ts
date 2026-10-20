@@ -31,6 +31,11 @@ describe("immutable single-dispatch attempts", () => {
     resolve(response(201, { id: "1" })); await Promise.all([first, second]);
     await controller.execute(attempt); expect(submit).toHaveBeenCalledOnce();
   });
+  it("treats a destination refused before dispatch as a rejection, not an unknown outcome", async () => {
+    const { controller } = setup(async () => ({ kind: "refused", message: "outside the API" }));
+    await controller.execute(controller.prepare(descriptor, { title: "x" })!);
+    expect(controller.getSnapshot()).toMatchObject({ state: "rejected", code: "path_refused" });
+  });
   it.each([response(500, {}), response(201, null), response(403, { code: "permission_denied" }), { kind: "network-error", message: "lost" } as Reply])("retains unknown outcomes across remount, with no replay", async (reply) => {
     const { runtime, controller, transport, submit } = setup(async () => reply);
     await controller.execute(controller.prepare(descriptor, { title: "x" })!);
