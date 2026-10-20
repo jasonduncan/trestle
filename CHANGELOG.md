@@ -17,10 +17,12 @@ promise.
 ## [0.7.1] - 2026-10-20
 
 ### Security
-- `rustls-webpki` 0.103.16 (RUSTSEC-2026-0382: certificate verification
-  could accept distrusted intermediates). It is used by every TLS client
-  here: PostgreSQL, SMTP and OIDC. The advisory appeared while 0.7.0 was
-  being tagged, so 0.7.0 was never published to crates.io; use 0.7.1.
+- `rustls-webpki` 0.103.16, `webpki-roots` and `webpki-root-certs` 1.0.10
+  (RUSTSEC-2026-0381, -0382, -0383: certificate verification and the
+  bundled roots could trust distrusted emSign intermediates). They are used
+  by every TLS client here: PostgreSQL, SMTP and OIDC. The advisories
+  appeared while 0.7.0 was being tagged, so 0.7.0 was never published to
+  crates.io; use 0.7.1.
 
 ## [0.7.0] - 2026-10-20
 
