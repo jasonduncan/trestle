@@ -379,7 +379,17 @@ async fn serve_refuses_a_build_the_schema_fence_shuts_out() {
     env.run(&["migrate"]).await.unwrap();
     assert_eq!(env.code(&["verify"]).await, exit::OK);
 
-    let refused = old.run(&["serve"]).await.unwrap_err();
+    // A configuration `serve` accepts, so only the schema can refuse: the
+    // configuration is checked first, before anything connects.
+    let key = "k".repeat(32);
+    let serve = [
+        "serve",
+        "--session-key",
+        &key,
+        "--public-origin",
+        "http://localhost:5173",
+    ];
+    let refused = old.run(&serve).await.unwrap_err();
     assert_eq!(refused.code, exit::DRIFT, "{refused}");
     assert!(
         refused.contains("fenced out this build") && refused.contains("notes.0002_titles"),
@@ -397,7 +407,7 @@ async fn serve_refuses_a_build_the_schema_fence_shuts_out() {
         .execute(&mut conn)
         .await
         .unwrap();
-    let refused = env.run(&["serve"]).await.unwrap_err();
+    let refused = env.run(&serve).await.unwrap_err();
     assert_eq!(refused.code, exit::CHECK, "{refused}");
     assert!(
         refused.contains("no schema fence yet") && refused.contains(" migrate`"),
