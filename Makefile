@@ -3,7 +3,7 @@
 DATABASE_URL ?= postgres://localhost/trestle_dev
 export DATABASE_URL
 
-.PHONY: db migrate plan seed run registry snapshots test lint check frontend frontend-test web admin demo-m2 demo-m4 demo-m5 demo-accounts drill-tls drill-restore load audit
+.PHONY: db migrate plan seed run registry snapshots test lint check frontend frontend-test web admin demo-m2 demo-m4 demo-m5 demo-accounts drill-tls drill-restore drill-edge load audit
 
 db: ## Check PostgreSQL is running and create trestle_dev
 	@pg_isready -q || { echo "PostgreSQL is not running; start it (any 13+) and retry"; exit 1; }
@@ -63,6 +63,9 @@ drill-tls: ## Database TLS drill on a throwaway PostgreSQL (verify-full; refusal
 
 drill-restore: ## Backup, restore into a new database, forward repair
 	scripts/drills/restore.sh
+
+drill-edge: ## deploy/Caddyfile in a real Caddy before two production replicas (needs caddy)
+	scripts/drills/edge.sh
 
 audit: ## Dependency advisories: cargo audit (ignores documented in .cargo/audit.toml) and npm audit
 	cargo audit --deny warnings

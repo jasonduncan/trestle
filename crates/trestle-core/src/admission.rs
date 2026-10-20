@@ -41,6 +41,9 @@ pub struct AdmissionConfig {
     /// Header set by the trusted edge with the client address (e.g.
     /// `X-Real-IP`). Only used when configured.
     pub client_address_header: Option<String>,
+    /// Time a client has to deliver a whole request body (default
+    /// [`BODY_TIMEOUT`](crate::input::BODY_TIMEOUT)).
+    pub body_timeout: Duration,
 }
 
 /// Default unauthenticated requests per second per client address.
@@ -57,6 +60,7 @@ impl Default for AdmissionConfig {
             address_rate_per_second: DEFAULT_ADDRESS_RATE_PER_SECOND,
             address_burst: DEFAULT_ADDRESS_BURST,
             client_address_header: None,
+            body_timeout: crate::input::BODY_TIMEOUT,
         }
     }
 }
@@ -196,6 +200,10 @@ impl Admission {
             addresses: RateLimiter::new(config.address_rate_per_second, config.address_burst),
             config,
         })
+    }
+
+    pub fn body_timeout(&self) -> Duration {
+        self.config.body_timeout
     }
 
     pub fn in_flight(&self) -> usize {

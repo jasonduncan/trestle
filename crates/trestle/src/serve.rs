@@ -69,6 +69,10 @@ pub struct ServeConfig {
     /// either this or TRESTLE_CLIENT_ADDRESS_HEADER.
     #[arg(long, env = "TRESTLE_TRUST_PEER_ADDRESS")]
     pub trust_peer_address: bool,
+    /// Time a client has to deliver a whole request body before 408. The
+    /// request holds an admission permit while it waits.
+    #[arg(long, env = "TRESTLE_BODY_TIMEOUT_MS", default_value_t = 10_000)]
+    pub body_timeout_ms: u64,
 
     #[arg(long, env = "TRESTLE_DB_POOL_SIZE", default_value_t = 10)]
     pub pool_size: u32,
@@ -144,6 +148,7 @@ impl ServeConfig {
             address_burst: 60.0,
             client_address_header: None,
             trust_peer_address: false,
+            body_timeout_ms: 10_000,
             pool_size: 10,
             statement_timeout_ms: 10_000,
             jobs: false,
@@ -224,6 +229,7 @@ impl ServeConfig {
         // `!(x > 0)` also refuses NaN; infinities are refused explicitly.
         let finite = |x: f64| x.is_finite();
         if self.max_in_flight == 0
+            || self.body_timeout_ms == 0
             || !(self.rate_per_second > 0.0 && finite(self.rate_per_second))
             || !(self.rate_burst >= 1.0 && finite(self.rate_burst))
             || !(self.address_rate_per_second > 0.0 && finite(self.address_rate_per_second))
@@ -232,7 +238,7 @@ impl ServeConfig {
                 && finite(self.password_attempts_per_minute))
         {
             problems.push(
-                "admission limits must be positive (TRESTLE_MAX_IN_FLIGHT, TRESTLE_RATE_*)".into(),
+                "admission limits must be positive (TRESTLE_MAX_IN_FLIGHT, TRESTLE_RATE_*, TRESTLE_BODY_TIMEOUT_MS)".into(),
             );
         }
         if let Some(issuer) = &self.oidc_issuer
@@ -390,6 +396,7 @@ impl ServeConfig {
             address_rate_per_second: self.address_rate_per_second,
             address_burst: self.address_burst,
             client_address_header: self.client_address_header.clone(),
+            body_timeout: Duration::from_millis(self.body_timeout_ms),
         })
     }
 }

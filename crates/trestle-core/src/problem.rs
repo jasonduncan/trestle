@@ -152,6 +152,19 @@ impl Problem {
         ))
     }
 
+    /// 408 when the request body did not arrive in time. The connection is
+    /// closed: the rest of the body may still be on its way.
+    pub fn request_timeout() -> Self {
+        Self::new(
+            StatusCode::REQUEST_TIMEOUT,
+            "urn:trestle:problem:request-timeout",
+            "Request timeout",
+            "request_timeout",
+        )
+        .with_detail("The request body did not arrive in time.")
+        .with_header(header::CONNECTION, HeaderValue::from_static("close"))
+    }
+
     pub fn unsupported_media_type(expected: &str) -> Self {
         Self::new(
             StatusCode::UNSUPPORTED_MEDIA_TYPE,

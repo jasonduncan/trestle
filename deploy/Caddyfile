@@ -1,8 +1,8 @@
-# Edge for the Trestle pilot (design doc §12.2, §16.1). NOT VALIDATED: this
-# file has not been loaded (`caddy validate --config deploy/Caddyfile`) or
-# exercised against a real Caddy.
-# The routing rules it encodes are exercised by frontend/e2e/run-m5.mjs,
-# whose edge implements the same split in Node.
+# Edge for the Trestle pilot (design doc §12.2, §16.1). `make drill-edge`
+# runs this file in a real Caddy on one machine, in front of two
+# production-mode replicas (docs/evidence/edge-drill.json). Still unproven on
+# a real host: ACME certificates, DNS, real client addresses and the
+# firewalling of the admin API and metrics listener.
 #
 # One public origin. Static bundles come from disk (or a CDN in front of
 # this edge); /api and /_meta go to the API replicas. The edge never
@@ -10,10 +10,21 @@
 # caches personalised responses, and never exposes /metrics.
 #
 # Replace app.example.com, the upstream addresses and the asset roots.
-
 {
 	# Keep the admin API off the network.
 	admin localhost:2019
+	servers {
+		timeouts {
+			# A client gets this long for its headers, and for the whole
+			# request including the body (Caddy has no limit by default).
+			# The API has its own total body deadline
+			# (TRESTLE_BODY_TIMEOUT_MS, 10 s); this one also covers
+			# connections that never reach it.
+			read_header 10s
+			read_body 15s
+			idle 2m
+		}
+	}
 }
 
 app.example.com {
@@ -32,8 +43,16 @@ app.example.com {
 	# API and metadata: always upstream, never cached here, never the SPA.
 	@api path /api/* /_meta/*
 	handle @api {
+		# The API's own limit (1 MiB): larger bodies stop here (413).
+		request_body {
+			max_size 1MB
+		}
 		reverse_proxy 10.0.0.11:8000 10.0.0.12:8000 {
 			lb_policy least_conn
+			# A replica that refuses the connection (stopped, restarting) is
+			# skipped within the same request. Caddy retries only GETs, or
+			# requests that never reached a replica, so no write runs twice.
+			lb_try_duration 5s
 			# Stop sending to a replica that is draining or not migrated.
 			health_uri /readyz
 			health_interval 5s
@@ -59,11 +78,13 @@ app.example.com {
 	redir /admin /admin/ 308
 	handle_path /admin/* {
 		root * /srv/trestle/admin
-		# Entry document revalidated; hashed assets immutable (set after, so
-		# it wins for assets).
-		header Cache-Control "no-cache"
+		# Entry document revalidated; hashed assets immutable. The matchers
+		# must not overlap: Caddy orders repeated `header` directives by
+		# matcher, not by position, and runs an unmatched one last.
 		@admin_assets path /assets/*
 		header @admin_assets Cache-Control "public, max-age=31536000, immutable"
+		@admin_entry not path /assets/*
+		header @admin_entry Cache-Control "no-cache"
 		try_files {path} /index.html
 		file_server
 	}

@@ -8,12 +8,13 @@
 //! or request bodies beyond the email. Projects record their own events
 //! (keys issued, accounts invited) with [`record`].
 
-use axum::body::{Body, to_bytes};
+use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::middleware::Next;
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use sqlx::PgPool;
 use trestle_core::identity::ActorId;
+use trestle_core::input;
 use trestle_core::registry::{App, AppBuilder};
 use trestle_historical::MigrationRef;
 use trestle_historical::schema::{Column, Model};
@@ -180,9 +181,10 @@ pub async fn layer(State(cfg): State<AuditLayer>, request: Request, next: Next) 
     // Only sign-in names an email; read it, then hand the body on unchanged.
     let (request, email) = if kind == "password.login" {
         let (parts, body) = request.into_parts();
-        let bytes = match to_bytes(body, MAX_BODY).await {
+        let timeout = input::body_timeout(&parts.extensions);
+        let bytes = match input::read_body(body, MAX_BODY, timeout).await {
             Ok(b) => b,
-            Err(_) => return http::StatusCode::PAYLOAD_TOO_LARGE.into_response_compat(),
+            Err(problem) => return problem.into_response(),
         };
         let email = serde_json::from_slice::<serde_json::Value>(&bytes)
             .ok()
@@ -217,13 +219,4 @@ pub async fn layer(State(cfg): State<AuditLayer>, request: Request, next: Next) 
         tracing::error!(error = %err, kind, "auth audit write failed");
     }
     response
-}
-
-trait IntoResponseCompat {
-    fn into_response_compat(self) -> Response;
-}
-impl IntoResponseCompat for http::StatusCode {
-    fn into_response_compat(self) -> Response {
-        axum::response::IntoResponse::into_response(self)
-    }
 }
