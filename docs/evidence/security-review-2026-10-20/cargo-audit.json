@@ -1,0 +1,29 @@
+{
+  "database": {
+    "advisory-count": 1345,
+    "last-commit": "b19b2c83c2493961ccb12f9fc4699a00fb2c6c44",
+    "last-updated": "2026-10-20T13:02:37+02:00"
+  },
+  "lockfile": {
+    "dependency-count": 385
+  },
+  "settings": {
+    "target_arch": [],
+    "target_os": [],
+    "severity": null,
+    "ignore": [
+      "RUSTSEC-2023-0071"
+    ],
+    "informational_warnings": [
+      "unmaintained",
+      "unsound",
+      "notice"
+    ]
+  },
+  "vulnerabilities": {
+    "found": false,
+    "count": 0,
+    "list": []
+  },
+  "warnings": {}
+}

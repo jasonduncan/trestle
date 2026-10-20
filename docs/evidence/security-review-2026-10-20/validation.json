@@ -1,0 +1,104 @@
+{
+  "date": "2026-10-20",
+  "commit": "62c841e758e648730bdf2e63b5a0eb062beca0a6",
+  "runtime_changes": false,
+  "rust": {
+    "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "command": "cargo test --workspace --locked",
+    "passed": 395,
+    "failed": 0,
+    "ignored": 1,
+    "notes": [
+      "Includes PostgreSQL integration tests and mock OIDC/SMTP.",
+      "The opt-in Playwright views_live branch was not enabled."
+    ]
+  },
+  "frontend": {
+    "install": "npm ci --ignore-scripts",
+    "tests": {
+      "command": "npm test",
+      "passed": 175,
+      "failed": 0,
+      "suites": 15,
+      "packages": {
+        "client": 19,
+        "interaction-react": 146,
+        "admin-react": 8,
+        "admin": 2
+      }
+    },
+    "typecheck": {
+      "command": "npm run typecheck",
+      "result": "passed after package build"
+    }
+  },
+  "offline": {
+    "pilot check": "passed: 10 managed, 10 unmanaged, 8 system routes",
+    "pilot makemigrations --check": "No changes: models match committed history."
+  },
+  "dependency_audits": {
+    "cargo": "0 unignored vulnerabilities or warnings; existing RUSTSEC-2023-0071 exception retained",
+    "cargo tree -i rsa --target all --locked": "nothing to print; not in enabled dependency graph",
+    "npm": "1 high advisory in development dependency source-map-js 1.2.1",
+    "npm --omit=dev": "0 vulnerabilities"
+  },
+  "probes": [
+    {
+      "id": "SR-01",
+      "test": "incomplete_body_holds_the_admission_permit",
+      "result": "503 on unrelated request after one incomplete body held the sole permit for 12 seconds",
+      "scope": "local TCP; capacity 1, not production-capacity load"
+    },
+    {
+      "id": "SR-02",
+      "test": "review_reset_link_survives_password_change",
+      "result": "password change 204, old reset link 200, login with replacement password 200",
+      "scope": "disposable PostgreSQL database and real pilot HTTP handlers"
+    },
+    {
+      "id": "SR-03",
+      "test": "review_production_allows_unverified_database_tls",
+      "result": "production problems() empty for both require and verify-ca",
+      "scope": "configuration gate; no live TLS interception"
+    },
+    {
+      "id": "SR-04",
+      "test": "review_stale_key_has_no_maximum_age",
+      "result": "freshly signed token accepted with cache fetched 30 days earlier",
+      "scope": "deterministic cache state matching failed refresh and retry suppression; no real IdP outage"
+    },
+    {
+      "id": "SR-05",
+      "test": "browser-path-probe.mjs",
+      "result": "encoded dot segments accepted by descriptor decoder and normalized outside /api/; literal .. parameter escapes via fillPath",
+      "scope": "built client and WHATWG URL resolution; no browser request to live server"
+    },
+    {
+      "id": "SR-07",
+      "test": "review_read_scoped_api_key_can_write",
+      "result": "key with opaque lessons.read label creates lesson: 201",
+      "scope": "optional ApiKeyIdentity explicitly installed for probe; stock pilot does not configure it"
+    },
+    {
+      "id": "negative-check",
+      "test": "arbitrary_methods_do_not_create_metric_series",
+      "result": "32 custom HTTP methods: 405; 0 attacker-named request counter series"
+    }
+  ],
+  "not_performed": [
+    "Live Caddy validation/deployment",
+    "Real SMTP relay or real identity-provider qualification",
+    "Production network/database privilege inspection",
+    "Full browser end-to-end demo and compatibility suite",
+    "Restore/TLS/load drills",
+    "Formal verification or full git-history secret scan"
+  ],
+  "review_started_at_commit": "756c197f7ff5922c94f275ab3585c2ada5db8e12",
+  "concurrent_checkout_changes": {
+    "reviewed": true,
+    "changes": "npm namespace/import rename; owner approval recorded; optional OIDC environment example and documentation",
+    "critical_implementation_changes": false,
+    "third_party_npm_versions_urls_integrity_and_dev_flags_changed": false,
+    "frontend_test_log_uses_renamed_packages": true
+  }
+}

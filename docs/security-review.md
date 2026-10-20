@@ -1,102 +1,373 @@
-# Security review (M5 self-review)
+# Security review — 2026-10-20
 
-**This is not the external review the design doc requires (§12.4).** It is
-the builders' own review. It maps each threat to a control and to the test
-or demonstration that exercises it, lists dependency audit results, and
-names what an external reviewer must examine.
+Reviewed through commit: `62c841e758e648730bdf2e63b5a0eb062beca0a6`
+(0.6.0 plus the npm namespace change).
+This is a source review, dependency audit and local adversarial test pass by
+Codex. It does not certify the external-review gate in design §12.4 as closed.
+The current AGENTS.md records owner pilot approval on 2026-10-20; this review
+does not grant or replace that decision. Findings remain open. This change adds
+documentation and evidence, without changing runtime code or dependencies.
 
-Date: 2026-09-26. Commit: the M5 release commit (see `git log`).
+The most urgent finding is an unauthenticated availability attack: stalled
+JSON uploads can retain all admission permits. Other findings concern password
+recovery, production database TLS, OIDC key retirement, browser URL validation
+and a development dependency. API-key scope enforcement is a separate,
+conditional integration risk.
 
-## Threats and controls (design doc §12.3, extended for M5)
+The [2026-09-26 M5 self-review](security-review-2026-09-26.md) is preserved
+unchanged as history. Its clean npm audit and several security assurances must
+not be read as current results. In particular, `/api/` confinement has a bypass,
+the database TLS drill covered `verify-full` rather than every accepted
+production mode, and JWT `nbf` is checked **when present**, not required.
 
-| Threat | Control | Proof |
+## Findings at a glance
+
+Severity reflects the exposure established here, with prerequisites below;
+it is not an upstream CVSS score or a claim about an inspected deployment.
+
+| ID | Severity | Finding | Exposure and evidence |
+|---|---|---|---|
+| SR-01 | High | Incomplete JSON bodies retain global admission capacity without a deadline | Public password endpoints; real local TCP reproduction |
+| SR-02 | Medium | Password change leaves existing reset links usable | Requires possession of an unused, unexpired link; real pilot/DB reproduction |
+| SR-03 | Medium | Production accepts database TLS without full server identity verification | Requires weaker accepted configuration and an on-path attacker; boot-gate reproduction and driver inspection |
+| SR-04 | Medium | OIDC accepts cached signing keys without a maximum stale age | Optional OIDC; retired private key compromise plus refresh failure; deterministic verifier reproduction |
+| SR-05 | Medium | Browser binding validation permits paths outside `/api/` | Untrusted descriptor or string path parameter; decoder and URL-resolution reproduction |
+| SR-06 | Low for this project | Vulnerable development dependency and no npm audit CI gate | Upstream High advisory; no production request path established |
+| SR-07 | Medium, conditional integration risk | API-key scope labels do not constrain the built-in identity adapter | Optional adapter wired explicitly in probe; not configured by stock pilot startup |
+
+### SR-01 — Stalled uploads can exhaust admission permits
+
+**Location:** [input.rs](../crates/trestle-core/src/input.rs), lines 29–55;
+[admission.rs](../crates/trestle-core/src/admission.rs), lines 216–247;
+[password.rs](../crates/trestle-identity/src/password.rs), lines 819–826;
+[Caddyfile](../deploy/Caddyfile).
+
+`JsonBody` limits bytes but awaits the complete body without a time limit.
+Admission acquires a global semaphore permit before invoking the handler and
+holds it through that wait. Password login is public; its body extractor runs
+before the handler's origin check and password-specific throttle. A client
+does not need credentials or an allowed origin to occupy this path.
+
+**Observed:** a local TCP client declared a 100-byte JSON body, sent only `{`,
+and kept the connection open. With admission capacity set to one, an unrelated
+request still received `503 overloaded` after 12 seconds. The probe did not
+stress the default capacity of 256; exhausting that capacity follows from the
+same permit lifetime and absence of a body deadline. Address rate limits slow
+arrival but do not reclaim permits held by unfinished uploads.
+
+The supplied Caddy configuration adds no upload deadline. Caddy documents that
+`read_body` has no timeout by default; the edge therefore cannot be assumed to
+close this gap. [Caddy timeout documentation](https://caddyserver.com/docs/caddyfile/options#timeouts).
+
+**Fix:** bound body acquisition time before operation execution, release permits
+on timeout/disconnect, and configure edge upload time/idle limits appropriate to
+the API. Avoid treating a blanket timeout around writes as proof that a commit
+did not happen; preserve the `outcome_unknown` contract.
+
+**Acceptance:** a stalled unauthenticated password request expires within the
+configured limit; unrelated traffic resumes; slow trickles cannot extend a
+total deadline indefinitely. Cover direct listener and actual edge behavior.
+
+### SR-02 — An old reset link survives an authenticated password change
+
+**Location:** [password.rs](../crates/trestle-identity/src/password.rs),
+lines 919–950 and 1032–1047.
+
+Authenticated password change updates the hash and revokes other sessions, but
+does not invalidate unused account links. `set_from_link` checks expiry,
+single use and account status, without checking whether the password changed
+after link issuance.
+
+**Observed:** invite and activate an account; issue a reset link; change the
+password with the correct current password, session and CSRF token (`204`);
+then submit the earlier link with another password (`200`). Signing in with
+that replacement password also returned `200`. All operations used the real
+pilot handlers and a disposable PostgreSQL database.
+
+An attacker already holding that link retains a recovery credential after
+the owner changes their password. This is not a token-guessing attack and does
+not let someone without a link reset an arbitrary account.
+
+**Fix:** invalidate outstanding invite/reset credentials in the same transaction
+as password change, or bind them to a credential generation checked atomically.
+Use consistent account/token lock ordering across issue, change and redemption
+so concurrent recovery cannot revive a credential invalidated by the change.
+
+**Acceptance:** an unused reset link issued before a successful change becomes
+`token_invalid`; a subsequently issued link works; racing change/redemption
+preserves a documented ordering and session-revocation guarantee.
+
+### SR-03 — Production TLS checks allow unauthenticated database encryption
+
+**Location:** [serve.rs](../crates/trestle/src/serve.rs), lines 295–305;
+[production environment example](../deploy/pilot.env.example), line 8.
+
+For a non-local database, production boot accepts `require`, `verify-ca` or
+`verify-full`. Inspection of the locked `sqlx-postgres 0.8.6` implementation
+(`src/connection/tls.rs`) shows that `require` accepts invalid certificates and
+hostnames; `verify-ca` checks the certificate chain but accepts a mismatched
+hostname. Encryption alone does not authenticate the intended database server.
+PostgreSQL recommends `verify-full` for security-sensitive use.
+[PostgreSQL TLS documentation](https://www.postgresql.org/docs/current/libpq-ssl.html).
+
+**Observed:** otherwise valid production settings with
+`postgres://pilot@db.internal/pilot?sslmode=require`, and then `verify-ca`,
+both produced an empty `ServeConfig::problems` result. This verifies the boot
+gap, not a live man-in-the-middle attack.
+
+An on-path attacker can impersonate the database under `require`; under
+`verify-ca`, an attacker also needs a certificate trusted by the configured CA.
+The supplied environment example already uses `verify-full`, so this finding
+concerns a weaker configuration that the production guard explicitly accepts.
+The old `verify-full` drill does not establish safety for those weaker modes.
+
+**Fix:** require `verify-full` for non-local production databases, or introduce
+a narrowly documented exception with an equivalent authenticated transport.
+
+**Acceptance:** production rejects `require`/`verify-ca` by default; real
+connection tests reject untrusted certificates and the wrong hostname under
+every supported production configuration.
+
+### SR-04 — Failed OIDC refresh leaves old signing keys trusted indefinitely
+
+**Location:** [oidc.rs](../crates/trestle-identity/src/oidc.rs),
+lines 35–39 and 389–440.
+
+The one-hour JWKS TTL triggers refresh but is not a maximum trust lifetime.
+When refresh fails, `find` selects a key from the previous cache without
+checking its age. Repeated failures can extend trust indefinitely. A successful
+fetch with no usable keys also leaves the previous key set in place.
+
+**Observed:** a deterministic unit probe populated the cache with a real test
+RSA public key fetched 30 days earlier and a recent refresh-attempt timestamp,
+matching the state immediately after a failed refresh. `Provider::verify`
+accepted a freshly signed token for the configured issuer and audience. The
+probe exercised signature/claims verification; it simulated the cache state
+and did not cause or test a real provider outage.
+
+If a retired private signing key is compromised and refresh keeps failing,
+an attacker can mint fresh tokens accepted by a still-running instance.
+Ordinary JWT expiry does not bound this attack because the attacker chooses
+a new expiry. A successful nonempty refresh that removes the key stops it.
+
+**Fix:** define a bounded stale-key grace period and fail authentication as
+unavailable after it. Handle an authoritative empty/retired key set explicitly,
+and expose bounded refresh-health metrics without logging tokens.
+
+**Acceptance:** cached keys work only within the intended outage grace;
+expired cache trust refuses fresh tokens; successful retirement removes trust.
+Exercise timeout, malformed response, empty JWKS and recovery with a mock IdP.
+
+### SR-05 — URL normalization bypasses browser API-prefix checks
+
+**Location:** [protocol.ts](../frontend/client/src/protocol.ts), lines 361–370;
+[transport.ts](../frontend/client/src/transport.ts), lines 83–84 and 99–135.
+
+`checkBindingPath` checks the raw prefix and literal `..`. Encoded dot segments
+pass. URL resolution subsequently shortens the path. Separately, `fillPath`
+uses `encodeURIComponent`, which leaves a parameter equal to `..` intact,
+and the transport does not revalidate the final path.
+
+**Observed with the built client and an otherwise valid descriptor:**
+
+| Input | Decoder/result | Resolved pathname |
 |---|---|---|
-| Mass assignment or hidden-field submission | Explicit input contracts; unknown fields rejected (`unknown_field`); ownership never in input | `tests/lessons_api.rs` (`rejects_ownership_fields`), `fixtures/contracts/lessons.create.input.json` (34 cases through JSON Schema, managed route and hand-written route) |
-| Cross-tenant data or relation inference | Typed query surface requires a scope (`query::select(scope, value)`); membership from the database, never from the header alone; relation choices scoped; `schools.mine` scoped to the actor | `tests/lessons_api.rs`, `tests/resources.rs` (relation picker), `tests/additive.rs` (spoofed tenant header grants nothing), m4-demo |
-| Stale permission or record state | `Policy::recheck` inside the transaction under `FOR SHARE`; ETag/`If-Match` on update and delete; 412 on stale | `tests/lessons_api.rs` (revocation between admit and commit), m5-demo step 4 |
-| Metadata leakage or cache contamination | Descriptors require the operation's context; everything `Cache-Control: private, no-store` (perimeter default); published documents checked for ownership and policy leaks | `tests/meta.rs`, `tests/registry.rs` (`published_documents_do_not_leak_policy_or_ownership`), `tests/perimeter.rs` |
-| UI schema XSS or remote code loading | Renderer decoder treats descriptors as untrusted: closed schema subset, reference keywords and prototype-polluting names rejected, text-only labels, local widget allowlist; edge CSP `script-src 'self'` | `frontend/interaction-react/test/protocol.test.ts`, `deploy/Caddyfile` (unvalidated) |
-| Unsafe metadata URLs or external references | Bindings must stay under `/api/`; no external schema fetch; jsonschema test dependency built without network resolution | protocol tests; `Cargo.toml` (`jsonschema` without default features) |
-| Expensive queries or schemas | Page cap 100; signed cursors bound to the query shape; body size limit; statement timeout (503 `database_timeout`); admission (503 `overloaded`) and per-credential token buckets (429 `rate_limited`) | `tests/perimeter.rs`, cursor tests in `trestle-core::pagination`, `docs/evidence/m5-load.json` (no errors under load) |
-| Privileged route bypass | Route inventory: managed, unmanaged-with-waiver, system; generated commands only through the executor; admin profile owner-only | `pilot inspect routes`, `tests/registry.rs`, m4-demo step 4 |
-| Supply chain or generated-code mistakes | Lockfiles; pinned majors; snapshots of every published document; append-only revision log; `#![forbid(unsafe_code)]` in every crate | `tests/published.rs`; the dependency audit below |
-| **Session hijacking or fixation** (M5) | 256-bit random tokens; `__Host-` cookie with `Secure`, `HttpOnly` and `SameSite=Strict`; database stores only SHA-256; new session per login; absolute and idle expiry; revocation | `tests/identity.rs`, m5-demo step 6 (cookie attributes, replay after sign-out gets 401) |
-| **Cross-site request forgery** (M5) | For cookie-authenticated unsafe methods: exact `Origin` allowlist and HMAC CSRF token; logout included | `tests/identity.rs` (five refusal variants), m5-demo step 6 (a same-site page on another origin, cookie sent, refused `csrf_failed`) |
-| **Login CSRF, state replay, open redirect** (M5) | State bound to a `__Host-` login cookie; single-use pending logins; PKCE S256; nonce checked; `return_to` restricted to same-site paths | `tests/identity.rs` (`a_callback_completes_only_in_the_browser_that_started_it`, `tampered_or_refused_logins_create_no_session`) |
-| **Token forgery or confusion** (M5) | Asymmetric algorithms only; issuer, audience, `exp`, `nbf` and `sub` required; API audience must differ from the client ID (boot check); JWKS refresh rate-limited | `tests/identity.rs` (`provider_access_tokens_authenticate_api_clients`: 12 refusal cases including `alg: none` and HMAC), `server.rs` tests |
-| **Development identity in production** (M5) | Boot refuses development tokens and every other unsafe setting, all reported together | `server.rs` tests; m5-demo step 6 (`productionBootRefusal`) |
-| **Database traffic interception** (M5) | rustls with aws-lc-rs; production requires `sslmode` of `require` or stronger for non-local hosts | `docs/evidence/m5-db-tls.json` (`verify-full` works; plaintext, untrusted CA and wrong host refused) |
-| **Spoofed client address to dodge rate limits** (M5) | The client-address header is read only when configured, and the edge overwrites it (`header_up X-Real-IP {remote_host}`); credentialed requests are keyed by credential | `admission.rs`; `deploy/Caddyfile` (unvalidated) |
-| **Operational data leakage** (M5) | Metrics labels bounded (no actor, tenant or record IDs, checked by test); metrics on a private listener; logs carry no bodies, tokens or cookies; provider error text sanitized | `tests/perimeter.rs` (`metrics_use_route_templates_and_operation_ids_never_record_ids`) |
-| **Password guessing and credential stuffing** (accounts) | Argon2id (19 MiB, t=2); five-failure lockout for 15 min; per-address limit on every password endpoint; bounded concurrent hashing | `tests/accounts.rs` (lockout, per-address 429), `password.rs` unit tests |
-| **Account enumeration** (accounts) | Identical `login_failed` for unknown, wrong, disabled, locked and no-password; each costs one Argon2 verification (dummy hash) | `tests/accounts.rs` (`sign_in_failures_look_alike_and_lock_the_account`) |
-| **Leaked or replayed invite/reset links** (accounts) | 256-bit secrets stored as SHA-256, expiring, single-use, newest voids older; carried in the URL fragment (not sent to servers or in `Referer`) and removed from the address bar; setting a password ends every session | `tests/accounts.rs`, `test/auth.test.tsx`, accounts-demo step 1 |
-| **Login CSRF and session fixation** (accounts) | Allowed `Origin` and a JSON body on every password endpoint; a new session per sign-in, ending any the browser held | `tests/accounts.rs` (`sign_in_needs_the_allowed_origin_and_a_json_object`) |
-| **Email interception or downgrade** (email) | Production requires `smtps://` or STARTTLS-required `smtp://`; optional pinned CA; no plaintext credentials ever | `trestle-mail/tests/smtp.rs` (STARTTLS stripping, untrusted certificate) |
-| **Email header injection** (email) | Recipients parsed as a single address; subject encoded by lettre | `trestle-mail` unit test `recipients_cannot_inject_headers` |
-| **SQL injection** | All values bound as parameters; identifiers in generated migrations validated; typed query columns are constants | `trestle-historical::sql` tests (`refuses_unsafe_identifiers_from_artifacts`) |
+| `/api/%2e%2e/admin/` | Descriptor accepted | `/admin/` |
+| `/api/%2E%2E/%2E%2E/metrics` | Descriptor accepted | `/metrics` |
+| `/api/{id}/actions/run`, `id = ".."` | `fillPath` yields `/api/../actions/run` | `/actions/run` |
 
-## Dependency audit (2026-09-26)
+This behavior follows the URL standard's encoded double-dot handling.
+[WHATWG URL path-segment definitions](https://url.spec.whatwg.org/#double-dot-url-path-segment).
 
-| Tool | Scope | Result |
+A malicious descriptor or attacker-influenced string path parameter can direct
+an authenticated request outside the claimed API prefix on the same origin.
+No cross-origin escape, backend authorization bypass or working privileged
+target was demonstrated. Pilot UUID parameters further limit the parameter
+variant; the untrusted-descriptor boundary still fails.
+
+**Fix:** validate the canonical destination after parameter substitution,
+including origin and path-segment prefix boundaries. Reject encoded/literal
+dot segments, test mixed case and repeated traversal, and explicitly decide
+whether redirects may leave the permitted destination. Keep trusted metadata
+fetches distinct from operation bindings when applying the check.
+
+**Acceptance:** the payloads above are refused before fetch; normal encoded
+parameters work; a fetch spy verifies that rejected inputs dispatch no request.
+
+### SR-06 — Development dependency has a known denial-of-service advisory
+
+**Location:** [frontend/package-lock.json](../frontend/package-lock.json),
+lines 2015–2023; [CI workflow](../.github/workflows/ci.yml), lines 113–120.
+
+The lockfile selects `source-map-js 1.2.1` with `dev: true`. `npm audit`
+reported GHSA-68fv-2mgg-jv7q / CVE-2026-93749, an upstream High advisory for
+event-loop denial of service while processing malicious indexed source maps.
+The fixed version is `1.2.2`.
+[Advisory](https://github.com/advisories/GHSA-68fv-2mgg-jv7q),
+[maintainer's release](https://github.com/7rulnik/source-map-js/releases/tag/v1.2.2).
+
+**Observed:** the full npm audit reports one High vulnerability; the production
+audit reports zero. No remotely supplied source-map path in the deployed
+application was identified, so this review rates the established project
+exposure Low: build/development availability when processing untrusted maps.
+
+CI installs, tests and builds the frontend but has no explicit npm audit gate.
+`npm ci` can print advisories and still succeed.
+
+**Fix:** update the lockfile to a compatible fixed release and add an explicit
+audit gate, with any exceptions documented and time-bounded.
+
+**Acceptance:** full and production audits pass; package builds, tests and
+typechecks remain green. This review did not update the dependency.
+
+### SR-07 — API-key scopes need an explicit enforcement integration
+
+**Classification:** conditional integration risk, not a demonstrated stock-pilot
+authorization bypass.
+
+**Location:** [api_keys.rs](../crates/trestle-identity/src/api_keys.rs),
+lines 8–14 and 278–286; [serve.rs](../crates/trestle/src/serve.rs),
+lines 317–382; [README](../README.md), line 152.
+
+The module correctly documents scopes as opaque strings interpreted by the
+project. However, the supplied `ApiKeyIdentity` converts `KeyInfo` to only its
+`ActorId`, discarding key identity and scopes. Ordinary actor-based policies
+therefore see the actor's authority without a per-key restriction. The README's
+description of “scoped API keys” can lead integrators to assume otherwise.
+
+**Observed:** in a disposable pilot database, explicitly install the optional
+API-key model and adapter, issue a teacher's key with the label `lessons.read`,
+and POST a lesson. Creation succeeds (`201`). This label has no framework-defined
+meaning; the probe demonstrates that stored labels alone enforce nothing.
+Stock `ServeConfig::identity` does not install this adapter.
+
+**Fix:** document the actor-wide authority of the adapter prominently. Before
+offering restricted keys, provide a verified restriction mechanism checked at
+execution, or use service actors whose ordinary policies actually limit access.
+Consider failing closed for nonempty scope labels when no enforcement is
+configured. Keep tenant/role authorization in operations and preserve the
+identity adapter's actor-only contract.
+
+**Acceptance:** a documented restricted-key integration cannot invoke a write
+outside its allowed operations, through HTTP or any supported invocation path.
+Revocation and membership rechecks must still apply.
+
+## Scope, trust boundaries and controls examined
+
+The review started with the M5 report, README, AGENTS instructions and design
+§§2, 6.2, 7.2, 12, 14 and 18, then traced the current implementation. The
+threat model includes anonymous clients, authenticated users of another tenant,
+users with stale or weaker roles, malicious browser metadata and captured
+credentials. Operator-authored Rust, configuration, intent files and migration
+artifacts are trusted code/configuration; they are not a sandbox for hostile
+application authors.
+
+| Boundary | Review and exercised controls | Evidence in the existing suite |
 |---|---|---|
-| `cargo audit --deny warnings` (cargo-audit 0.22.2, RustSec DB with 1,271 advisories) | 342 crates in `Cargo.lock` | Pass, with one documented ignore |
-| `npm audit` and `npm audit --omit=dev` | `frontend/package-lock.json` | 0 vulnerabilities |
+| Request → contract | Explicit writable fields, unknown-field refusal, scalar parity, JSON size limits and safe problem bodies | `examples/pilot/tests/{conformance,lessons_api,perimeter}.rs`; protocol/client validator tests |
+| Identity → tenant policy | Tenant membership read from DB; tenant-scoped SQL; cross-tenant rows and references concealed; write recheck under membership lock | Pilot `lessons_api`, `resources`, `additive`; `crates/trestle/tests/{intent_permission,intent_relations}.rs` |
+| Public transport → executor | Managed routes and trusted invocations share execution; typed/dynamic outputs validated before commit; failed validation rolls back | `crates/trestle-core/tests/executor.rs`; pilot `invocation.rs`; intent parity tests |
+| Retry/worker → writes | Receipt claimed after authorization/recheck; replay remains authorized; jobs enqueue transactionally and reauthorize; bounded attempts/leases | `crates/trestle-core/tests/{idempotency,jobs,effects}.rs` |
+| Running build → schema | Fence precedes write transaction; old writers refused; immutable migration digest checks; drift refusal, bounded impact queries and transactional checkpoints | Core `fence.rs`; historical `runner`, `fence`, `impact`, `batched`, `non_atomic` tests |
+| Browser → session/account | Hashed random session/link secrets, host-only secure cookies, exact origin and CSRF checks, single-use links, dummy verification and lockout; authorization-chain cookie fallback refusal | `examples/pilot/tests/{accounts,identity}.rs`; session/auth frontend tests; SR-02 remains |
+| IdP/mail → application | Asymmetric JWT algorithms, issuer/audience/expiry verification, PKCE/state/nonce; bounded provider responses; mandatory production SMTP TLS and header parsing | Pilot mock IdP tests; `crates/trestle-mail/tests/smtp.rs`; SR-04 remains |
+| Metadata → UI | Closed decoder subset, no schema reference loading, prototype-pollution guards, local widgets, text rendering; admin operations retain server authorization | Frontend protocol/views/operation tests; `crates/trestle/tests/{intent_admin,views}.rs`; SR-05 remains |
+| Public edge → service | Admission, rate limits, statement timeouts, no-store responses, bounded metric labels and production boot checks | Pilot `perimeter.rs`; server tests; SR-01/SR-03 and live-edge qualification remain |
+| Source/dependencies → artifact | Lockfiles, published snapshots, offline exports, model-history check, dependency review and limited tracked-file secret-pattern scan | Pilot `published`, `offline`, `registry`, `schema`; audits below |
 
-**The ignore is RUSTSEC-2023-0071** (the `rsa` Marvin timing side channel;
-no fixed version exists). `rsa` is in the lockfile only as a dependency of
-`sqlx-mysql`, which sqlx declares optionally. This workspace enables only
-the PostgreSQL driver, and `cargo tree -i rsa --target all` confirms the
-crate is never built. JWT verification uses aws-lc-rs through
-`jsonwebtoken`'s `aws_lc_rs` backend. The ignore and its reason live in
-`.cargo/audit.toml`; re-check it whenever sqlx features change.
+These are inspected and exercised controls, not a proof that every branch is
+safe. No additional confirmed tenant-isolation, SQL-injection, mass-assignment,
+CSRF, output-contract, job-replay or migration-integrity bypass was found.
+An adversarial metrics hypothesis was disproved: 32 custom HTTP methods on a
+registered route returned 405 and created zero attacker-named request counters.
 
-**Notes on the supply chain:**
+## Validation and dependency audit
 
-- TLS and JWT cryptography come from aws-lc-rs (C and assembly). That is
-  vendor code outside `forbid(unsafe_code)`; the choice avoids `ring` and
-  the pure-Rust `rsa` crate.
-- The dependency graph is larger in M5 because of reqwest, rustls and
-  aws-lc. The majors are pinned and the lockfiles committed.
-- No code generation runs at request time. Generated artifacts (migrations,
-  SDK, published documents) are committed and reviewed as diffs.
+All results below were obtained during this review against the reviewed
+source. Temporary probes were removed from normal test/source paths and
+preserved as an optional patch in the [evidence bundle](evidence/security-review-2026-10-20/README.md).
 
-## Residual risks (accepted for the pilot, pending review)
+The shared checkout advanced during the review from
+`756c197f7ff5922c94f275ab3585c2ada5db8e12` to the commit above. The intervening
+diff was reviewed: it renames frontend packages/imports, records owner approval
+and makes OIDC optional in the environment example. Security-critical Rust and
+client validation/transport implementations did not change. Third-party npm
+versions, resolved URLs, integrity hashes and development flags are identical.
+The frontend test output already uses the renamed packages.
 
-1. **Login-row flooding.** Each unauthenticated `GET /api/v1/auth/login`
-   writes a row (10-minute expiry). Per-address rate limits bound a single
-   source; a distributed flood must be absorbed at the edge.
-2. **Rate limits are per replica and in memory.** N replicas allow up to N
-   times the configured rate. They are not a substitute for edge limits.
-3. **Actor IDs derive from issuer and subject.** A provider migration
-   changes every actor ID; memberships must be remapped with a script.
-4. **No refresh of provider-side state.** A person disabled at the provider
-   keeps a live session until expiry (at most 12 h, or 2 h idle) unless an
-   operator runs `pilot identity revoke`. Back-channel logout is not
-   implemented.
-5. **The edge configuration is unvalidated.** `deploy/Caddyfile` has not
-   been loaded by Caddy. The same routing was exercised only by the Node
-   edge in the M5 demonstration.
-6. **The CHECK-on-add migration takes an exclusive lock** while validating.
-   That is acceptable at pilot sizes; see `docs/runbooks/deploy.md`.
-7. **Self-review only.** Everything above is the builders' own reading.
-8. **Password accounts: no multi-factor authentication** and no
-   breached-password (HIBP) check. The common-password list is Django's.
-9. **Lockout denial of service.** Anyone who knows an address can lock that
-   account for 15 minutes at a time. Operators can clear it with
-   `pilot account enable`.
-10. **Links are bearer secrets in email.** Whoever reads the message first
-    can set the password. Links are short-lived and single-use, and
-    setting a password ends every other session.
-
-## External review required before the pilot (§12.4)
-
-| Area | Where |
+| Check | Result |
 |---|---|
-| Policy boundaries and tenant scoping | `examples/pilot/src/{schools,lessons,units}/`, `crates/trestle-core/src/{operation.rs,query.rs}` |
-| Session, CSRF and login flow | `crates/trestle-identity/src/{session.rs,routes.rs,oidc.rs,chain.rs}` |
-| Password accounts and links | `crates/trestle-identity/src/password.rs`, `frontend/interaction-react/src/{auth.tsx,session.ts}` |
-| Outgoing email | `crates/trestle-mail/src/lib.rs`, `examples/pilot/src/mail.rs` |
-| Metadata resolver and renderer decoder | `crates/trestle-core/src/registry/meta.rs`, `frontend/interaction-react/src/protocol.ts` |
-| State-changing operations and the executor | `crates/trestle-core/src/{operation.rs,db.rs,registry/routes.rs}`, `examples/pilot/src/lessons/operations.rs`, `examples/pilot/src/provision.rs` |
-| Perimeter and deployment | `crates/trestle-core/src/{admission.rs,http.rs}`, `examples/pilot/src/server.rs`, `deploy/` |
+| `cargo test --workspace --locked`, Rust 1.98.1 | **395 passed, 0 failed, 1 ignored**; PostgreSQL integration tests included |
+| `npm test` after `npm ci --ignore-scripts` | **175 passed**, 15 test files; includes package build |
+| `npm run typecheck` after package build | Passed across frontend workspaces |
+| `pilot check` | Passed; 10 managed, 10 unmanaged and 8 system routes |
+| `pilot makemigrations --check` | No changes; models match committed history |
+| Targeted Rust probes | Six review checks passed while asserting the observed behavior, including the negative metrics check |
+| Client URL probe | Encoded paths and substituted dot segment reproduced; no network requests sent |
+| `cargo audit --deny warnings --json`, cargo-audit 0.22.2 | **0 unignored vulnerabilities/warnings**; 385 dependencies, 1,345 advisories |
+| `cargo tree -i rsa --target all --locked` | Nothing to print; existing RSA exception still outside enabled graph |
+| `npm audit --json` | **1 High development-dependency advisory**, SR-06 |
+| `npm audit --omit=dev --json` | **0 vulnerabilities** |
+
+RustSec database commit:
+`b19b2c83c2493961ccb12f9fc4699a00fb2c6c44`, updated
+`2026-10-20T13:02:37+02:00`. The existing
+[RUSTSEC-2023-0071 exception](../.cargo/audit.toml) covers `rsa` through
+optional `sqlx-mysql` lockfile entries. It remains justified by the enabled
+dependency graph and must be rechecked when features change. Cryptography
+includes aws-lc C/assembly dependencies outside the workspace's Rust
+`forbid(unsafe_code)` restriction.
+
+The secret-pattern scan of tracked files identified only the documented
+[test IdP RSA keys](../examples/pilot/tests/fixtures/README.md); it was not
+a full entropy-based or git-history scan. No claim is made about external
+secret stores or deployed environment values.
+
+Initial sandbox restrictions prevented PostgreSQL/network access; the relevant
+commands were rerun with access and completed. An initial frontend typecheck
+before package outputs existed failed resolution; the ordered rerun passed.
+Neither setup failure is reported as an application defect.
+
+## Hardening observations and remaining qualification
+
+These items are not additional confirmed exploit findings:
+
+- **CSV exports:** `examples/pilot/src/lessons/export.rs:69` guards a leading
+  `=`, `+`, `-` or `@`, but does not normalize leading control characters.
+  Validate harmless formula-like cells with tab/CR/LF prefixes in the supported
+  spreadsheet clients; no spreadsheet execution was tested here. Import
+  behavior differs by client. [OWASP CSV injection guidance](https://community.owasp.org/attacks/CSV_Injection).
+- **Browser response limits:** `transport.ts` reads response text and parses
+  JSON before the decoder enforces its descriptor byte limit. Consider a
+  streaming cap to bound memory/parse work from oversized metadata responses.
+  No hostile-server memory exhaustion was measured.
+- **Credential precedence:** `Chain` correctly refuses Authorization-to-cookie
+  fallback. Session-management handlers using `Sessions` directly deserve
+  explicit mixed-credential tests against the repository-wide rule. Existing
+  origin/CSRF checks still apply; no CSRF bypass was established.
+- **Supply chain:** CI action major tags remain mutable. Consider commit
+  pinning and automated reviewed updates. No compromised action was identified.
+
+Previously documented operational risks still need an owner decision:
+in-memory rate limits multiply across replicas; distributed login-state row
+creation needs edge controls/retention; password lockout permits targeted
+denial of service; no MFA or breached-password service is integrated; emailed
+links are bearer secrets; provider account disabling does not automatically
+revoke already issued local credentials. Account/credential revocation must
+be explicit, including optional API keys.
+
+This pass did not run the opt-in Playwright views branch, the full browser
+demo/compatibility suite, restore/load/TLS drills, or a live Caddy deployment.
+It did not qualify a real SMTP relay or OIDC provider, inspect production
+network isolation/DB grants/backups, fuzz all parsers, or verify vendor crypto.
+Mock integration tests and old drill artifacts do not substitute for those
+checks.
+
+**Recommended remediation order:** close SR-01 before internet exposure;
+fix SR-02 and require authenticated database TLS before using real accounts
+and data; bound OIDC stale-key trust before enabling that provider path;
+repair client URL validation and update the development dependency; resolve
+scope enforcement before distributing restricted API keys. Then rerun focused
+regressions and the relevant deployment/browser checks. Closure of the
+external-review requirement remains a separate decision from the recorded
+owner pilot approval.

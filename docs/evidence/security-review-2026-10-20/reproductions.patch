@@ -1,0 +1,164 @@
+--- /dev/null
++++ b/crates/trestle-core/tests/security_review_probe.rs
+@@ -0,0 +1,47 @@
++// Temporary reproductions for the 2026-10-20 review; asserts observed behavior.
++use axum::{Router, body::Body, routing::{get, post}};
++use http::{Request, StatusCode};
++use tower::ServiceExt;
++use trestle_core::{admission::{Admission, AdmissionConfig}, http::{finish, finish_with, Perimeter}, input::JsonBody};
++
++#[tokio::test]
++async fn arbitrary_methods_do_not_create_metric_series() {
++    let app = finish(Router::new().route("/review-metrics", get(|| async { "ok" })));
++    for n in 0..32 {
++        let method = format!("REVIEW{n}");
++        let response = app.clone().oneshot(Request::builder()
++            .method(method.as_str()).uri("/review-metrics").body(Body::empty()).unwrap()).await.unwrap();
++        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
++    }
++    let rendered = trestle_core::metrics::render(&[]);
++    let count = rendered.lines().filter(|line| line.starts_with("trestle_http_requests_total{method=\"REVIEW")).count();
++    println!("Distinct attacker-selected method counter series: {count}");
++    assert_eq!(count, 0);
++}
++
++#[tokio::test]
++async fn incomplete_body_holds_the_admission_permit() {
++    use tokio::io::AsyncWriteExt;
++    use std::time::Duration;
++    let admission = Admission::new(AdmissionConfig { max_in_flight: 1, ..Default::default() });
++    let app = finish_with(
++        Router::new().route("/review-body", post(|JsonBody(_): JsonBody| async { "ok" }))
++            .route("/review-other", get(|| async { "ok" })),
++        Perimeter { admission: Some(admission.clone()) },
++    );
++    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++    let address = listener.local_addr().unwrap();
++    let server_app = app.clone();
++    let server = tokio::spawn(async move { axum::serve(listener, server_app).await.unwrap() });
++    let mut client = tokio::net::TcpStream::connect(address).await.unwrap();
++    client.write_all(b"POST /review-body HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{").await.unwrap();
++    tokio::time::timeout(Duration::from_secs(2), async {
++        while admission.in_flight() != 1 { tokio::task::yield_now().await; }
++    }).await.unwrap();
++    tokio::time::sleep(Duration::from_secs(12)).await;
++    let response = app.oneshot(Request::builder().uri("/review-other").body(Body::empty()).unwrap()).await.unwrap();
++    println!("Unrelated request while body stalls: {}", response.status());
++    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
++    drop(client);
++    server.abort();
++}
+--- a/examples/pilot/tests/accounts.rs
++++ b/examples/pilot/tests/accounts.rs
+@@ -576,3 +576,67 @@
+     }
+     env.finish().await;
+ }
++
++#[tokio::test]
++async fn review_reset_link_survives_password_change() {
++    let h = Harness::new().await;
++    let (_, session) = h.onboard("review@example.com").await;
++    let reset = password::issue_reset(&h.env.pool, "review@example.com", Duration::from_secs(3600)).await.unwrap();
++    let info = h.get("/api/v1/auth/session", &[("cookie", &cookie(&session))]).await;
++    let csrf = info.body["csrf_token"].as_str().unwrap();
++    let changed = h.post(password::CHANGE_PATH,
++        json!({"current_password": GOOD, "new_password": "new maple syrup on snowy days"}),
++        &[("origin", ORIGIN), ("cookie", &cookie(&session)), ("x-csrf-token", csrf)]).await;
++    assert_eq!(changed.status, StatusCode::NO_CONTENT, "{}", changed.body);
++    let takeover = h.browser_post(password::SET_PATH,
++        json!({"token": reset.token, "password": "attacker now holds this passphrase"})).await;
++    println!("Old reset link after password change: {}", takeover.status);
++    assert_eq!(takeover.status, StatusCode::OK, "{}", takeover.body);
++    assert_eq!(h.login("review@example.com", "attacker now holds this passphrase").await.status, StatusCode::OK);
++    h.env.finish().await;
++}
++
++#[tokio::test]
++async fn review_read_scoped_api_key_can_write() {
++    use std::sync::Arc;
++    use trestle_historical::{schema::SchemaState, planner::{diff, PlanOptions}};
++    use trestle_identity::api_keys::{self, ApiKeyIdentity};
++    let h = Harness::new().await;
++    let (account, _) = h.onboard("scopereview@example.com").await;
++    let mut desired = SchemaState::default();
++    let model = api_keys::api_key_model().state();
++    desired.models.insert(model.id.clone(), model);
++    let before = SchemaState::default();
++    let plan = diff(&before, &desired, &PlanOptions::default());
++    let ops: Vec<_> = plan.changes.into_iter().flat_map(|c| c.ops).collect();
++    sqlx::raw_sql(&trestle_historical::sql::render(&before, &ops).unwrap()).execute(&h.env.pool).await.unwrap();
++    let key = api_keys::issue(&h.env.pool, account.actor, "read only", &["lessons.read".into()], None).await.unwrap();
++    let app = pilot::router(&pilot::registry().unwrap(),
++        AppState::new(h.env.pool.clone(), Arc::new(ApiKeyIdentity::new(h.env.pool.clone()))));
++    let created = send(&app, Request::builder()
++        .method(Method::POST).uri("/api/v1/lessons")
++        .header("Authorization", format!("Bearer {}", key.secret))
++        .header("Trestle-Tenant", NORTHSIDE.to_string())
++        .header("Content-Type", "application/json")
++        .body(Body::from(json!({"title":"Created with read-scoped key","grade_level":3}).to_string())).unwrap()).await;
++    println!("POST lessons with read-scoped key: {}", created.status);
++    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
++    h.env.finish().await;
++}
++
++#[test]
++fn review_production_allows_unverified_database_tls() {
++    let mut config = ServeConfig::for_tests();
++    config.dev_tokens = None;
++    config.cursor_key = Some("a cursor key with at least thirty two bytes".into());
++    config.session_key = Some("a session key with at least thirty two bytes".into());
++    config.password_login = true;
++    config.public_origin = vec!["https://app.example.com".into()];
++    config.trust_peer_address = true;
++    for mode in ["require", "verify-ca"] {
++        let db = format!("postgres://pilot@db.internal/pilot?sslmode={mode}").parse().unwrap();
++        let problems = config.problems(Environment::Production, &db);
++        println!("Production TLS {mode} boot problems: {problems:?}");
++        assert!(problems.is_empty());
++    }
++}
+--- a/crates/trestle-identity/src/oidc.rs
++++ b/crates/trestle-identity/src/oidc.rs
+@@ -36,6 +36,41 @@
+ /// Unknown `kid`s trigger a refetch at most this often, so a flood of
+ /// forged tokens cannot turn into a flood of provider requests.
+ const JWKS_MIN_REFRESH: Duration = Duration::from_secs(30);
++
++#[cfg(test)]
++mod security_review_probe {
++    use super::*;
++    #[tokio::test]
++    async fn review_stale_key_has_no_maximum_age() {
++        use jsonwebtoken::{EncodingKey, Header, encode};
++        let signing = EncodingKey::from_rsa_pem(include_bytes!(
++            "../../../examples/pilot/tests/fixtures/idp-test-rsa.pem"
++        )).unwrap();
++        let jwk = Jwk::from_encoding_key(&signing, Algorithm::RS256).unwrap();
++        let keys = Jwks::new(Url::parse("https://unused.invalid/jwks").unwrap());
++        {
++            let mut state = keys.state.lock().unwrap();
++            state.keys = Arc::new(vec![usable(&jwk).unwrap()]);
++            state.fetched = Some(Instant::now() - Duration::from_secs(30 * 24 * 3600));
++            // Model the state immediately after the last refresh failed:
++            // old keys persist, and retries are suppressed for 30 seconds.
++            state.attempted = Some(Instant::now());
++        }
++        let provider = Provider {
++            issuer: "https://issuer.example".into(),
++            authorization_endpoint: Url::parse("https://issuer.example/authorize").unwrap(),
++            token_endpoint: Url::parse("https://issuer.example/token").unwrap(),
++            jwks: keys,
++            http: client().unwrap(),
++        };
++        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
++        let token = encode(&Header::new(Algorithm::RS256), &serde_json::json!({
++            "iss": provider.issuer, "aud": "review-api", "sub": "review-actor", "exp": now + 600
++        }), &signing).unwrap();
++        assert!(provider.verify(&token, "review-api").await.is_ok());
++        println!("Fresh token accepted using a signing key last fetched 30 days ago");
++    }
++}
+ 
+ #[derive(Debug, thiserror::Error)]
+ pub enum OidcError {
