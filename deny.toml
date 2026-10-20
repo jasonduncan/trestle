@@ -3,6 +3,14 @@
 [advisories]
 version = 2
 yanked = "deny"
+ignore = [
+  # webpki-roots 0.26.11 is a semver-trick shim with no certificates of its
+  # own: it depends on and re-exports webpki-roots 1.x, locked at 1.0.10,
+  # which fixes this advisory. sqlx-core 0.8.6 still requires ^0.26 and no
+  # 0.26 patch exists. Re-check on any sqlx upgrade, or if webpki-roots 1.x
+  # in Cargo.lock drops below 1.0.10.
+  { id = "RUSTSEC-2026-0381", reason = "webpki-roots 0.26.11 shim re-exports the patched 1.0.10" },
+]
 
 [bans]
 multiple-versions = "allow"

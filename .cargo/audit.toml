@@ -7,4 +7,10 @@ ignore = [
   # `cargo tree -i rsa --target all` shows it is never built. JWT
   # verification uses aws-lc-rs. Re-check whenever sqlx features change.
   "RUSTSEC-2023-0071",
+  # RUSTSEC-2026-0381 (webpki-roots: distrusted emSign roots). Flagged on
+  # webpki-roots 0.26.11, a semver-trick shim that holds no certificates: it
+  # re-exports webpki-roots 1.x, locked at the patched 1.0.10. sqlx-core
+  # 0.8.6 requires ^0.26 and no 0.26 patch exists. Re-check on any sqlx
+  # upgrade, or if webpki-roots 1.x in Cargo.lock drops below 1.0.10.
+  "RUSTSEC-2026-0381",
 ]
