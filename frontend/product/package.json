@@ -11,6 +11,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@trestle/interaction-react": "0.0.1"
+    "@trestle-framework/interaction-react": "0.0.1"
   }
 }

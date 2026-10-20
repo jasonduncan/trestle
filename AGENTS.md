@@ -24,11 +24,12 @@ The design doc predates the rename and says "Rustjango" throughout. Translate, n
 The design doc filename keeps its original name on purpose (it is the v0.2 artifact).
 
 ## Current milestone
-M0–M5 are built (2026-09-26); the M5 exit, **pilot approval, belongs to the project owner**
-and is not self-granted. Open items before a pilot:
-choose how people sign in (password accounts are built; an OIDC provider is optional and only
-mock-tested), send through the real SMTP relay, get external security review (§12.4), and
-validate the edge config (`deploy/Caddyfile`) on a real host. Do not claim general
+M0–M5 are built (2026-09-26). The project owner approved the pilot on 2026-10-20 (the M5
+exit); approval is the owner's alone and is never self-granted. Sign-in defaults to password
+accounts (an OIDC provider is optional and only mock-tested). Still open: send through the
+real SMTP relay (Gmail), finish the external security review (§12.4, started 2026-10-20),
+validate the edge config (`deploy/Caddyfile`) on a real host, and publish the npm packages
+(`@trestle-framework/*`, after the review). Do not claim general
 maturity or benchmark leadership. ADRs: 001–033 (015 reopens 009: jobs and outbox).
 
 ## Non-negotiables

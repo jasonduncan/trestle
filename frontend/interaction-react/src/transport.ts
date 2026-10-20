@@ -1,1 +1,1 @@
-export * from "@trestle/client/transport";
+export * from "@trestle-framework/client/transport";

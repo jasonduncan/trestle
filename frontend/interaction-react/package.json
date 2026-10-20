@@ -1,5 +1,5 @@
 {
-  "name": "@trestle/interaction-react",
+  "name": "@trestle-framework/interaction-react",
   "version": "0.0.1",
   "license": "MIT OR Apache-2.0",
   "type": "module",
@@ -13,7 +13,7 @@
     "react": ">=19"
   },
   "dependencies": {
-    "@trestle/client": "0.0.1"
+    "@trestle-framework/client": "0.0.1"
   },
   "files": [
     "dist"

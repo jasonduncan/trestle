@@ -33,7 +33,8 @@ refuses to start in production, listing every problem at once, when any of
 these holds:
 
 - development tokens are set;
-- there is no OIDC issuer, or neither a client ID nor an API audience;
+- there is no way to sign in: neither `TRESTLE_PASSWORD_LOGIN=true` nor an
+  OIDC issuer with a client ID or an API audience;
 - `TRESTLE_CURSOR_KEY` or `TRESTLE_SESSION_KEY` is missing or shorter than
   32 bytes;
 - the issuer or the public origin is not `https`;

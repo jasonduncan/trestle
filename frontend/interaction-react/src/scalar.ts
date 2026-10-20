@@ -1,1 +1,1 @@
-export * from "@trestle/client/scalar";
+export * from "@trestle-framework/client/scalar";

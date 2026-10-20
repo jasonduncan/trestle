@@ -1,13 +1,13 @@
 # ADR-033: Admin and application views
 
-**Status:** Implemented locally; release and pilot approval remain separate.
+**Status:** Released in 0.6.0. The owner approved the pilot on 2026-10-20.
 **Date:** 2026-10-18. **Amends:** ADR-008, ADR-013, ADR-016, ADR-026, ADR-029.
 
 ## Decision
 
 Keep view registration in `trestle-core::registry`, portable descriptions in
 `trestle-protocol::view`, and browser behavior in three built ESM packages:
-`@trestle/client`, `@trestle/interaction-react`, and `@trestle/admin-react`.
+`@trestle-framework/client`, `@trestle-framework/interaction-react`, and `@trestle-framework/admin-react`.
 No backend HTML serving or new framework crate is introduced.
 
 `trestle.views/1.0` has collection and record documents. A source contains its

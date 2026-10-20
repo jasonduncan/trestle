@@ -1,5 +1,5 @@
 {
-  "name": "@trestle/admin-react",
+  "name": "@trestle-framework/admin-react",
   "version": "0.0.1",
   "license": "MIT OR Apache-2.0",
   "type": "module",
@@ -21,8 +21,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@trestle/client": "0.0.1",
-    "@trestle/interaction-react": "0.0.1"
+    "@trestle-framework/client": "0.0.1",
+    "@trestle-framework/interaction-react": "0.0.1"
   },
   "peerDependencies": {
     "react": ">=19",

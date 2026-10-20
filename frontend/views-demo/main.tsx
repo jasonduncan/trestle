@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { OperationForm, defaultWidgets, type WidgetRegistry } from "@trestle/interaction-react";
+import { OperationForm, defaultWidgets, type WidgetRegistry } from "@trestle-framework/interaction-react";
 import { createRoot } from "react-dom/client";
-import { AdminShell, WorkStatus } from "@trestle/admin-react";
-import { createTransport, decodeView, formatValue, operationRuntime, type Descriptor, type Transport } from "@trestle/client";
-import "@trestle/admin-react/styles.css";
+import { AdminShell, WorkStatus } from "@trestle-framework/admin-react";
+import { createTransport, decodeView, formatValue, operationRuntime, type Descriptor, type Transport } from "@trestle-framework/client";
+import "@trestle-framework/admin-react/styles.css";
 
 // One fixture bundle, with build-time extensions. The renderer has no domain
 // branches; browser tests bind it to each app's registry-generated metadata.
