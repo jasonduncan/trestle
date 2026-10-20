@@ -506,6 +506,169 @@ async fn changing_a_password_needs_the_current_one_and_ends_other_sessions() {
     h.env.finish().await;
 }
 
+impl Harness {
+    /// Changes the password of the signed-in `session` (cookie and CSRF).
+    async fn change_password(&self, session: &str, current: &str, new: &str) -> Reply {
+        let info = self
+            .get("/api/v1/auth/session", &[("cookie", &cookie(session))])
+            .await;
+        let csrf = info.body["csrf_token"].as_str().unwrap().to_owned();
+        self.post(
+            password::CHANGE_PATH,
+            json!({ "current_password": current, "new_password": new }),
+            &[
+                ("origin", ORIGIN),
+                ("cookie", &cookie(session)),
+                ("x-csrf-token", &csrf),
+            ],
+        )
+        .await
+    }
+}
+
+/// SR-02: a reset link issued before a password change stops working.
+#[tokio::test]
+async fn changing_a_password_voids_outstanding_links() {
+    let h = Harness::new().await;
+    let (_, session) = h.onboard("rotator@example.com").await;
+    let before = password::issue_reset(&h.env.pool, "rotator@example.com", WEEK)
+        .await
+        .unwrap();
+
+    let changed_to = "new maple syrup on snowy days";
+    let changed = h.change_password(&session, GOOD, changed_to).await;
+    assert_eq!(changed.status, StatusCode::NO_CONTENT, "{}", changed.body);
+
+    let inspect = h
+        .browser_post(password::INSPECT_PATH, json!({ "token": before.token }))
+        .await;
+    assert_eq!(inspect.body["code"], "token_invalid");
+    let takeover = h
+        .browser_post(
+            password::SET_PATH,
+            json!({ "token": before.token, "password": "someone else's passphrase" }),
+        )
+        .await;
+    assert_eq!(takeover.body["code"], "token_invalid", "{}", takeover.body);
+    assert_eq!(
+        h.login("rotator@example.com", "someone else's passphrase")
+            .await
+            .status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(h.session_status(&session).await, StatusCode::OK);
+
+    // A link issued after the change works as usual.
+    let after = password::issue_reset(&h.env.pool, "rotator@example.com", WEEK)
+        .await
+        .unwrap();
+    let reset_to = "a later passphrase for real";
+    let reset = h
+        .browser_post(
+            password::SET_PATH,
+            json!({ "token": after.token, "password": reset_to }),
+        )
+        .await;
+    assert_eq!(reset.status, StatusCode::OK, "{}", reset.body);
+    assert_eq!(
+        h.login("rotator@example.com", reset_to).await.status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        h.login("rotator@example.com", changed_to).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    h.env.finish().await;
+}
+
+/// SR-02 ordering. Redemption locks the account row before the link, the
+/// order a password change uses (its update locks the row, then it deletes
+/// the links). Whichever commits first wins: a redemption that waited on a
+/// change finds no link; a change after a redemption finds the current
+/// password no longer matches, and the redemption already ended its session.
+#[tokio::test]
+async fn a_change_and_a_redemption_serialize_on_the_account() {
+    let h = Harness::new().await;
+    let (_, session) = h.onboard("racer@example.com").await;
+    let link = password::issue_reset(&h.env.pool, "racer@example.com", WEEK)
+        .await
+        .unwrap();
+
+    // Hold the account row the way a committing password change does, let
+    // the redemption queue behind it, then void the links and commit.
+    let mut change = h.env.pool.begin().await.unwrap();
+    sqlx::query("SELECT id FROM identity_accounts WHERE email = 'racer@example.com' FOR UPDATE")
+        .execute(&mut *change)
+        .await
+        .unwrap();
+    let redeem = h.browser_post(
+        password::SET_PATH,
+        json!({ "token": link.token, "password": "the racing passphrase" }),
+    );
+    let finish_change = async {
+        let waiting = async {
+            loop {
+                let blocked: i64 = sqlx::query_scalar(
+                    "SELECT count(*) FROM pg_stat_activity \
+                     WHERE datname = current_database() AND wait_event_type = 'Lock'",
+                )
+                .fetch_one(&h.env.pool)
+                .await
+                .unwrap();
+                if blocked > 0 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(10), waiting)
+            .await
+            .expect("the redemption waits on the account row");
+        sqlx::query(
+            "DELETE FROM identity_account_tokens WHERE used_at IS NULL AND account_id = \
+             (SELECT id FROM identity_accounts WHERE email = 'racer@example.com')",
+        )
+        .execute(&mut *change)
+        .await
+        .unwrap();
+        change.commit().await.unwrap();
+    };
+    let (redeemed, ()) = tokio::join!(redeem, finish_change);
+    assert_eq!(redeemed.body["code"], "token_invalid", "{}", redeemed.body);
+    assert_eq!(
+        h.login("racer@example.com", GOOD).await.status,
+        StatusCode::OK,
+        "the refused link changed nothing"
+    );
+
+    // The other order: the link is redeemed first, so a change that checked
+    // the old password is refused and its session has already ended.
+    let link = password::issue_reset(&h.env.pool, "racer@example.com", WEEK)
+        .await
+        .unwrap();
+    let redeemed = h
+        .browser_post(
+            password::SET_PATH,
+            json!({ "token": link.token, "password": "the winning passphrase" }),
+        )
+        .await;
+    assert_eq!(redeemed.status, StatusCode::OK, "{}", redeemed.body);
+    assert_eq!(h.session_status(&session).await, StatusCode::UNAUTHORIZED);
+    let fresh = session_cookie(&redeemed.headers).unwrap();
+    let late = h
+        .change_password(&fresh, GOOD, "the losing passphrase ok")
+        .await;
+    assert_eq!(late.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(late.body["errors"][0]["pointer"], "/current_password");
+    assert_eq!(
+        h.login("racer@example.com", "the winning passphrase")
+            .await
+            .status,
+        StatusCode::OK
+    );
+    h.env.finish().await;
+}
+
 #[tokio::test]
 async fn disabled_accounts_cannot_sign_in_or_use_links() {
     let h = Harness::new().await;

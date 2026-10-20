@@ -916,19 +916,37 @@ impl Passwords {
         }
         let hash = self.hash(password).await?;
 
-        // Consume the link atomically: it works once even if submitted twice.
+        // Lock the account row first, then consume the link: the order that
+        // issuing, changing a password and disabling use. A password change
+        // or a newer link that commits while this waits has already deleted
+        // the link, so the consuming statement (a fresh snapshot after the
+        // lock) finds nothing and the link is refused. The link works once
+        // even if submitted twice.
+        let digest = random::digest(link);
         let mut tx = self.pool.begin().await?;
-        let consumed: Option<(Uuid, Uuid)> = sqlx::query_as(
-            "UPDATE identity_account_tokens t SET used_at = now() \
-         FROM identity_accounts a \
-         WHERE t.token_hash = $1 AND t.used_at IS NULL AND t.expires_at > now() \
-           AND a.id = t.account_id AND a.disabled_at IS NULL \
-         RETURNING a.id, a.actor_id",
+        let locked: Option<(Uuid, Uuid)> = sqlx::query_as(
+            "SELECT a.id, a.actor_id FROM identity_accounts a \
+             WHERE a.id = (SELECT t.account_id FROM identity_account_tokens t \
+                           WHERE t.token_hash = $1) \
+               AND a.disabled_at IS NULL \
+             FOR UPDATE",
         )
-        .bind(random::digest(link))
+        .bind(&digest)
         .fetch_optional(&mut *tx)
         .await?;
-        let (account, actor) = consumed.ok_or_else(token_invalid)?;
+        let (account, actor) = locked.ok_or_else(token_invalid)?;
+        let consumed = sqlx::query(
+            "UPDATE identity_account_tokens SET used_at = now() \
+             WHERE token_hash = $1 AND account_id = $2 \
+               AND used_at IS NULL AND expires_at > now()",
+        )
+        .bind(&digest)
+        .bind(account)
+        .execute(&mut *tx)
+        .await?;
+        if consumed.rows_affected() != 1 {
+            return Err(token_invalid());
+        }
         let actor = ActorId(actor);
         sqlx::query(
             "UPDATE identity_accounts SET password_hash = $2, password_changed_at = now(), \
@@ -991,8 +1009,8 @@ pub(crate) async fn change(
 
 impl Passwords {
     /// Changes the signed-in actor's password after checking the current
-    /// one, ending every other session (all but `keep`). Returns how many
-    /// sessions ended.
+    /// one, voiding every unused invite or reset link and ending every
+    /// other session (all but `keep`). Returns how many sessions ended.
     pub(crate) async fn change_password(
         &self,
         actor: ActorId,
@@ -1043,6 +1061,17 @@ impl Passwords {
         if changed.rows_affected() != 1 {
             return Err(incorrect());
         }
+        // Outstanding invite and reset links were issued for the old
+        // password; void them here, after the account row is locked by the
+        // update above (account first, then links, like issuing and
+        // redeeming), so a redemption racing this either commits first (and
+        // the update above then finds a different hash) or finds no link.
+        sqlx::query(
+            "DELETE FROM identity_account_tokens WHERE account_id = $1 AND used_at IS NULL",
+        )
+        .bind(verified.account)
+        .execute(&mut *tx)
+        .await?;
         let ended = crate::session::revoke_others_in(&mut tx, actor, keep).await?;
         tx.commit().await?;
         Ok(ended)
