@@ -149,7 +149,12 @@ the file and reports problems with line numbers.
   digest-checked, and non-atomic steps resume safely.
 - **Identity** yields only an actor. Trestle provides server-side browser
   sessions with CSRF checks, password accounts (Argon2id), OIDC sign-in,
-  JWT bearer tokens and scoped API keys.
+  JWT bearer tokens and API keys.
+- **API keys carry their actor's full authority.** Scope labels on a key are
+  stored for project code to read; Trestle does not enforce them, and the
+  built-in `ApiKeyIdentity` refuses a key that has any unless the project
+  calls `accept_unenforced_scopes()`. For a restricted key, issue it to a
+  service actor whose memberships and roles allow only what it needs.
 
 ## Known limitations
 

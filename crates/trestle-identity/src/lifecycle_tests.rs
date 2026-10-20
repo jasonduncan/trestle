@@ -272,6 +272,66 @@ async fn disabling_an_account_revokes_its_api_keys() {
     env.finish().await;
 }
 
+fn bearer(secret: &str) -> http::request::Parts {
+    Request::builder()
+        .method(Method::POST)
+        .uri("/api/v1/lessons")
+        .header(header::AUTHORIZATION, format!("Bearer {secret}"))
+        .body(())
+        .unwrap()
+        .into_parts()
+        .0
+}
+
+#[tokio::test]
+async fn api_key_identity_refuses_unenforced_scope_labels() {
+    use trestle_core::identity::{AuthError, IdentityAdapter};
+    let env = Env::new().await;
+    let actor = env
+        .account("service@example.com", &hash_password(OLD).unwrap())
+        .await;
+    let plain = api_keys::issue(&env.pool, actor, "script", &[], None)
+        .await
+        .unwrap();
+    let labelled = api_keys::issue(
+        &env.pool,
+        actor,
+        "read only",
+        &["lessons.read".into()],
+        None,
+    )
+    .await
+    .unwrap();
+    let unknown = format!("{}{}", api_keys::KEY_PREFIX, crate::random::token());
+
+    let default = api_keys::ApiKeyIdentity::new(env.pool.clone());
+    let accepts = |r: Result<ActorId, AuthError>| matches!(r, Ok(a) if a == actor);
+    let invalid = |r: Result<ActorId, AuthError>| matches!(r, Err(AuthError::Invalid));
+    assert!(accepts(default.authenticate(&bearer(&plain.secret)).await));
+    // A labelled key is refused exactly like an unknown one: the adapter
+    // yields only the actor and cannot honour `lessons.read`.
+    assert!(invalid(
+        default.authenticate(&bearer(&labelled.secret)).await
+    ));
+    assert!(invalid(default.authenticate(&bearer(&unknown)).await));
+
+    let opted_in = api_keys::ApiKeyIdentity::new(env.pool.clone()).accept_unenforced_scopes();
+    assert!(accepts(
+        opted_in.authenticate(&bearer(&labelled.secret)).await
+    ));
+    assert!(accepts(opted_in.authenticate(&bearer(&plain.secret)).await));
+
+    // Revocation still applies, with or without the opt-in.
+    assert!(api_keys::revoke(&env.pool, labelled.id).await.unwrap());
+    assert!(api_keys::revoke(&env.pool, plain.id).await.unwrap());
+    for adapter in [&default, &opted_in] {
+        for secret in [&plain.secret, &labelled.secret] {
+            assert!(invalid(adapter.authenticate(&bearer(secret)).await));
+        }
+    }
+    env.finish().await;
+}
+
 #[tokio::test]
 async fn disabling_works_without_the_api_keys_app() {
     let env = Env::new().await;
