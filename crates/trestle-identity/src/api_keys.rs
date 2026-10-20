@@ -1,17 +1,30 @@
-//! Scoped API keys for non-browser actors (agents, services, scripts).
+//! API keys for non-browser actors (agents, services, scripts).
 //!
 //! An optional app: install [`ApiKeysApp`] and its migration to use it.
+//!
+//! **A key carries its actor's full authority.** Identity yields only an
+//! [`ActorId`]; tenant, role and policy are decided by each operation, so
+//! a request made with a key can do exactly what its actor can do. To give
+//! a script or agent less, issue the key to a *service actor* whose
+//! memberships and roles (ordinary policies) allow only what it needs.
 //!
 //! * A key is `tk_` + 256 random bits (base64url). Only its SHA-256 is
 //!   stored, with an 8-character display prefix; the secret is shown once,
 //!   at issue.
-//! * A key belongs to one actor and carries **scopes**: opaque strings the
-//!   project interprets (for example `place:crm/*`). Trestle stores and
-//!   returns them; authorization stays in the project's policies.
+//! * A key belongs to one actor and may carry **scope labels**: opaque
+//!   strings (for example `place:crm/*`) that Trestle stores and returns
+//!   but never enforces. They are not an authorization mechanism; only
+//!   project code that reads [`KeyInfo::scopes`] and checks them itself
+//!   gives them meaning.
 //! * Keys can expire and be revoked; a revoked or expired key verifies as
 //!   unknown, identically to a wrong key.
 //! * [`ApiKeyIdentity`] is an [`IdentityAdapter`] that accepts
 //!   `Authorization: Bearer tk_…`, so keys slot into a [`crate::Chain`].
+//!   Because it yields only the actor, it **refuses keys that carry scope
+//!   labels** (exactly like an unknown key), so a key labelled
+//!   `lessons.read` can never silently act with its actor's write access.
+//!   [`ApiKeyIdentity::accept_unenforced_scopes`] lifts that refusal for a
+//!   project that knowingly treats scopes as labels only.
 
 use std::time::Duration;
 
@@ -68,7 +81,8 @@ pub fn api_key_model() -> Model {
         .index("apikeys_keys_actor_idx", &["actor_id"])
 }
 
-/// A verified key: who it acts for and what it may do.
+/// A verified key: who it acts for, and its scope labels (not enforced by
+/// Trestle; see the module docs).
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct KeyInfo {
     pub id: Uuid,
@@ -116,6 +130,10 @@ fn split(scopes: &str) -> Vec<String> {
 }
 
 /// Issue a key for `actor`. `valid_for: None` never expires.
+///
+/// `scopes` are labels only: the key still carries the actor's full
+/// authority, and the default [`ApiKeyIdentity`] refuses a key that has
+/// any. Pass `&[]` and restrict the actor instead.
 pub async fn issue(
     pool: &PgPool,
     actor: ActorId,
@@ -265,13 +283,33 @@ pub async fn list(pool: &PgPool, actor: Option<ActorId>) -> Result<Vec<KeySummar
 }
 
 /// `Authorization: Bearer tk_…` → the key's actor.
+///
+/// The adapter yields only the actor, so the key acts with the actor's full
+/// authority. By default it refuses any key that carries scope labels, with
+/// the same [`AuthError::Invalid`] as an unknown key: a label such as
+/// `lessons.read` must never look like a restriction while granting the
+/// actor's write access. See [`Self::accept_unenforced_scopes`].
 pub struct ApiKeyIdentity {
     pool: PgPool,
+    accept_unenforced_scopes: bool,
 }
 
 impl ApiKeyIdentity {
+    /// Accepts only keys without scope labels.
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            accept_unenforced_scopes: false,
+        }
+    }
+
+    /// Also accept keys that carry scope labels, **without enforcing them**:
+    /// such a key still acts with its actor's full authority. Use this only
+    /// when the labels are informational, or when the project's own code
+    /// checks them on every path a key can reach.
+    pub fn accept_unenforced_scopes(mut self) -> Self {
+        self.accept_unenforced_scopes = true;
+        self
     }
 }
 
@@ -283,7 +321,16 @@ impl IdentityAdapter for ApiKeyIdentity {
                 return Err(AuthError::Invalid);
             }
             match verify(&self.pool, token).await {
-                Ok(Some(key)) => Ok(key.actor),
+                Ok(Some(key)) if key.scopes.is_empty() || self.accept_unenforced_scopes => {
+                    Ok(key.actor)
+                }
+                Ok(Some(key)) => {
+                    tracing::warn!(
+                        key = %key.id,
+                        "API key with scope labels refused: ApiKeyIdentity does not enforce scopes"
+                    );
+                    Err(AuthError::Invalid)
+                }
                 Ok(None) => Err(AuthError::Invalid),
                 Err(err) => {
                     tracing::warn!(error = %err, "API key lookup failed");

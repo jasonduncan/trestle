@@ -12,7 +12,8 @@
 //! * [`bearer`] — signed JWT access tokens for API clients.
 //! * [`Chain`] — bearer adapters first, then the session cookie.
 //! * [`IdentityApp`] — installs the session models and login routes.
-//! * [`api_keys`] — optional app: scoped API keys for agents and services.
+//! * [`api_keys`] — optional app: API keys for agents and services. A key
+//!   carries its actor's full authority; scope labels are not enforced.
 //! * [`audit`] — optional app: the sign-in audit trail and its middleware.
 //!
 //! Actors are derived from the provider account: [`actor_for`] is a
