@@ -1,5 +1,5 @@
-import { AdminHost, type TenantProfile } from "@trestle/admin-react";
-import "@trestle/admin-react/styles.css";
+import { AdminHost, type TenantProfile } from "@trestle-framework/admin-react";
+import "@trestle-framework/admin-react/styles.css";
 function parse<T>(value: string | undefined): T | undefined { try { return value ? JSON.parse(value) as T : undefined; } catch { return undefined; } }
 const tenant = parse<TenantProfile>(import.meta.env.VITE_ADMIN_TENANT);
 const users = import.meta.env.DEV ? parse<Record<string, { token: string }>>(import.meta.env.VITE_ADMIN_DEV_USERS) : undefined;

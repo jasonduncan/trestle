@@ -3,7 +3,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { AdminHost } from "../src/host";
 
 const session = vi.hoisted(() => ({ state: { kind: "loading" } as any, refresh: vi.fn(), signOut: vi.fn() }));
-vi.mock("@trestle/interaction-react", async (original) => ({
+vi.mock("@trestle-framework/interaction-react", async (original) => ({
   ...await original<object>(), useSession: () => session,
   loadMethods: async () => ({ password: false, oidc: false }),
 }));

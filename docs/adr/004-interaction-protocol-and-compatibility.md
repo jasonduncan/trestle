@@ -37,7 +37,7 @@ while a browser tab is open, and never let metadata confer authority.
 - **Features:** `requiredFeatures` lists what a renderer must implement.
   Unknown required features block submission. Unknown minor protocol
   versions decode; an unknown major version is rejected.
-- **Renderer-side safety** (the decoder in `@trestle/interaction-react`):
+- **Renderer-side safety** (the decoder in `@trestle-framework/interaction-react`):
   - enforces the §8.5 limits and a closed JSON Schema subset;
   - rejects all reference keywords and prototype-polluting names;
   - keeps bindings under `/api/`;

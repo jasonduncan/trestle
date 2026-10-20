@@ -1,7 +1,7 @@
 import { createContext, createElement, useContext, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { OperationForm, defaultWidgets, type WidgetRegistry } from "@trestle/interaction-react";
+import { OperationForm, defaultWidgets, type WidgetRegistry } from "@trestle-framework/interaction-react";
 import { at, currentAvailability, decodeView, decodeViewManifest, etagVersion, fillPath, formatValue, object, operationRuntime, routeInput, validateInstance,
-  type Descriptor, type OperationController, type Transport, type View, type ViewAction, type ViewEntry, type ViewSection } from "@trestle/client";
+  type Descriptor, type OperationController, type Transport, type View, type ViewAction, type ViewEntry, type ViewSection } from "@trestle-framework/client";
 
 const Widgets = createContext<WidgetRegistry>(defaultWidgets);
 class PresentationError extends Error {}

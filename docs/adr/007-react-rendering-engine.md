@@ -20,7 +20,7 @@ fixtures through AJV (JSON Schema 2020-12), the validator JSON Forms uses:
 
 ## Decision
 
-Own a small renderer, `@trestle/interaction-react`:
+Own a small renderer, `@trestle-framework/interaction-react`:
 
 - a validator derived at runtime from the descriptor's input schema that
   implements `trestle.portable@1` (it agrees with the server on every

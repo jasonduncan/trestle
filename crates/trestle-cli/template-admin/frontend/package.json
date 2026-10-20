@@ -3,6 +3,6 @@
   "private": true,
   "type": "module",
   "scripts": { "dev": "vite --host localhost", "build": "vite build" },
-  "dependencies": { "@trestle/admin-react": "0.0.1", "react": "^19", "react-dom": "^19" },
+  "dependencies": { "@trestle-framework/admin-react": "0.0.1", "react": "^19", "react-dom": "^19" },
   "devDependencies": { "vite": "^8", "typescript": "^7", "@types/react": "^19", "@types/react-dom": "^19" }
 }

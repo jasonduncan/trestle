@@ -1,7 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
-import { SetPassword } from "@trestle/interaction-react";
+import { SetPassword } from "@trestle-framework/interaction-react";
 
 import { App } from "./App";
 import "./styles.css";

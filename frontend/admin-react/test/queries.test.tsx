@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { decodeView, type Reply, type Transport } from "@trestle/client";
+import { decodeView, type Reply, type Transport } from "@trestle-framework/client";
 import { AdminShell, CollectionView } from "../src/index";
 afterEach(cleanup);
 const fixture = JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../../fixtures/views/support.json"), "utf8"));

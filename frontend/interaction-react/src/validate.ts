@@ -1,1 +1,1 @@
-export * from "@trestle/client/validate";
+export * from "@trestle-framework/client/validate";

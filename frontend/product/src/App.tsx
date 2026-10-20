@@ -10,7 +10,7 @@ import {
   useSession,
   type Descriptor,
   type SignInMethods,
-} from "@trestle/interaction-react";
+} from "@trestle-framework/interaction-react";
 
 import * as api from "./generated/api";
 

@@ -8,7 +8,7 @@ for (const name of ["client", "interaction-react", "admin-react"]) {
   const entries = name === "client" ? Object.fromEntries(["index", "protocol", "transport", "validate", "scalar"].map((entry) => [entry, resolve(root, "src", entry + ".ts")])) : resolve(root, "src/index." + (name === "admin-react" ? "tsx" : "ts"));
   await build({ configFile: false, root, build: {
     lib: { entry: entries, formats: ["es"], fileName: (format, name) => name + ".js" },
-    rollupOptions: { external: (id) => id === "react" || id.startsWith("react/") || id === "react-dom" || id.startsWith("@trestle/") },
+    rollupOptions: { external: (id) => id === "react" || id.startsWith("react/") || id === "react-dom" || id.startsWith("@trestle-framework/") },
     minify: false, sourcemap: true,
   } });
   const result = spawnSync(process.execPath, [resolve("node_modules/typescript/bin/tsc"), "-p", resolve(root, "tsconfig.build.json")], { stdio: "inherit" });

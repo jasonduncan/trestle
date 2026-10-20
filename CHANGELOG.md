@@ -14,6 +14,12 @@ promise.
 
 ## [Unreleased]
 
+### Changed
+- The browser packages are now `@trestle-framework/client`,
+  `@trestle-framework/interaction-react` and `@trestle-framework/admin-react`
+  (the npm organization matches the crates.io name). They were never
+  published as `@trestle/*`.
+
 ## [0.6.0] - 2026-10-20
 
 ### Added

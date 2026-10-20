@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type FormEvent } from "react";
 
-import { operationRuntime } from "@trestle/client";
+import { operationRuntime } from "@trestle-framework/client";
 
 import { decodeDescriptor, type Descriptor, type FormLayout, type FieldSchema, type PresentedField } from "./protocol";
 import { asProblem, etagVersion, fillPath, type RecordContext, type Transport } from "./transport";

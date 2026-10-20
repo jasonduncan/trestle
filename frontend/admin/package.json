@@ -12,8 +12,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@trestle/interaction-react": "0.0.1",
-    "@trestle/admin-react": "0.0.1",
-    "@trestle/client": "0.0.1"
+    "@trestle-framework/interaction-react": "0.0.1",
+    "@trestle-framework/admin-react": "0.0.1",
+    "@trestle-framework/client": "0.0.1"
   }
 }

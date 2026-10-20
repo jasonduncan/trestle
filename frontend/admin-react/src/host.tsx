@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import { AdminShell } from "./index";
-import { operationRuntime, object, OperationRuntime, bindOperationRuntime } from "@trestle/client";
-import { createTransport, useSession, loadMethods, sessionHeaders, SignIn, type SignInMethods } from "@trestle/interaction-react";
+import { operationRuntime, object, OperationRuntime, bindOperationRuntime } from "@trestle-framework/client";
+import { createTransport, useSession, loadMethods, sessionHeaders, SignIn, type SignInMethods } from "@trestle-framework/interaction-react";
 export interface TenantProfile { header: string; label: string; path: string; idField?: string; dev?: { id: string; name: string }[] }
 export interface AdminHostProps { title?: string; tenantProfile?: TenantProfile | null; developmentUsers?: Record<string, { token: string; note?: string }>; }
 
