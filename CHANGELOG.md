@@ -14,6 +14,39 @@ promise.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-20
+
+### Added
+- Admin and application views (ADR-033):
+  - `trestle.views/1.0` collection and record documents, registered with an
+    explicit `ViewDefinition` in `trestle-core::registry` and described in
+    `trestle-protocol::view`; served at `/_meta/v1/ui/manifest` and
+    `/_meta/v1/ui/views/{id}` (private, no-store; they grant nothing);
+  - existing `AdminView` registrations lower to routed collection and record
+    pages; related sections load other registered reads on demand, with
+    pages bounded at 100 rows;
+  - an optional read-only availability operation per view, whose bounded
+    action hints stay advisory;
+  - `Http::precondition_target` and `Http::version_pinned`
+    (`Trestle-Operation-Version`, also enforced by
+    `Invocation::with_operation_version`);
+  - generated intent searches, enabled with `search = "text_field"`;
+  - `check --renderer <file>` compares a compiled renderer's protocol,
+    features and component contracts with the registry.
+- Browser packages `@trestle/client`, `@trestle/interaction-react` and
+  `@trestle/admin-react`, built as ESM (not yet published to npm).
+- `trestle new <name> --admin` scaffolds a separate React admin host.
+
+### Changed
+- Interaction documents gain an opt-in 1.1 (layouts, relationship
+  search/resolve, concurrency targets, version expectations); 1.0 documents
+  stay byte-identical.
+- Retained idempotent responses are checked against the current output
+  contract after reauthorization; an obsolete projection is refused.
+- Generated cursors now bind actor, tenant, operation version, projection,
+  search, filters, order and page size. Cursors issued before the upgrade
+  need a fresh first page.
+
 ## [0.5.1] - 2026-10-18
 
 ### Fixed
@@ -447,7 +480,8 @@ The first release.
   `auto`. Anything else needs `--approve <digest>`.
 - `serve` refuses to start on schema drift or a partly applied migration.
 
-[Unreleased]: https://github.com/jasonduncan/trestle/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/jasonduncan/trestle/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/jasonduncan/trestle/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/jasonduncan/trestle/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/jasonduncan/trestle/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/jasonduncan/trestle/compare/v0.3.0...v0.4.0
