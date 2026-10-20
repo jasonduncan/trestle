@@ -35,6 +35,6 @@ url = "2"
 uuid.workspace = true
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["sync", "net", "time"] }
 trestle-historical = { workspace = true, features = ["testing"] }
 jsonwebtoken = { version = "11", default-features = false, features = ["aws_lc_rs", "use_pem"] }
