@@ -307,14 +307,16 @@ assert r["unrelated_after"] == 200, r
 assert r["trickle_status"] == 408 and d <= r["trickle_released_ms"] < d + 2000, r
 EOF
 pass "directly at a replica, stalled sign-in uploads hold capacity only until the ${BODY_TIMEOUT_MS} ms deadline; a trickle cannot extend it"
-EDGE_UPLOADS="$(uploads edge $EDGE_PORT $((MAX_IN_FLIGHT * 2)) "$CA" $BODY_TIMEOUT_MS)"
+# More stalls than both replicas' permits together, so both fill however the
+# edge spreads them; the extra ones get 503 (Caddy answers when it closes).
+EDGE_UPLOADS="$(uploads edge $EDGE_PORT $((MAX_IN_FLIGHT * 2 + 2)) "$CA" $BODY_TIMEOUT_MS)"
 echo "edge: $EDGE_UPLOADS"
 python3 - "$EDGE_UPLOADS" <<'EOF' || fail "edge uploads: $EDGE_UPLOADS"
 import json, sys
 r = json.loads(sys.argv[1])
 assert r["unrelated_while_stalled"] == 503, r
 assert r["unrelated_after_api_deadline"] == 200, r
-assert r["stalled_status"] == [408], r
+assert 408 in r["stalled_status"] and set(r["stalled_status"]) <= {408, 503}, r
 assert r["stalled_released_ms"][1] < 18000, r
 assert r["unrelated_after"] == 200, r
 assert r["trickle_status"] == 408 and r["trickle_released_ms"] < 18000, r
