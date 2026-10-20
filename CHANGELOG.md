@@ -14,7 +14,50 @@ promise.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-20
+
+Fixes for the 2026-10-20 security review (`docs/security-review.md`).
+
+### Security
+- Request bodies have a total deadline, `TRESTLE_BODY_TIMEOUT_MS` (default
+  10 s): a stalled or trickling upload gets `408 request_timeout` and gives
+  its admission permit back. Before, an unauthenticated client could hold
+  every permit through the public sign-in endpoint (SR-01).
+- A password change voids the account's unused invite and reset links.
+  Issue, change, disable and redemption lock the account before its links,
+  which also removes a deadlock between a change and a redemption (SR-02).
+- Production refuses a non-local database without `sslmode=verify-full`
+  (`require` and `verify-ca` are refused), and runs its boot checks before
+  connecting to anything (SR-03).
+- OIDC signing keys are trusted for at most 24 hours after the last
+  successful key fetch; a successful fetch replaces the key set, even with
+  an empty one (SR-04).
+- The browser client keeps requests inside `/api/` (operations) or
+  `/_meta/` (metadata): encoded dot segments, `.`/`..` path parameters and
+  look-alike prefixes are refused before any request is sent, and requests
+  never follow redirects (SR-05).
+- `ApiKeyIdentity::new` refuses keys with scope labels, since it does not
+  enforce them; `accept_unenforced_scopes()` opts in (SR-07).
+
+### Added
+- `make drill-edge` runs `deploy/Caddyfile` in a real Caddy in front of two
+  production-mode replicas (`docs/evidence/edge-drill.json`).
+- Metrics `trestle_oidc_jwks_refresh_total{outcome}` and
+  `trestle_oidc_jwks_expired_total`, and the `body_timeout` reason on
+  `trestle_admission_rejected_total`.
+
 ### Changed
+- `deploy/Caddyfile`: header, body and idle timeouts; a 1 MB body cap on
+  `/api` and `/_meta`; requests move to another replica when one refuses the
+  connection; admin assets are now cached (an unmatched `no-cache` header
+  overrode them).
+- `AdmissionConfig` has a `body_timeout` field (struct literals need it or
+  `..Default::default()`).
+- `@trestle-framework/client`: a refused request is a new `Reply` kind,
+  `"refused"`; `OperationRuntime` reports it as `rejected` with code
+  `path_refused`. New `apiPrefix`, `metaRoot` and `origin` transport options.
+- CI fails on npm advisories (production: any; all dependencies: high).
+- `source-map-js` (development only) 1.2.2 (SR-06).
 - The browser packages are now `@trestle-framework/client`,
   `@trestle-framework/interaction-react` and `@trestle-framework/admin-react`
   (the npm organization matches the crates.io name). They were never
@@ -486,7 +529,8 @@ The first release.
   `auto`. Anything else needs `--approve <digest>`.
 - `serve` refuses to start on schema drift or a partly applied migration.
 
-[Unreleased]: https://github.com/jasonduncan/trestle/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/jasonduncan/trestle/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/jasonduncan/trestle/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/jasonduncan/trestle/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/jasonduncan/trestle/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/jasonduncan/trestle/compare/v0.4.0...v0.5.0

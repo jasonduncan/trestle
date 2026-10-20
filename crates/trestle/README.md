@@ -9,7 +9,7 @@ The package is `trestle-framework`; the library is imported as `trestle`:
 
 ```toml
 [dependencies]
-trestle = { package = "trestle-framework", version = "0.6" }
+trestle = { package = "trestle-framework", version = "0.7" }
 ```
 
 ```rust,no_run

@@ -5,8 +5,13 @@ Reviewed through commit: `62c841e758e648730bdf2e63b5a0eb062beca0a6`
 This is a source review, dependency audit and local adversarial test pass by
 Codex. It does not certify the external-review gate in design §12.4 as closed.
 The current AGENTS.md records owner pilot approval on 2026-10-20; this review
-does not grant or replace that decision. Findings remain open. This change adds
-documentation and evidence, without changing runtime code or dependencies.
+does not grant or replace that decision. The review itself changed only
+documentation and evidence.
+
+**Remediation (2026-10-20):** SR-01 to SR-06 are fixed and SR-07 is mitigated
+in 0.7.0; each finding's **Status** line names the change and its test. The
+findings below are kept as written at review time. The external-review gate
+(§12.4) remains open.
 
 The most urgent finding is an unauthenticated availability attack: stalled
 JSON uploads can retain all admission permits. Other findings concern password
@@ -36,6 +41,8 @@ it is not an upstream CVSS score or a claim about an inspected deployment.
 | SR-07 | Medium, conditional integration risk | API-key scope labels do not constrain the built-in identity adapter | Optional adapter wired explicitly in probe; not configured by stock pilot startup |
 
 ### SR-01 — Stalled uploads can exhaust admission permits
+
+**Status:** Fixed in 0.7.0 (#40, `6b6064d`). Request bodies have a total deadline (`TRESTLE_BODY_TIMEOUT_MS`, 10 s; 408 and the permit returns), also in the sign-in audit middleware. The Caddyfile gained `read_header`/`read_body`/`idle` timeouts and a 1 MB body cap. Verified over real TCP (`trestle-core/tests/body_timeout.rs`) and through a real Caddy (`make drill-edge`, [evidence](evidence/edge-drill.json)).
 
 **Location:** [input.rs](../crates/trestle-core/src/input.rs), lines 29–55;
 [admission.rs](../crates/trestle-core/src/admission.rs), lines 216–247;
@@ -70,6 +77,8 @@ total deadline indefinitely. Cover direct listener and actual edge behavior.
 
 ### SR-02 — An old reset link survives an authenticated password change
 
+**Status:** Fixed in 0.7.0 (#37, `1675b28`). A password change deletes unused invite/reset links in its transaction; issue, change, disable and redemption all lock the account row before links. Regression and race tests in `examples/pilot/tests/accounts.rs`.
+
 **Location:** [password.rs](../crates/trestle-identity/src/password.rs),
 lines 919–950 and 1032–1047.
 
@@ -98,6 +107,8 @@ so concurrent recovery cannot revive a credential invalidated by the change.
 preserves a documented ordering and session-revocation guarantee.
 
 ### SR-03 — Production TLS checks allow unauthenticated database encryption
+
+**Status:** Fixed in 0.7.0 (#39, `e95be19`). Production requires `sslmode=verify-full` for a non-local database, and the boot checks now run before any connection. `make drill-tls` records that `require` accepts an untrusted certificate. With sqlx-core 0.8.6 and rustls 0.23, `verify-ca` did refuse a mismatched host in the drill, so that part of the finding depends on the driver version; only `verify-full` is accepted either way.
 
 **Location:** [serve.rs](../crates/trestle/src/serve.rs), lines 295–305;
 [production environment example](../deploy/pilot.env.example), line 8.
@@ -130,6 +141,8 @@ every supported production configuration.
 
 ### SR-04 — Failed OIDC refresh leaves old signing keys trusted indefinitely
 
+**Status:** Fixed in 0.7.0 (#38, `14284ac`). Cached keys are trusted for at most 24 h after the last successful fetch, then verification is unavailable; a successful fetch replaces the key set, including an empty one. Refresh outcomes are counted (`trestle_oidc_jwks_refresh_total`, `trestle_oidc_jwks_expired_total`). Mock-IdP tests cover 503, malformed, timeout, empty and recovery.
+
 **Location:** [oidc.rs](../crates/trestle-identity/src/oidc.rs),
 lines 35–39 and 389–440.
 
@@ -159,6 +172,8 @@ expired cache trust refuses fresh tokens; successful retirement removes trust.
 Exercise timeout, malformed response, empty JWKS and recovery with a mock IdP.
 
 ### SR-05 — URL normalization bypasses browser API-prefix checks
+
+**Status:** Fixed in 0.7.0 (#35, `c096790`). Descriptors reject encoded dot segments and look-alike prefixes; path parameters `.`/`..` are refused; the final URL is checked for origin and segment-boundary prefix before fetch (metadata and operations separately); requests use `redirect: "error"`. A refused request dispatches nothing (fetch-spy tests).
 
 **Location:** [protocol.ts](../frontend/client/src/protocol.ts), lines 361–370;
 [transport.ts](../frontend/client/src/transport.ts), lines 83–84 and 99–135.
@@ -196,6 +211,8 @@ parameters work; a fetch spy verifies that rejected inputs dispatch no request.
 
 ### SR-06 — Development dependency has a known denial-of-service advisory
 
+**Status:** Fixed in 0.7.0 (#35, `c096790`). `source-map-js` 1.2.2; CI fails on any production advisory and on high/critical advisories in any dependency.
+
 **Location:** [frontend/package-lock.json](../frontend/package-lock.json),
 lines 2015–2023; [CI workflow](../.github/workflows/ci.yml), lines 113–120.
 
@@ -221,6 +238,8 @@ audit gate, with any exceptions documented and time-bounded.
 typechecks remain green. This review did not update the dependency.
 
 ### SR-07 — API-key scopes need an explicit enforcement integration
+
+**Status:** Mitigated in 0.7.0 (#36, `1da9145`). `ApiKeyIdentity::new` refuses keys with scope labels (as an invalid key) unless `accept_unenforced_scopes()` is set; docs state that a key carries its actor's full authority. An enforced restricted-key mechanism is not built; use a service actor whose roles limit it.
 
 **Classification:** conditional integration risk, not a demonstrated stock-pilot
 authorization bypass.
