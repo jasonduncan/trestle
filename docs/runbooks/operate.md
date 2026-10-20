@@ -25,6 +25,8 @@ IDs and problem codes. Actor, tenant and record IDs are never labels.
 | `trestle_admission_rejected_total{reason}` | `overloaded` (capacity) or `rate_limited` (abuse or a misbehaving client) |
 | `trestle_interaction_stale_total{operation}` | non-zero outside a rollout: an old revision was not retained |
 | `trestle_auth_failures_total{reason}` | `csrf` (attack traffic, or `TRESTLE_PUBLIC_ORIGIN` not matching the browser origin); `unavailable` (provider or session store); a jump in `invalid` (credential stuffing or an expired client secret) |
+| `trestle_oidc_jwks_refresh_total{outcome}` | `unavailable` or `invalid` (the provider's key endpoint is down or answering garbage; cached keys keep working for 24 hours after the last `ok`); any `empty` (the provider published no usable signing keys, so every provider token is refused) |
+| `trestle_oidc_jwks_expired_total` | non-zero: key refreshes have failed for over 24 hours and provider tokens are refused as `identity_unavailable` |
 
 ## Logs
 

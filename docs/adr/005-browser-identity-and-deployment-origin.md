@@ -39,7 +39,10 @@ the origin so it shares the host-only cookie and the login callback.
   is present.
 - **Signing keys:** asymmetric algorithms only (RS/PS/ES/EdDSA); `none`
   and HMAC are refused. The JWKS is cached for an hour, and an unknown
-  `kid` triggers at most one refetch per 30 seconds.
+  `kid` triggers at most one refetch per 30 seconds. A successful fetch
+  replaces the key set entirely (an empty set trusts nothing); if refetches
+  fail, the old keys keep verifying for at most 24 hours after the last
+  successful fetch, then tokens are refused as `identity_unavailable`.
 - **Server-side sessions:**
   - The cookie is `__Host-trestle_session`: 256 random bits,
     `Secure; HttpOnly; SameSite=Strict; Path=/`, host-only.
