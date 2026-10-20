@@ -235,7 +235,7 @@ fn assembles_in_dependency_order_and_describes_itself() {
             .iter()
             .filter(|r| r.kind == RouteKind::System)
             .count(),
-        6
+        8
     );
 
     let inspected = registry.inspect_operation("notes.create").unwrap();
