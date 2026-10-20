@@ -357,13 +357,34 @@ function assertNoReferences(value: unknown, path: string): void {
   }
 }
 
+/**
+ * True when some segment of `path` (before any query) is a dot segment,
+ * literal or percent-encoded in any case: `.`, `..`, `%2e`, `.%2E`, `%2e%2e`.
+ * URL resolution removes those segments (WHATWG URL, "double-dot segment"),
+ * so a path containing one can resolve outside the prefix it starts with.
+ */
+export function hasDotSegment(path: string): boolean {
+  const end = path.search(/[?#]/);
+  return (end < 0 ? path : path.slice(0, end))
+    .split("/")
+    .some((segment) => /^\.{1,2}$/.test(segment.replace(/%2e/gi, ".")));
+}
+
+/** Whether `pathname` lies under `prefix` on a segment boundary (`/api/` admits `/api/x`, never `/apix`). */
+export function underPrefix(pathname: string, prefix: string): boolean {
+  if (prefix.endsWith("/")) return pathname.startsWith(prefix);
+  return pathname === prefix || pathname.startsWith(prefix + "/");
+}
+
 /** A binding is a path on the configured API origin, never a URL. */
 export function checkBindingPath(path: string, apiPrefix: string): string {
   const escapes =
     !path.startsWith(apiPrefix) ||
+    !underPrefix(path, apiPrefix) ||
     path.startsWith("//") ||
     path.includes("\\") ||
     path.includes("..") ||
+    hasDotSegment(path) ||
     /[?#\s]/.test(path) ||
     /^[a-z][a-z0-9+.-]*:/i.test(path);
   if (escapes) fail(`binding path ${JSON.stringify(path)} escapes the API origin`);

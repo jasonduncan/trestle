@@ -150,6 +150,8 @@ export class OperationController {
       catch { reply = { kind: "network-error", message: "Transport failed" }; }
       if (!this.valid || attempt.generation !== this.runtime.epoch()) return;
       if (reply.kind === "network-error") { this.set({ state: "outcome_unknown", message: UNKNOWN }); return; }
+      // Refused before dispatch: no request left the browser, so nothing happened.
+      if (reply.kind === "refused") { this.set({ state: "rejected", code: "path_refused", message: "This request was not sent: its destination is outside the API." }); return; }
       const op = attempt.descriptor.operation;
       if (reply.status === op.successStatus) {
         const valid = op.successBody === "none" ? reply.body === null : validateInstance(attempt.descriptor.output.schema, reply.body).ok;

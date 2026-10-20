@@ -10,7 +10,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExtern
 import { operationRuntime } from "@trestle-framework/client";
 
 import { decodeDescriptor, type Descriptor, type FormLayout, type FieldSchema, type PresentedField } from "./protocol";
-import { asProblem, etagVersion, fillPath, type RecordContext, type Transport } from "./transport";
+import { asProblem, etagVersion, fillPath, PathRefused, type RecordContext, type Reply, type Transport } from "./transport";
 import { validateInstance, type FieldError } from "./validate";
 import { defaultWidgets, words, type Widget, type WidgetRegistry } from "./widgets";
 
@@ -151,7 +151,7 @@ export function OperationForm({
       const generation = ++loadGeneration.current;
       const reply = await transport.getInteraction(interaction);
       if (generation !== loadGeneration.current) return;
-      if (reply.kind === "network-error") {
+      if (reply.kind !== "response") {
         setLoaded({ phase: "blocked", message: "This form could not be loaded. Check your connection and try again." });
         return;
       }
@@ -175,7 +175,12 @@ export function OperationForm({
       if (precondition?.target) {
         const target = precondition.target;
         const value = boundInputs?.[target.inputField] ?? record?.path?.[target.inputField] ?? recordValues?.[target.inputField];
-        const current = value === undefined ? undefined : await transport.list(fillPath(target.path, { [target.parameter]: value }));
+        let current: Reply | undefined;
+        try {
+          current = value === undefined ? undefined : await transport.list(fillPath(target.path, { [target.parameter]: value }));
+        } catch (error) {
+          if (!(error instanceof PathRefused)) throw error;
+        }
         if (generation !== loadGeneration.current) return;
         if (current?.kind !== "response" || current.status !== 200 || !current.etag?.startsWith('"' + precondition.etagOf + ':')) {
           setLoaded({ phase: "blocked", message: "The concurrency target is unavailable. Refresh your access or record." }); return;
