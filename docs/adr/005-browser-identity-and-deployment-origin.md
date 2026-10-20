@@ -74,8 +74,11 @@ role and policy checks stay in the operation's context and policy (I06).
 
 **Production boot refuses** development tokens, a missing provider, missing
 or short keys, non-`https` provider or origin, an API audience equal to the
-client ID, and a non-local database without `sslmode=require` or stronger
+client ID, and a non-local database without `sslmode=verify-full`
 (`examples/pilot/src/server.rs`). All problems are reported at once.
+(Originally `require` or stronger; narrowed to `verify-full` by security
+review finding SR-03, since `require` and `verify-ca` do not authenticate
+the server.)
 
 ## Consequences
 

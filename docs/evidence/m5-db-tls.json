@@ -1,6 +1,6 @@
 {
   "drill": "database TLS",
-  "date": "2026-09-26T09:49:59Z",
+  "date": "2026-10-20T18:39:22Z",
   "postgres": "postgres (PostgreSQL) 16.15 (Homebrew)",
   "server": "throwaway instance on a spare port, hostssl only, certificate for DNS name localhost signed by a drill CA; the mismatched-host case connects to 127.0.0.1, which the certificate does not name",
   "results": {
@@ -9,12 +9,22 @@
     "plaintext_connection": "refused",
     "verify_full_with_untrusted_ca": "refused",
     "verify_full_with_mismatched_host": "refused",
-    "psql_session_reports_ssl": "t"
+    "psql_session_reports_ssl": "t",
+    "production_boot_with_require": "refused",
+    "production_boot_with_verify_ca": "refused",
+    "production_boot_with_verify_full": "accepted"
   },
   "refusal_reasons": {
     "plaintext_connection": "error: error returned from database: pg_hba.conf rejects connection for host 127.0.0.1, user trestle, database postgres, no encryption",
     "verify_full_with_untrusted_ca": "error: error communicating with database: invalid peer certificate: UnknownIssuer",
-    "verify_full_with_mismatched_host": "error: error communicating with database: invalid peer certificate: certificate not valid for name 127.0.0.1; certificate is only valid for DnsName(localhost)"
+    "verify_full_with_mismatched_host": "error: error communicating with database: invalid peer certificate: certificate not valid for name 127.0.0.1; certificate is only valid for DnsName(localhost)",
+    "production_boot_with_require": "  - DATABASE_URL must use sslmode=verify-full for a non-local database in production (require and verify-ca do not check the server's identity; set sslrootcert for a private CA)",
+    "production_boot_with_verify_ca": "  - DATABASE_URL must use sslmode=verify-full for a non-local database in production (require and verify-ca do not check the server's identity; set sslrootcert for a private CA)"
+  },
+  "weaker_modes_observed": {
+    "require_with_untrusted_ca": "ok",
+    "verify_ca_with_mismatched_host": "refused",
+    "verify_ca_with_mismatched_host_detail": "error: error communicating with database: invalid peer certificate: certificate not valid for name 127.0.0.1; certificate is only valid for DnsName(localhost)"
   },
   "expected": {
     "migrate_with_verify_full": "ok",
@@ -22,6 +32,10 @@
     "plaintext_connection": "refused",
     "verify_full_with_untrusted_ca": "refused",
     "verify_full_with_mismatched_host": "refused",
-    "psql_session_reports_ssl": "t"
-  }
+    "psql_session_reports_ssl": "t",
+    "production_boot_with_require": "refused",
+    "production_boot_with_verify_ca": "refused",
+    "production_boot_with_verify_full": "accepted"
+  },
+  "notes": "weaker_modes_observed is informational, not asserted: require connecting to a server signed by an untrusted CA is the SR-03 weakness. With this driver build verify-ca also refuses a mismatched IP address (the hostname-skipping verifier does not recognize the newer rustls error), but that is incidental and version-dependent, so production accepts only verify-full for a non-local database. The boot cases use the unresolvable host db.invalid: verify-full passes the boot checks and then fails to connect; require and verify-ca are refused before any connection."
 }

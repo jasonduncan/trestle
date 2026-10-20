@@ -292,15 +292,15 @@ impl ServeConfig {
                         .into(),
                 );
             }
+            // `require` accepts any certificate and `verify-ca` any host
+            // name: neither authenticates the database server (SR-03).
             if !local_database(database)
-                && !matches!(
-                    database.get_ssl_mode(),
-                    PgSslMode::Require | PgSslMode::VerifyCa | PgSslMode::VerifyFull
-                )
+                && !matches!(database.get_ssl_mode(), PgSslMode::VerifyFull)
             {
                 problems.push(
-                    "DATABASE_URL must use sslmode=verify-full (or require/verify-ca) \
-                     for a non-local database in production"
+                    "DATABASE_URL must use sslmode=verify-full for a non-local database in \
+                     production (require and verify-ca do not check the server's identity; \
+                     set sslrootcert for a private CA)"
                         .into(),
                 );
             }
@@ -400,6 +400,38 @@ fn local_database(options: &PgConnectOptions) -> bool {
         || matches!(options.get_host(), "localhost" | "127.0.0.1" | "::1")
 }
 
+/// Refuses, listing every problem at once, a configuration `serve` must
+/// not start with. Runs before anything connects to the database, so an
+/// unauthenticated database (SR-03) never sees the credentials.
+pub(crate) fn refuse_unsafe<S, X: ServeExtension<S>>(
+    registry: &Registry<S>,
+    env: Environment,
+    database: &PgConnectOptions,
+    config: &ServeConfig,
+    extension: &X,
+) -> Result<(), String> {
+    let mut problems = config.problems(env, database);
+    problems.extend(extension.problems());
+    if config.jobs && registry.desired_schema().model("jobs.job").is_none() {
+        problems.push(
+            "TRESTLE_JOBS needs the job table: install trestle::core::jobs::JobsApp and run \
+             makemigrations"
+                .into(),
+        );
+    }
+    if config.jobs && config.job_concurrency == 0 {
+        problems.push("TRESTLE_JOB_CONCURRENCY must be at least 1".into());
+    }
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "refusing to start ({env:?}):\n  - {}",
+            problems.join("\n  - ")
+        ))
+    }
+}
+
 /// Boots and serves until SIGINT/SIGTERM.
 ///
 /// `extension` adds project-specific settings and builds the project's
@@ -417,24 +449,7 @@ where
     PgPool: axum::extract::FromRef<S>,
     X: ServeExtension<S>,
 {
-    let mut problems = config.problems(env, &database);
-    problems.extend(extension.problems());
-    if config.jobs && registry.desired_schema().model("jobs.job").is_none() {
-        problems.push(
-            "TRESTLE_JOBS needs the job table: install trestle::core::jobs::JobsApp and run \
-             makemigrations"
-                .into(),
-        );
-    }
-    if config.jobs && config.job_concurrency == 0 {
-        problems.push("TRESTLE_JOB_CONCURRENCY must be at least 1".into());
-    }
-    if !problems.is_empty() {
-        return Err(format!(
-            "refusing to start ({env:?}):\n  - {}",
-            problems.join("\n  - ")
-        ));
-    }
+    refuse_unsafe(&registry, env, &database, &config, &extension)?;
     match &config.cursor_key {
         Some(key) => pagination::install_key(key.as_bytes())?,
         None => tracing::warn!("TRESTLE_CURSOR_KEY is not set: list cursors expire on restart"),
@@ -695,6 +710,49 @@ mod tests {
             production().problems(Environment::Production, &remote("verify-full")),
             Vec::<String>::new()
         );
+    }
+
+    #[test]
+    fn production_requires_verify_full_for_a_remote_database() {
+        // `require` accepts any certificate and `verify-ca` any host name,
+        // so neither authenticates the server (SR-03). Each is refused, and
+        // reported together with every other problem.
+        for weak in ["disable", "allow", "prefer", "require", "verify-ca"] {
+            let problems = production().problems(Environment::Production, &remote(weak));
+            assert_eq!(problems.len(), 1, "{weak}: {problems:?}");
+            assert!(
+                problems[0].contains("sslmode=verify-full"),
+                "{weak}: {problems:?}"
+            );
+            let mut config = production();
+            config.cursor_key = None;
+            let problems = config.problems(Environment::Production, &remote(weak));
+            assert_eq!(problems.len(), 2, "{weak}: {problems:?}");
+        }
+        assert!(
+            production()
+                .problems(Environment::Production, &remote("verify-full"))
+                .is_empty()
+        );
+        // Development and loopback databases are not affected.
+        assert!(
+            ServeConfig::for_tests()
+                .problems(Environment::Development, &remote("require"))
+                .iter()
+                .all(|p| !p.contains("sslmode"))
+        );
+        for local in [
+            "postgres://app@127.0.0.1/app?sslmode=require",
+            "postgres://app@localhost/app?sslmode=disable",
+        ] {
+            let options: PgConnectOptions = local.parse().unwrap();
+            assert!(
+                production()
+                    .problems(Environment::Production, &options)
+                    .is_empty(),
+                "{local}"
+            );
+        }
     }
 
     #[test]

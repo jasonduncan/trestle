@@ -103,6 +103,49 @@ mod tests {
     }
 
     #[test]
+    fn production_requires_verify_full_for_a_remote_database() {
+        // `require` accepts any certificate and `verify-ca` any host name,
+        // so neither authenticates the server (SR-03). Each is refused, and
+        // reported together with every other problem.
+        for weak in ["disable", "allow", "prefer", "require", "verify-ca"] {
+            let problems = production().problems(Environment::Production, &remote(weak));
+            assert_eq!(problems.len(), 1, "{weak}: {problems:?}");
+            assert!(
+                problems[0].contains("sslmode=verify-full"),
+                "{weak}: {problems:?}"
+            );
+            let mut config = production();
+            config.cursor_key = None;
+            let problems = config.problems(Environment::Production, &remote(weak));
+            assert_eq!(problems.len(), 2, "{weak}: {problems:?}");
+        }
+        assert!(
+            production()
+                .problems(Environment::Production, &remote("verify-full"))
+                .is_empty()
+        );
+        // Development and loopback databases are not affected.
+        assert!(
+            ServeConfig::for_tests()
+                .problems(Environment::Development, &remote("require"))
+                .iter()
+                .all(|p| !p.contains("sslmode"))
+        );
+        for local in [
+            "postgres://pilot@127.0.0.1/pilot?sslmode=require",
+            "postgres://pilot@localhost/pilot?sslmode=disable",
+        ] {
+            let options: PgConnectOptions = local.parse().unwrap();
+            assert!(
+                production()
+                    .problems(Environment::Production, &options)
+                    .is_empty(),
+                "{local}"
+            );
+        }
+    }
+
+    #[test]
     fn production_refuses_dev_tokens_missing_keys_and_plaintext_databases() {
         let mut config = production();
         config.dev_tokens = Some("alice-dev-token=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".into());

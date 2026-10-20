@@ -39,8 +39,10 @@ these holds:
   32 bytes;
 - the issuer or the public origin is not `https`;
 - the API audience equals the client ID;
-- a non-local `DATABASE_URL` lacks `sslmode=require`, `verify-ca` or
-  `verify-full`. Use `verify-full` with `sslrootcert`.
+- a non-local `DATABASE_URL` does not use `sslmode=verify-full`. `require`
+  accepts any certificate and `verify-ca` does not check the host name, so
+  both are refused. Set `sslrootcert` to the database CA when it is private.
+  This check runs before `serve` connects to the database.
 
 Use two database roles: the migration role owns the schema and runs only
 `pilot-migrate`; the runtime role in `DATABASE_URL` needs DML on the

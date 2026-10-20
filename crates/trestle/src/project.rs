@@ -907,9 +907,13 @@ where
                         format!("refusing to start:\n  - {}", problems.join("\n  - ")),
                     ));
                 }
-                intent_migrations_applied(ctx, intent, history()?).await?;
             }
             let options = database()?;
+            // Before any connection: the boot checks include the database's TLS.
+            serve::refuse_unsafe(&ctx.registry, env, &options, &config, &extension)?;
+            if let Some(intent) = intent {
+                intent_migrations_applied(ctx, intent, history()?).await?;
+            }
             let set = history()?;
             schema_verified(&options, set.clone(), bin).await?;
             schema_fence_installed(&options, &set, bin).await?;

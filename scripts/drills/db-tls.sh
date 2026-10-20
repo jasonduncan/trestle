@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Database TLS drill (M5): proves the runtime and migration binaries connect
 # with sslmode=verify-full against a server whose certificate chains to a
-# given CA, and that plaintext or wrongly-trusted connections fail.
+# given CA, and that plaintext or wrongly-trusted connections fail. It also
+# records what the weaker modes accept (SR-03: `require` checks no
+# certificate, and `verify-ca` is documented to skip the host name), and that
+# `pilot serve` in production refuses both for a non-local database before
+# it connects.
 #
 # Runs a throwaway PostgreSQL on a spare port with its own data directory
 # and certificates; never touches the development server. Stops only the
@@ -74,6 +78,39 @@ wrong_ca=$(attempt wrong-ca "$BASE?sslmode=verify-full&sslrootcert=$WORK/other.c
 wrong_host=$(attempt wrong-host \
   "postgres://trestle@127.0.0.1:$PORT/postgres?sslmode=verify-full&sslrootcert=$WORK/ca.crt" \
   target/debug/pilot-migrate --plan)
+# The weaker modes, observed rather than asserted: what they accept depends
+# on the driver version, which is why production refuses them outright.
+require_untrusted=$(attempt require-untrusted \
+  "postgres://trestle@127.0.0.1:$PORT/postgres?sslmode=require&sslrootcert=$WORK/other.crt" \
+  target/debug/pilot-migrate --plan)
+verify_ca_wrong_host=$(attempt verify-ca-wrong-host \
+  "postgres://trestle@127.0.0.1:$PORT/postgres?sslmode=verify-ca&sslrootcert=$WORK/ca.crt" \
+  target/debug/pilot-migrate --plan)
+
+# Production boot with a non-local DATABASE_URL: everything else is valid,
+# so only the TLS mode can refuse. The host does not resolve; verify-full
+# passes the boot checks and then fails to connect, the others must be
+# refused before any connection is attempted.
+boot() { # name, sslmode
+  env -u TRESTLE_DEV_TOKENS -u TRESTLE_CLIENT_ADDRESS_HEADER TRESTLE_ENV=production \
+    DATABASE_URL="postgres://trestle@db.invalid/postgres?sslmode=$2&sslrootcert=$WORK/ca.crt" \
+    TRESTLE_PASSWORD_LOGIN=true TRESTLE_TRUST_PEER_ADDRESS=true \
+    TRESTLE_CURSOR_KEY="$(printf 'c%.0s' $(seq 32))" TRESTLE_SESSION_KEY="$(printf 's%.0s' $(seq 32))" \
+    TRESTLE_PUBLIC_ORIGIN=https://app.example.com TRESTLE_BIND=127.0.0.1:0 \
+    target/debug/pilot serve >"$WORK/$1.out" 2>&1 || true
+  if grep -q "refusing to start" "$WORK/$1.out" && grep -q "sslmode=verify-full" "$WORK/$1.out" \
+    && ! grep -q "connect to database" "$WORK/$1.out"; then
+    echo refused
+  elif grep -q "connect to database" "$WORK/$1.out"; then
+    echo accepted
+  else
+    echo unexpected
+  fi
+}
+boot_require=$(boot boot-require require)
+boot_verify_ca=$(boot boot-verify-ca verify-ca)
+boot_verify_full=$(boot boot-verify-full verify-full)
+
 ssl_in_use=$(psql "host=localhost port=$PORT user=trestle dbname=postgres sslmode=verify-full sslrootcert=$WORK/ca.crt" \
   -tAc "SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()")
 
@@ -91,12 +128,22 @@ cat > "$EVIDENCE" <<EOF
     "plaintext_connection": "$plaintext",
     "verify_full_with_untrusted_ca": "$wrong_ca",
     "verify_full_with_mismatched_host": "$wrong_host",
-    "psql_session_reports_ssl": "$ssl_in_use"
+    "psql_session_reports_ssl": "$ssl_in_use",
+    "production_boot_with_require": "$boot_require",
+    "production_boot_with_verify_ca": "$boot_verify_ca",
+    "production_boot_with_verify_full": "$boot_verify_full"
   },
   "refusal_reasons": {
     "plaintext_connection": "$(reason plaintext)",
     "verify_full_with_untrusted_ca": "$(reason wrong-ca)",
-    "verify_full_with_mismatched_host": "$(reason wrong-host)"
+    "verify_full_with_mismatched_host": "$(reason wrong-host)",
+    "production_boot_with_require": "$(reason boot-require)",
+    "production_boot_with_verify_ca": "$(reason boot-verify-ca)"
+  },
+  "weaker_modes_observed": {
+    "require_with_untrusted_ca": "$require_untrusted",
+    "verify_ca_with_mismatched_host": "$verify_ca_wrong_host",
+    "verify_ca_with_mismatched_host_detail": "$(reason verify-ca-wrong-host)"
   },
   "expected": {
     "migrate_with_verify_full": "ok",
@@ -104,9 +151,14 @@ cat > "$EVIDENCE" <<EOF
     "plaintext_connection": "refused",
     "verify_full_with_untrusted_ca": "refused",
     "verify_full_with_mismatched_host": "refused",
-    "psql_session_reports_ssl": "t"
-  }
+    "psql_session_reports_ssl": "t",
+    "production_boot_with_require": "refused",
+    "production_boot_with_verify_ca": "refused",
+    "production_boot_with_verify_full": "accepted"
+  },
+  "notes": "weaker_modes_observed is informational, not asserted: require connecting to a server signed by an untrusted CA is the SR-03 weakness. With this driver build verify-ca also refuses a mismatched IP address (the hostname-skipping verifier does not recognize the newer rustls error), but that is incidental and version-dependent, so production accepts only verify-full for a non-local database. The boot cases use the unresolvable host db.invalid: verify-full passes the boot checks and then fails to connect; require and verify-ca are refused before any connection."
 }
 EOF
 cat "$EVIDENCE"
 [ "$verify_full $schema $plaintext $wrong_ca $wrong_host $ssl_in_use" = "ok ok refused refused refused t" ]
+[ "$boot_require $boot_verify_ca $boot_verify_full" = "refused refused accepted" ]

@@ -81,3 +81,54 @@ fn checks_and_exports_need_no_database_or_network() {
         );
     }
 }
+
+/// SR-03: production boot refuses a non-local database without
+/// `sslmode=verify-full` before it connects anywhere, so an unauthenticated
+/// server never sees the credentials. A connection attempt shows up as
+/// "connect to database" (the host does not resolve, or the sandbox denies it).
+#[test]
+fn production_refuses_weak_database_tls_before_connecting() {
+    for (mode, refused) in [
+        ("require", true),
+        ("verify-ca", true),
+        ("verify-full", false),
+    ] {
+        let mut command = if sandboxed() {
+            let mut c = Command::new(SANDBOX);
+            c.args(["-p", DENY_NETWORK, BIN]);
+            c
+        } else {
+            Command::new(BIN)
+        };
+        let out = command
+            .arg("serve")
+            .current_dir(empty_dir())
+            .env_clear()
+            .env("RUST_LOG", "off")
+            .env("TRESTLE_ENV", "production")
+            .env(
+                "DATABASE_URL",
+                format!("postgres://pilot@db.invalid/pilot?sslmode={mode}"),
+            )
+            .env("TRESTLE_PASSWORD_LOGIN", "true")
+            .env("TRESTLE_TRUST_PEER_ADDRESS", "true")
+            .env("TRESTLE_CURSOR_KEY", "c".repeat(32))
+            .env("TRESTLE_SESSION_KEY", "s".repeat(32))
+            .env("TRESTLE_PUBLIC_ORIGIN", "https://app.example.com")
+            .env("TRESTLE_BIND", "127.0.0.1:0")
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{mode}: {stderr}");
+        assert_eq!(
+            stderr.contains("must use sslmode=verify-full"),
+            refused,
+            "{mode}: {stderr}"
+        );
+        assert_eq!(
+            stderr.contains("connect to database"),
+            !refused,
+            "{mode}: {stderr}"
+        );
+    }
+}
