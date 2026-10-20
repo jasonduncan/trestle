@@ -1,0 +1,89 @@
+{
+  "drill": "edge",
+  "result": "passed",
+  "commit": "cc4dd30ebc7a0aafddb511a1934fd01af4b13251",
+  "working_tree_modified": false,
+  "caddy": "v2.11.7",
+  "machine": "Darwin arm64",
+  "caddyfile_substitutions": [
+    "15c15,17",
+    "< \tadmin localhost:2019",
+    "---",
+    "> \tadmin localhost:18544",
+    "> \thttp_port 18580",
+    "> \tskip_install_trust",
+    "30c32,33",
+    "< app.example.com {",
+    "---",
+    "> localhost:18543 {",
+    "> \ttls internal",
+    "50c53",
+    "< \t\treverse_proxy 10.0.0.11:8000 10.0.0.12:8000 {",
+    "---",
+    "> \t\treverse_proxy 127.0.0.1:18501 127.0.0.1:18502 {",
+    "80c83",
+    "< \t\troot * /srv/trestle/admin",
+    "---",
+    "> \t\troot * /private/tmp/claude-501/-Users-jason-PDLabsShare-Projects-trestle/49b05789-05cf-44b3-be6f-1df2b9ca7360/scratchpad/sr01/frontend/admin/dist",
+    "96c99",
+    "< \t\troot * /srv/trestle/product",
+    "---",
+    "> \t\troot * /private/tmp/claude-501/-Users-jason-PDLabsShare-Projects-trestle/49b05789-05cf-44b3-be6f-1df2b9ca7360/scratchpad/sr01/frontend/product/dist",
+    "102c105",
+    "< \t\troot * /srv/trestle/product",
+    "---",
+    "> \t\troot * /private/tmp/claude-501/-Users-jason-PDLabsShare-Projects-trestle/49b05789-05cf-44b3-be6f-1df2b9ca7360/scratchpad/sr01/frontend/product/dist"
+  ],
+  "uploads": {
+    "direct": {
+      "unrelated_while_stalled": 503,
+      "unrelated_after_api_deadline": 200,
+      "stalled_status": [
+        408
+      ],
+      "stalled_released_ms": [
+        3005,
+        3005
+      ],
+      "unrelated_after": 200,
+      "trickle_status": 408,
+      "trickle_released_ms": 3259
+    },
+    "edge": {
+      "unrelated_while_stalled": 503,
+      "unrelated_after_api_deadline": 200,
+      "stalled_status": [
+        408,
+        503
+      ],
+      "stalled_released_ms": [
+        15010,
+        15011
+      ],
+      "unrelated_after": 200,
+      "trickle_status": 408,
+      "trickle_released_ms": 15706
+    }
+  },
+  "checks": [
+    "two production-mode replicas start (password sign-in, X-Real-IP, body deadline 3000 ms)",
+    "deploy/Caddyfile validates and serves with only host, upstream and root substitutions",
+    "HTTPS over HTTP/2 with HSTS, CSP, nosniff, frame and referrer policy; no Server header",
+    "deep links get the SPA (no-cache); hashed assets immutable and compressed; a missing asset is 404",
+    "/admin redirects to /admin/; admin deep links and immutable admin assets",
+    "/healthz, /readyz, /metrics hidden, including through ../ and %2e%2e",
+    "unknown /api and /_meta paths are problem+json 404s, never the SPA",
+    "password sign-in via the edge: __Host- Secure HttpOnly cookie, foreign Origin refused, write needs CSRF",
+    "directly at a replica, stalled sign-in uploads hold capacity only until the 3000 ms deadline; a trickle cannot extend it",
+    "through the edge, API capacity returns at its deadline while Caddy holds the stalled client until read_body (15 s); trickles included",
+    "the edge refuses bodies over 1 MB (413) instead of buffering them",
+    "a stopped replica is skipped: 30 of 30 reads and the next write succeed; no write ran twice",
+    "the edge overwrites a spoofed X-Real-IP (75 of 250 rotated requests limited; 0 directly)"
+  ],
+  "not_covered": [
+    "ACME certificates and renewal",
+    "public DNS",
+    "client addresses through real NAT/CDN",
+    "firewalling of the Caddy admin API and the metrics listener"
+  ]
+}
