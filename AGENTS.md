@@ -26,10 +26,11 @@ The design doc filename keeps its original name on purpose (it is the v0.2 artif
 ## Current milestone
 M0–M5 are built (2026-09-26). The project owner approved the pilot on 2026-10-20 (the M5
 exit); approval is the owner's alone and is never self-granted. Sign-in defaults to password
-accounts (an OIDC provider is optional and only mock-tested). Still open: send through the
-real SMTP relay (Gmail), finish the external security review (§12.4, started 2026-10-20),
-validate the edge config (`deploy/Caddyfile`) on a real host, and publish the npm packages
-(`@trestle-framework/*`, after the review). Do not claim general
+accounts (an OIDC provider is optional and only mock-tested). Gmail SMTP sent a real
+`pilot mail test` on 2026-10-20. `deploy/Caddyfile` passes `make drill-edge` locally.
+Still open: fix the 2026-10-20 review findings (`docs/security-review.md`, SR-01–SR-07); the
+external review (§12.4) is a separate gate; run the edge on a real host (ACME, DNS, firewall);
+publish the npm packages (`@trestle-framework/*`). Do not claim general
 maturity or benchmark leadership. ADRs: 001–033 (015 reopens 009: jobs and outbox).
 
 ## Non-negotiables
@@ -151,7 +152,8 @@ maturity or benchmark leadership. ADRs: 001–033 (015 reopens 009: jobs and out
 - `make demo-accounts` (ports 18401/18420): invite by email (file backend), set password, change,
   reset, admin, lockout. `pilot account …` and `pilot mail test` are the operator commands.
 - Drills and measurements: `make drill-tls` (throwaway PostgreSQL on 55433), `make drill-restore`
-  (ports 18301/18302), `make load` (release builds; ports 18201/18202; ~12 minutes; do not run
+  (ports 18301/18302), `make drill-edge` (needs `caddy`; ports 18501–18512, 18543/18544/18580;
+  ~1 minute), `make load` (release builds; ports 18201/18202; ~12 minutes; do not run
   anything CPU-heavy alongside it).
 - `make lint`: `cargo fmt --check` + `clippy -D warnings`. Keep both clean.
 
