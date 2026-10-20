@@ -1,9 +1,11 @@
 # Admin and application views: local validation
 
 Implementation baseline: `a59936cb73263a4340f4ffbce5a3cf74548d0361` (0.5.1).
-The implementation is an uncommitted working-tree change. `source-manifest.json`
-identifies its changed source files; the baseline SHA alone does not identify
-the implementation. The original [handoff](../../design/Trestle_Admin_and_Application_Views_Engineering_Handoff.docx)
+The implementation was committed as `cb0d6e4`; `source-manifest.json` lists
+its changed source files. The logs here were captured from the working tree
+before that commit: `workspace-tests.log` predates the two `/_meta/v1/ui` system
+routes, and the registry route-count test it shows passing failed in CI until
+its expectation was updated. The original [handoff](../../design/Trestle_Admin_and_Application_Views_Engineering_Handoff.docx)
 has SHA-256 `a9df6a46c9bef288d24af266fa736e5638031cb614be69d76706ed50dd15bde0`.
 
 ## Evidence
