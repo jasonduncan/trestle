@@ -14,6 +14,14 @@ promise.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-20
+
+### Security
+- `rustls-webpki` 0.103.16 (RUSTSEC-2026-0382: certificate verification
+  could accept distrusted intermediates). It is used by every TLS client
+  here: PostgreSQL, SMTP and OIDC. The advisory appeared while 0.7.0 was
+  being tagged, so 0.7.0 was never published to crates.io; use 0.7.1.
+
 ## [0.7.0] - 2026-10-20
 
 Fixes for the 2026-10-20 security review (`docs/security-review.md`).
@@ -529,7 +537,8 @@ The first release.
   `auto`. Anything else needs `--approve <digest>`.
 - `serve` refuses to start on schema drift or a partly applied migration.
 
-[Unreleased]: https://github.com/jasonduncan/trestle/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/jasonduncan/trestle/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/jasonduncan/trestle/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/jasonduncan/trestle/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/jasonduncan/trestle/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/jasonduncan/trestle/compare/v0.5.0...v0.5.1
