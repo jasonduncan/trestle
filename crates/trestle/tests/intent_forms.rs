@@ -1,7 +1,8 @@
 //! ADR-026: generated forms for `trestle.toml` writes. `forms = true`
 //! publishes create, update and action forms whose widgets follow the field
 //! types, whose refs pick from the target's list by its label field, and
-//! whose descriptors name the renderer features they need. Offline.
+//! whose descriptors name the renderer features they need. Enum labels
+//! (ADR-035) travel in the schemas the select reads. Offline.
 
 use serde_json::{Value, json};
 
@@ -26,7 +27,7 @@ fields = [
   { id = "title",     type = "text", max = 100 },
   { id = "amount",    type = "decimal", precision = 10, scale = 2, label = "Value" },
   { id = "account",   type = "ref", to = "crm.account" },
-  { id = "stage",     type = "enum", values = ["open", "won"], default = "open" },
+  { id = "stage",     type = "enum", values = ["open", "won"], labels = { won = "Closed won" }, default = "open" },
   { id = "closed_at", type = "instant", optional = true },
   { id = "notes",     type = "text", optional = true },
 ]
@@ -111,6 +112,16 @@ fn create_update_and_action_forms_follow_the_field_types() {
         account,
         &json!({ "operation": "crm.account.list", "path": "/api/v1/accounts", "value": "id", "label": "name" })
     );
+    // The select shows the label and submits the value; the representation
+    // (what views read) carries the same labels.
+    for schema in [&create["input"]["schema"], &create["output"]["schema"]] {
+        let stage = &schema["properties"]["stage"];
+        assert_eq!(stage["enum"], json!(["open", "won"]));
+        assert_eq!(
+            stage["x-trestle-enum-labels"],
+            json!({ "won": "Closed won" })
+        );
+    }
     let needed = features(create);
     for f in ["forms.relation@1", "forms.decimal@1", "forms.temporal@1"] {
         assert!(needed.iter().any(|n| n == f), "{f} in {needed:?}");

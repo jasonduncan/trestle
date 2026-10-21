@@ -1,6 +1,7 @@
 //! ADR-023: `trestle.toml` fields of type decimal, date, instant and
 //! duration, end to end: columns, contracts, and a CRUD server whose JSON
-//! keeps every value in its contract form. Needs PostgreSQL.
+//! keeps every value in its contract form. ADR-035: enum labels are
+//! presentation only. Needs PostgreSQL.
 
 use std::sync::Arc;
 
@@ -37,6 +38,7 @@ fields = [
   { id = "placed_at", type = "instant", optional = true },
   { id = "length",    type = "duration", default = "PT30M" },
   { id = "total",     type = "money", precision = 12, scale = 2, currencies = ["EUR", "USD"], optional = true },
+  { id = "status",    type = "enum", values = ["new", "contract"], labels = { contract = "Agreement" }, default = "new" },
 ]
 
 [[endpoints]]
@@ -44,7 +46,7 @@ model = "orders.order"
 crud = ["list", "get", "create", "update"]
 read = "orders.read"
 write = "orders.write"
-filter = ["due"]
+filter = ["due", "status"]
 "#;
 
 const TOKEN: &str = "member-token";
@@ -53,6 +55,7 @@ const ACTOR: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 struct Server {
     app: Router,
     db: TestDatabase,
+    pool: sqlx::PgPool,
     tenant: uuid::Uuid,
 }
 
@@ -101,8 +104,17 @@ impl Server {
         .await
         .unwrap();
         let identity = Arc::new(DevTokenIdentity::parse(&format!("{TOKEN}={ACTOR}")).unwrap());
-        let app = trestle::router_with(&registry, State::new(pool, identity), Default::default());
-        Server { app, db, tenant }
+        let app = trestle::router_with(
+            &registry,
+            State::new(pool.clone(), identity),
+            Default::default(),
+        );
+        Server {
+            app,
+            db,
+            pool,
+            tenant,
+        }
     }
 
     async fn call(
@@ -319,7 +331,130 @@ async fn crud_keeps_every_value_in_its_contract_form() {
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(refused["errors"][0]["code"], "decimal_digits");
+
+    // A labelled enum stores, returns and filters by its value; the label
+    // is not a value (ADR-035).
+    let (status, signed, _) = server
+        .call(
+            "POST",
+            "/api/v1/orders",
+            Some(json!({ "title": "Signed", "amount": "1", "status": "contract" })),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{signed}");
+    assert_eq!(signed["status"], "contract");
+    let stored: String = sqlx::query_scalar("SELECT status FROM orders WHERE id = $1")
+        .bind(uuid::Uuid::parse_str(signed["id"].as_str().unwrap()).unwrap())
+        .fetch_one(&server.pool)
+        .await
+        .unwrap();
+    assert_eq!(stored, "contract");
+    let (_, list, _) = server
+        .call("GET", "/api/v1/orders?status=contract", None, None)
+        .await;
+    assert_eq!(list["items"].as_array().map(Vec::len), Some(1), "{list}");
+    let (status, refused, _) = server
+        .call(
+            "POST",
+            "/api/v1/orders",
+            Some(json!({ "title": "x", "amount": "1", "status": "Agreement" })),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    assert_eq!(refused["errors"][0]["pointer"], "/status");
+    assert_eq!(refused["errors"][0]["code"], "choice");
     server.db.drop().await;
+}
+
+/// Labels reach every contract the browser reads, and never the schema:
+/// changing, adding or removing them plans no migration; changing the
+/// values still does (ADR-035).
+#[test]
+fn enum_labels_are_presentation_only() {
+    let registry = |text: &str| {
+        trestle::project()
+            .intent_str("trestle.toml", text)
+            .assemble()
+            .unwrap()
+    };
+    let labelled = registry(ORDERS);
+    for (op, contract) in [
+        ("orders.order.create", "input"),
+        ("orders.order.list", "input"),
+        ("orders.order.get", "output"),
+    ] {
+        let doc = labelled.inspect_operation(op).unwrap();
+        let status = &doc[contract]["schema"]["properties"]["status"];
+        assert_eq!(status["enum"], json!(["new", "contract"]), "{op}");
+        assert_eq!(
+            status["x-trestle-enum-labels"],
+            json!({ "contract": "Agreement" }),
+            "{op}"
+        );
+    }
+
+    let line = r#"labels = { contract = "Agreement" }, "#;
+    for changed in [
+        ORDERS.replace(line, ""),
+        ORDERS.replace(
+            line,
+            r#"labels = { contract = "Signed", new = "New lead" }, "#,
+        ),
+    ] {
+        let other = registry(&changed);
+        assert_eq!(other.desired_schema(), labelled.desired_schema());
+        let plan = diff(
+            labelled.desired_schema(),
+            other.desired_schema(),
+            &PlanOptions::default(),
+        );
+        assert!(plan.is_empty(), "{plan:?}");
+    }
+    let unlabelled = registry(&ORDERS.replace(line, ""));
+    let status = &unlabelled.inspect_operation("orders.order.create").unwrap()["input"]["schema"]["properties"]
+        ["status"];
+    assert_eq!(
+        status,
+        &json!({ "type": "string", "enum": ["new", "contract"] }),
+        "no labels, no keyword"
+    );
+
+    let more =
+        registry(&ORDERS.replace(r#"["new", "contract"]"#, r#"["new", "contract", "lost"]"#));
+    let plan = diff(
+        labelled.desired_schema(),
+        more.desired_schema(),
+        &PlanOptions::default(),
+    );
+    assert!(!plan.is_empty(), "values are schema");
+}
+
+#[test]
+fn enum_labels_are_checked() {
+    let problems = |field: &str| {
+        let text = ORDERS.replace(
+            r#"  { id = "title",     type = "text", max = 100 },"#,
+            &format!("  {field},\n  {{ id = \"title\", type = \"text\", max = 100 }},"),
+        );
+        trestle::intent::parse("trestle.toml", &text)
+            .err()
+            .map(|e| e.problems)
+            .unwrap_or_default()
+    };
+    assert_eq!(
+        problems(r#"{ id = "x", type = "enum", values = ["a"], labels = { b = "B" } }"#),
+        [r#"trestle.toml:15: labels.b: "b" is not one of the field's values"#]
+    );
+    assert_eq!(
+        problems(r#"{ id = "x", type = "enum", values = ["a"], labels = { a = "" } }"#),
+        ["trestle.toml:15: labels.a must be 1 to 200 characters"]
+    );
+    assert_eq!(
+        problems(r#"{ id = "x", type = "text", labels = { a = "A" } }"#),
+        ["trestle.toml:15: labels = {...} is for enum fields"]
+    );
 }
 
 #[test]
@@ -330,7 +465,7 @@ fn money_fields_are_checked() {
                 r#"  { id = "title",     type = "text", max = 100 },"#,
                 &format!("  {field},\n  {{ id = \"title\", type = \"text\", max = 100 }},"),
             )
-            .replace(r#"filter = ["due"]"#, endpoint);
+            .replace(r#"filter = ["due", "status"]"#, endpoint);
         trestle::intent::parse("trestle.toml", &text)
             .err()
             .map(|e| e.problems)

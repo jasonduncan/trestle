@@ -77,6 +77,9 @@ export interface FieldSchema {
   minimum?: number;
   maximum?: number;
   choices?: string[];
+  /** Display labels for some `choices` (ADR-035); a choice without one shows
+   * as itself. Presentation only: the value sent stays the choice. */
+  labels?: Record<string, string>;
   /** Portable string formats (ADR-022 adds decimal, date, date-time, duration). */
   format?: "uuid" | "digits" | "decimal" | "date" | "date-time" | "duration";
   /** For `decimal` and `money`: total and fractional digits. For money,
@@ -192,6 +195,17 @@ function onlyKeys(value: Json, allowed: string[], what: string): void {
 /** `trestle_protocol::scalar::CURRENCY_PATTERN`. */
 export const CURRENCY_PATTERN = "^[A-Z]{3}$";
 
+/** `trestle_protocol::contract::ENUM_LABELS_KEYWORD`: value → label (ADR-035). */
+export const ENUM_LABELS_KEYWORD = "x-trestle-enum-labels";
+/** `trestle_protocol::contract::MAX_LABEL_CHARS`. */
+const MAX_LABEL_CHARS = 200;
+
+/** What people see for `value` of `field`: its label, or the value itself. */
+export function choiceLabel(field: FieldSchema | undefined, value: string): string {
+  const labels = field?.labels;
+  return labels !== undefined && Object.hasOwn(labels, value) ? labels[value]! : value;
+}
+
 /**
  * Money is the one object a portable field may be (ADR-027), and only in
  * the exact shape the server writes: `{amount: decimal, currency: code}`.
@@ -285,7 +299,7 @@ function decodeField(name: string, raw: unknown, required: boolean): FieldSchema
   if (type === "object") return decodeMoney(name, s, required, nullable);
   onlyKeys(
     s,
-    ["type", "minLength", "maxLength", "minimum", "maximum", "enum", "format", "pattern", "description"],
+    ["type", "minLength", "maxLength", "minimum", "maximum", "enum", "format", "pattern", "description", ENUM_LABELS_KEYWORD],
     `schema for ${name}`,
   );
   if (type !== "string" && type !== "integer" && type !== "boolean") {
@@ -300,6 +314,18 @@ function decodeField(name: string, raw: unknown, required: boolean): FieldSchema
   if (s.enum !== undefined) {
     if (!Array.isArray(s.enum)) fail(`${name}.enum must be an array`);
     field.choices = s.enum.filter((v) => v !== null).map((v) => string(v, `${name}.enum value`));
+  }
+  if (s[ENUM_LABELS_KEYWORD] !== undefined) {
+    const raw = object(s[ENUM_LABELS_KEYWORD], `${name} labels`);
+    // A null prototype, so a value named like `__proto__` is just a key.
+    const labels: Record<string, string> = Object.create(null);
+    for (const [value, label] of Object.entries(raw)) {
+      const text = string(label, `${name} label`);
+      if (!field.choices?.includes(value)) fail(`${name}: label for ${JSON.stringify(value)}, which is not a choice`);
+      if (text.length === 0 || [...text].length > MAX_LABEL_CHARS) fail(`${name}: label length`);
+      labels[value] = text;
+    }
+    field.labels = labels;
   }
   if (s.format !== undefined) {
     if (s.format !== "uuid" && s.format !== "date" && s.format !== "date-time" && s.format !== "duration") {

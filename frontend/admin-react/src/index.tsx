@@ -1,6 +1,6 @@
 import { createContext, createElement, useContext, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { OperationForm, defaultWidgets, type WidgetRegistry } from "@trestle-framework/interaction-react";
-import { at, currentAvailability, decodeView, decodeViewManifest, etagVersion, fillPath, formatValue, object, operationRuntime, routeInput, validateInstance,
+import { at, choiceLabel, currentAvailability, decodeView, decodeViewManifest, etagVersion, fieldAt, fillPath, formatValue, object, operationRuntime, routeInput, validateInstance,
   type Descriptor, type OperationController, type Transport, type View, type ViewAction, type ViewEntry, type ViewSection } from "@trestle-framework/client";
 
 const Widgets = createContext<WidgetRegistry>(defaultWidgets);
@@ -153,16 +153,16 @@ export function CollectionView({ view, transport, navigate }: { view: View; tran
       const field = view.source.invocation.input.schema.fields.find((f) => f.name === name)!;
       const change = (value: string) => { setFilters((before) => ({ ...before, [name]: value })); setCursors([]); };
       return <label key={name}>{name === "q" ? "Search" : name.replace(/_/g, " ")}{field.choices ? <select value={filters[name] ?? ""} onChange={(e) => change(e.target.value)}>
-        <option value="">Any</option>{field.choices.map((v) => <option key={v}>{v}</option>)}
+        <option value="">Any</option>{field.choices.map((v) => <option key={v} value={v}>{choiceLabel(field, v)}</option>)}
       </select> : <input type={field.kind === "integer" ? "number" : "search"} min={field.minimum} max={field.maximum} value={filters[name] ?? ""} onChange={(e) => change(e.target.value)} />}</label>;
     })}</div>
     {data.loading ? <p role="status">Loading records…</p> : data.error ? <p role="alert">{data.error}</p> : <>
       {!data.value?.rows.length ? <div className="trestle-empty"><h2>No records yet</h2><p>Records will appear here when they are available.</p></div> :
       <div className="trestle-table-wrap"><table><thead><tr>{view.columns.map((col) => <th scope="col" key={col.id}>{col.label}</th>)}{view.recordView && <th scope="col">Record</th>}</tr></thead>
         <tbody>{data.value.rows.map((row) => <tr key={String(at(row, view.source.identityPointer))}>
-          {view.columns.map((col) => <td key={col.id}>{formatValue(at(row, col.pointer))}</td>)}
+          {view.columns.map((col) => <td key={col.id}>{formatValue(at(row, col.pointer), fieldAt(view.source.item, col.pointer))}</td>)}
           {view.recordView && <td><button className="trestle-link" onClick={() => navigate(view.recordView!, Object.fromEntries(Object.entries(view.recordInput).map(([key, ptr]) => [key, at(row, ptr)])))}>
-            Open {formatValue(at(row, view.labelPointer))}</button></td>}
+            Open {formatValue(at(row, view.labelPointer), fieldAt(view.source.item, view.labelPointer))}</button></td>}
         </tr>)}</tbody></table></div>}
       <div className="trestle-pagination"><button disabled={!cursors.length} onClick={() => setCursors((history) => history.slice(0, -1))}>Previous</button>
         <span>Page {cursors.length + 1}</span><button disabled={typeof data.value?.next !== "string"} onClick={() => setCursors((history) => [...history, String(data.value?.next)])}>Next</button></div>
@@ -194,7 +194,7 @@ function RelatedSource({ section, record, transport, components }: { section: Vi
   const rows = section.source.itemsPointer ? at(data.value, section.source.itemsPointer) : [data.value];
   if (!Array.isArray(rows) || rows.length > 100) return <p role="alert">Section response exceeds its limit.</p>;
   return <table><thead><tr>{section.columns.map((c) => <th scope="col" key={c.id}>{c.label}</th>)}</tr></thead><tbody>
-    {rows.map((row) => <tr key={String(at(row, section.source.identityPointer))}>{section.columns.map((c) => <td key={c.id}>{formatValue(at(row, c.pointer))}</td>)}</tr>)}
+    {rows.map((row) => <tr key={String(at(row, section.source.identityPointer))}>{section.columns.map((c) => <td key={c.id}>{formatValue(at(row, c.pointer), fieldAt(section.source.item, c.pointer))}</td>)}</tr>)}
   </tbody></table>;
 }
 
@@ -235,9 +235,9 @@ export function RecordView({ view, input, transport, sections = {}, components }
   if (data.loading) return <p role="status">Loading record…</p>;
   if (!data.value) return <p role="alert">{data.error}</p>;
   const { record, etag } = data.value;
-  return <section><div className="trestle-toolbar"><div><p className="trestle-eyebrow">{view.title}</p><h1>{formatValue(at(record, view.labelPointer))}</h1></div><button onClick={data.refresh}>Refresh record</button></div>
+  return <section><div className="trestle-toolbar"><div><p className="trestle-eyebrow">{view.title}</p><h1>{formatValue(at(record, view.labelPointer), fieldAt(view.source.item, view.labelPointer))}</h1></div><button onClick={data.refresh}>Refresh record</button></div>
     <RecordActions view={view} record={record} etag={etag} transport={transport} onSuccess={data.refresh} />
-    <dl className="trestle-record">{view.columns.map((col) => <div key={col.id}><dt>{col.label}</dt><dd>{formatValue(at(record, col.pointer))}</dd></div>)}</dl>
+    <dl className="trestle-record">{view.columns.map((col) => <div key={col.id}><dt>{col.label}</dt><dd>{formatValue(at(record, col.pointer), fieldAt(view.source.item, col.pointer))}</dd></div>)}</dl>
     {sections[view.viewId] && createElement(sections[view.viewId]!, { view, record, transport })}
     {view.sections.map((section) => <RelatedCollection key={section.id} section={section} record={record} transport={transport} components={components} />)}
   </section>;

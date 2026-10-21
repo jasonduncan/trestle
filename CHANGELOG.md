@@ -14,6 +14,22 @@ promise.
 
 ## [Unreleased]
 
+### Added
+- Enum fields can label their values for people (ADR-035):
+  `labels = { contract = "Agreement" }` in `trestle.toml`,
+  `FieldDoc.labels`, or `Field::enumeration(..).labels(&[..])`. The API,
+  the column and filters keep the stored value; generated forms, admin and
+  application views show the label. Labels are presentation only: changing
+  them never plans a migration. JSON Schema and OpenAPI carry them as an
+  `x-trestle-enum-labels` annotation beside `enum`. Fields without labels
+  export exactly as before.
+
+### Changed
+- `FieldType::Enum` has a `labels` member, so a pattern
+  `FieldType::Enum { values }` needs `..`. `FieldDoc` has a `labels` field.
+- The browser packages decode `x-trestle-enum-labels`. Renderers from
+  0.7.x refuse a schema that uses it.
+
 ### Security
 - The design's external-review gate (§12.4) is closed: the project owner
   accepted the 2026-10-20 review (`docs/security-review.md`), with its

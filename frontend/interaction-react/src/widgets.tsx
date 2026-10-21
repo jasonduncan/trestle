@@ -5,7 +5,7 @@ import { validateInstance } from "./validate";
 
 import { useEffect, useState, type ReactNode } from "react";
 
-import type { FieldSchema, PresentedField } from "./protocol";
+import { choiceLabel, type FieldSchema, type PresentedField } from "./protocol";
 import type { Transport } from "./transport";
 
 export interface WidgetProps {
@@ -115,7 +115,7 @@ const select: Widget = {
       <option value="">Choose…</option>
       {(props.field.choices ?? []).map((choice) => (
         <option key={choice} value={choice}>
-          {choice}
+          {choiceLabel(props.field, choice)}
         </option>
       ))}
     </select>
