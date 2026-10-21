@@ -175,6 +175,9 @@ struct ModelSection {
     /// The field that names a row in relation pickers (ADR-026).
     #[serde(default)]
     label: Option<String>,
+    /// Write hooks that run on every write to the model (ADR-039).
+    #[serde(default)]
+    hooks: BTreeMap<String, Spanned<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -421,6 +424,9 @@ pub struct ModelSpec {
     pub unique: Vec<UniqueSpec>,
     /// The field relation pickers show for a row of this model.
     pub label: Option<String>,
+    /// Write hook point (`before_write`, `after_write`) → its Rust name
+    /// (ADR-039). They run on every write path to the model.
+    pub hooks: BTreeMap<String, Named>,
 }
 
 /// `unique = [["name"]]` on a model.
@@ -467,6 +473,10 @@ impl Crud {
         matches!(self, Crud::Create | Crud::Update | Crud::Delete)
     }
 }
+
+/// Write hook points on a model (ADR-039): they run inside the write's
+/// transaction on every write to it, whichever path makes the write.
+pub const WRITE_HOOKS: &[&str] = &["before_write", "after_write"];
 
 /// Hook points on CRUD endpoints. All run inside the operation's
 /// transaction.
@@ -852,6 +862,31 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
                 .find(|f| f.ty == FieldType::Text)
                 .map(|f| f.id.clone()),
         };
+        let mut hooks = BTreeMap::new();
+        for (point, name) in &m.hooks {
+            if !WRITE_HOOKS.contains(&point.as_str()) {
+                problems.push(format!(
+                    "{}: unknown write hook {point:?} on {id}; use {}",
+                    lines.at(name),
+                    WRITE_HOOKS.join(" or ")
+                ));
+                continue;
+            }
+            if name.get_ref().is_empty() {
+                problems.push(format!(
+                    "{}: {point} hook of {id} needs a name",
+                    lines.at(name)
+                ));
+                continue;
+            }
+            hooks.insert(
+                point.clone(),
+                Named {
+                    name: name.get_ref().clone(),
+                    line: lines.line(name.span()),
+                },
+            );
+        }
         models.push(Arc::new(ModelSpec {
             id: id.clone(),
             app: app.to_owned(),
@@ -859,6 +894,7 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
             fields,
             unique,
             label,
+            hooks,
         }));
     }
     // References resolve once every model is known.

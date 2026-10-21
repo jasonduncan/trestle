@@ -4,7 +4,8 @@
 //! fields it `accept`s, and returns the row. ADR-037: a field with
 //! `writable = "actions"` is written by actions only. ADR-036: `require`,
 //! `check` and `exists` guard an action, and `repeat = "unchanged"` makes
-//! a repeated request a no-op. Needs PostgreSQL.
+//! a repeated request a no-op. ADR-039: a model's write hooks run on every
+//! write path to it. Needs PostgreSQL.
 
 use std::sync::Arc;
 
@@ -1556,5 +1557,508 @@ async fn idempotent_endpoints_replay_after_reauthorizing() {
     assert_eq!(demoted.status, StatusCode::FORBIDDEN, "{}", demoted.json());
     assert!(!demoted.replayed);
     assert_eq!(demoted.json()["code"], "permission_denied");
+    server.db.drop().await;
+}
+
+/// ADR-039: entering `won` needs an unconsumed approval of the deal's
+/// organization, whichever path moves the deal (the action, CRUD update or
+/// a handler's `Ctx::update`), and a win marks the organization a
+/// customer. `stage` is deliberately not managed: the rule lives in the
+/// model's write hooks, which no write path skips.
+const HOOKED: &str = r#"
+[project]
+name = "crm"
+
+[tenancy]
+model = "workspace"
+
+[roles]
+member = ["crm.read", "crm.write"]
+viewer = ["crm.read"]
+
+[[models]]
+id = "crm.organization"
+fields = [
+  { id = "name",     type = "text", max = 100 },
+  { id = "customer", type = "bool", default = false },
+  { id = "writes",   type = "int", default = 0 },
+  { id = "last",     type = "text", optional = true },
+]
+
+[[models]]
+id = "crm.approval"
+fields = [
+  { id = "organization", type = "ref", to = "crm.organization" },
+  { id = "consumed",     type = "bool", default = false },
+]
+
+[[models]]
+id = "crm.deal"
+fields = [
+  { id = "title",        type = "text", max = 100 },
+  { id = "organization", type = "ref", to = "crm.organization" },
+  { id = "stage",        type = "enum", values = ["open", "won"], default = "open" },
+  { id = "note",         type = "text", optional = true },
+]
+
+[[endpoints]]
+model = "crm.organization"
+crud = ["get", "create"]
+read = "crm.read"
+write = "crm.write"
+
+[[endpoints]]
+model = "crm.approval"
+crud = ["get", "create"]
+read = "crm.read"
+write = "crm.write"
+
+[[endpoints]]
+model = "crm.deal"
+crud = ["get", "create", "update"]
+read = "crm.read"
+write = "crm.write"
+hooks = { before_update = "crm::mark", after_update = "crm::late" }
+
+[[endpoints]]
+id = "crm.win"
+model = "crm.deal"
+path = "POST /api/v1/deals/{id}/win"
+permission = "crm.write"
+set = { stage = "won" }
+when = { stage = ["open"] }
+
+[[endpoints]]
+id = "crm.close"
+model = "crm.deal"
+path = "POST /api/v1/deals/{id}/close"
+permission = "crm.write"
+handler = "crm::close"
+input = [{ id = "expected", type = "int", optional = true }]
+"#;
+
+/// `HOOKED` built at run time (ADR-030), with the model write hooks added
+/// to the document in code and registered like any hook.
+fn hooked() -> trestle::Project {
+    use std::collections::BTreeMap;
+    let mut doc = trestle::intent::IntentDoc::from_toml("trestle.toml", HOOKED).unwrap();
+    for model in &mut doc.models {
+        model.hooks = match model.id.as_str() {
+            "crm.deal" => BTreeMap::from([
+                ("before_write".into(), "crm::deal_rules".into()),
+                ("after_write".into(), "crm::deal_effects".into()),
+            ]),
+            "crm.organization" => BTreeMap::from([("after_write".into(), "crm::count".into())]),
+            _ => BTreeMap::new(),
+        };
+    }
+    trestle::project()
+        .intent_doc("crm", doc)
+        .handler("crm::close", close)
+        .hook("crm::mark", mark)
+        .hook("crm::late", late)
+        .write_hook("crm::deal_rules", deal_rules)
+        .write_hook("crm::deal_effects", deal_effects)
+        .write_hook("crm::count", count)
+}
+
+/// Whether the write moves a deal into `won`.
+fn entering_won(write: &trestle::intent::Write) -> Result<bool> {
+    let stage = |row: Option<&Row>| -> Result<Option<String>> {
+        row.map(|r| r.get::<Option<String>>("stage"))
+            .transpose()
+            .map(Option::flatten)
+    };
+    Ok(stage(write.row())?.as_deref() == Some("won")
+        && stage(write.old())?.as_deref() != Some("won"))
+}
+
+/// `before_write` on deal: consumes an approval of the organization, locked
+/// with `get_for_update` and written with `update_versioned`; and shows it
+/// runs after the endpoint's `before_update`, by extending its note.
+async fn deal_rules(ctx: Ctx, mut write: trestle::intent::Write) -> Result<trestle::intent::Write> {
+    let Some(new) = write.row() else {
+        return Ok(write);
+    };
+    if new.get::<Option<String>>("note")?.as_deref() == Some("endpoint") {
+        write.set("note", "endpoint, model")?;
+    }
+    if !entering_won(&write)? {
+        return Ok(write);
+    }
+    let refused = || {
+        Problem::conflict("approval_required")
+            .with_detail("Winning a deal needs an approval of its organization.")
+    };
+    let org: Id = write.row().unwrap().get("organization")?;
+    let open = ctx
+        .list(
+            "crm.approval",
+            json!({ "organization": org, "consumed": false }),
+        )
+        .await?;
+    let Some(approval) = open.first().and_then(Row::id) else {
+        return Err(refused());
+    };
+    // Another win may have consumed it since the list: the lock waits for
+    // that one to commit, and then shows the row as it is.
+    let locked = ctx.get_for_update("crm.approval", approval).await?;
+    if locked.get::<bool>("consumed")? {
+        return Err(refused());
+    }
+    ctx.update_versioned(
+        "crm.approval",
+        approval,
+        locked.get("version")?,
+        json!({ "consumed": true }),
+    )
+    .await?;
+    Ok(write)
+}
+
+/// `after_write` on deal: a win makes the organization a customer, in the
+/// same transaction.
+async fn deal_effects(ctx: Ctx, write: trestle::intent::Write) -> Result<trestle::intent::Write> {
+    if entering_won(&write)? {
+        let org: Id = write.row().unwrap().get("organization")?;
+        ctx.update("crm.organization", org, json!({ "customer": true }))
+            .await?;
+    }
+    Ok(write)
+}
+
+/// `after_write` on organization: counts writes by writing the organization
+/// itself. Without the recursion rule this would never end.
+async fn count(ctx: Ctx, write: trestle::intent::Write) -> Result<trestle::intent::Write> {
+    if let Some(new) = write.row() {
+        let writes: i64 = new.get("writes")?;
+        ctx.update(
+            "crm.organization",
+            new.id().unwrap(),
+            json!({ "writes": writes + 1, "last": write.operation() }),
+        )
+        .await?;
+    }
+    Ok(write)
+}
+
+/// The endpoint's `before_update`: marks a deal titled "Order".
+async fn mark(_ctx: Ctx, mut row: Row) -> Result<Row> {
+    if row.get::<String>("title")? == "Order" {
+        row.set("note", "endpoint")?;
+    }
+    Ok(row)
+}
+
+/// The endpoint's `after_update`: fails a deal titled "Fail late", after
+/// the model's `after_write` already made its organization a customer.
+async fn late(ctx: Ctx, row: Row) -> Result<Row> {
+    if row.get::<String>("title")? == "Fail late" {
+        let org = ctx
+            .get("crm.organization", row.get("organization")?)
+            .await?;
+        return Err(if org.get::<bool>("customer")? {
+            Problem::conflict("late_failure")
+        } else {
+            Problem::conflict("after_write_did_not_run_first")
+        });
+    }
+    Ok(row)
+}
+
+/// A handler that wins a deal through `Ctx`: `update_versioned` when the
+/// input names a version, `update` otherwise.
+async fn close(ctx: Ctx, input: Input) -> Result<Row> {
+    let id = input.id()?;
+    let stage = json!({ "stage": "won" });
+    match input.get::<Option<i64>>("expected")? {
+        Some(version) => ctx.update_versioned("crm.deal", id, version, stage).await,
+        None => ctx.update("crm.deal", id, stage).await,
+    }
+}
+
+impl Server {
+    /// Creates an organization and returns its ID.
+    async fn organization(&self, name: &str) -> String {
+        self.create("organizations", json!({ "name": name })).await
+    }
+
+    /// A deal of `org`, with its ETag.
+    async fn hooked_deal(&self, org: &str, title: &str) -> (String, String) {
+        let (status, deal, etag) = self
+            .post(
+                "/api/v1/deals",
+                json!({ "title": title, "organization": org }),
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::CREATED, "{deal}");
+        (deal["id"].as_str().unwrap().to_owned(), etag.unwrap())
+    }
+
+    async fn row(&self, table: &str, id: &str) -> Value {
+        let (status, row, _) = self
+            .send("GET", &format!("/api/v1/{table}/{id}"), MEMBER, None, None)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{row}");
+        row
+    }
+}
+
+#[test]
+fn write_hooks_are_checked_when_the_file_is_read_and_linked() {
+    let text = HOOKED.replace(
+        "id = \"crm.deal\"\n",
+        "id = \"crm.deal\"\nhooks = { before_write = \"crm::rules\" }\n",
+    );
+    assert_ne!(text, HOOKED);
+    trestle::intent::parse("trestle.toml", &text).unwrap();
+    let problems = |text: &str| match trestle::intent::parse("trestle.toml", text) {
+        Ok(_) => panic!("parsed:\n{text}"),
+        Err(e) => e.problems.join("\n"),
+    };
+    let unknown = problems(&text.replace("before_write", "before_save"));
+    assert!(
+        unknown.contains(
+            r#"unknown write hook "before_save" on crm.deal; use before_write or after_write"#
+        ),
+        "{unknown}"
+    );
+    let typed = problems(&text.replace(r#""crm::rules""#, "1"));
+    assert!(typed.contains("trestle.toml:"), "{typed}");
+
+    // Linking: every named write hook is registered, and every registered
+    // one is named. Endpoint hooks and write hooks are separate.
+    let refused = |project: trestle::Project| match project.assemble() {
+        Ok(_) => panic!("assembled"),
+        Err(e) => e.issues.join("\n"),
+    };
+    let unregistered = refused(
+        trestle::project()
+            .intent_str("trestle.toml", &text)
+            .handler("crm::close", close)
+            .hook("crm::mark", mark)
+            .hook("crm::late", late)
+            .hook("crm::rules", mark),
+    );
+    assert!(
+        unregistered.contains(
+            r#"before_write hook of model crm.deal names "crm::rules", which is not registered; add .write_hook("crm::rules", rules)"#
+        ),
+        "{unregistered}"
+    );
+    let stray = refused(hooked().write_hook("crm::stray", count));
+    assert!(
+        stray.contains(r#"write hook "crm::stray" is registered but no model in crm names it"#),
+        "{stray}"
+    );
+}
+
+#[tokio::test]
+async fn write_hooks_hold_on_every_write_path_in_its_transaction() {
+    let server = Server::start_with(hooked()).await;
+    // A hooked write declares no effects, like an endpoint hook's; an
+    // unhooked model's writes still do (ADR-018).
+    for op in ["crm.win", "crm.deal.update", "crm.organization.create"] {
+        let info = server.registry.inspect_operation(op).unwrap();
+        assert_eq!(info["effects"], Value::Null, "{op}");
+    }
+    let approval = server
+        .registry
+        .inspect_operation("crm.approval.create")
+        .unwrap();
+    assert_eq!(approval["effects"]["writes"], json!(["crm.approval"]));
+
+    // The organization's after_write writes the organization itself, once:
+    // a model's hooks don't re-enter themselves.
+    let acme = server.organization("Acme").await;
+    let org = server.row("organizations", &acme).await;
+    assert_eq!(
+        (&org["writes"], &org["last"], &org["version"]),
+        (&json!(1), &json!("crm.organization.create"), &json!(2)),
+        "{org}"
+    );
+
+    // Without an approval, every path is refused, and nothing changes.
+    let (deal, etag) = server.hooked_deal(&acme, "One").await;
+    let win = format!("/api/v1/deals/{deal}/win");
+    let refusals = [
+        server.post(&win, json!({}), Some(&etag)).await,
+        server
+            .send(
+                "PATCH",
+                &format!("/api/v1/deals/{deal}"),
+                MEMBER,
+                Some(json!({ "stage": "won" })),
+                Some(&etag),
+            )
+            .await,
+        server
+            .post(&format!("/api/v1/deals/{deal}/close"), json!({}), None)
+            .await,
+    ];
+    for (path, (status, problem, _)) in ["action", "CRUD update", "handler"].iter().zip(refusals) {
+        assert_eq!(status, StatusCode::CONFLICT, "{path}: {problem}");
+        assert_eq!(problem["code"], "approval_required", "{path}");
+    }
+    let unchanged = server.row("deals", &deal).await;
+    assert_eq!(
+        (&unchanged["stage"], &unchanged["version"]),
+        (&json!("open"), &json!(1))
+    );
+
+    // The action consumes the approval, and the deal's after_write makes
+    // the organization a customer: a nested Ctx write, which runs the
+    // organization's hooks too.
+    let first = server
+        .create("approvals", json!({ "organization": acme }))
+        .await;
+    let (status, won, _) = server.post(&win, json!({}), Some(&etag)).await;
+    assert_eq!(status, StatusCode::OK, "{won}");
+    assert_eq!(won["stage"], "won");
+    assert_eq!(server.row("approvals", &first).await["consumed"], true);
+    let org = server.row("organizations", &acme).await;
+    assert_eq!(
+        (&org["customer"], &org["writes"], &org["last"]),
+        (&json!(true), &json!(2), &json!("ctx")),
+        "{org}"
+    );
+
+    // CRUD update: a failure after the hooks (the endpoint's after_update,
+    // which sees the organization already a customer) rolls back the
+    // approval, the deal and the organization together.
+    let beta = server.organization("Beta").await;
+    let second = server
+        .create("approvals", json!({ "organization": beta }))
+        .await;
+    let (deal, etag) = server.hooked_deal(&beta, "Two").await;
+    let (status, problem, _) = server
+        .send(
+            "PATCH",
+            &format!("/api/v1/deals/{deal}"),
+            MEMBER,
+            Some(json!({ "stage": "won", "title": "Fail late" })),
+            Some(&etag),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{problem}");
+    assert_eq!(problem["code"], "late_failure");
+    assert_eq!(server.row("approvals", &second).await["consumed"], false);
+    let org = server.row("organizations", &beta).await;
+    assert_eq!(
+        (&org["customer"], &org["writes"]),
+        (&json!(false), &json!(1))
+    );
+    let deal_now = server.row("deals", &deal).await;
+    assert_eq!(
+        (&deal_now["stage"], &deal_now["title"], &deal_now["version"]),
+        (&json!("open"), &json!("Two"), &json!(1))
+    );
+    // The same update without the late failure: the endpoint's
+    // before_update ran before the model's before_write.
+    let (status, won, _) = server
+        .send(
+            "PATCH",
+            &format!("/api/v1/deals/{deal}"),
+            MEMBER,
+            Some(json!({ "stage": "won", "title": "Order" })),
+            Some(&etag),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{won}");
+    assert_eq!(
+        (&won["stage"], &won["note"]),
+        (&json!("won"), &json!("endpoint, model"))
+    );
+    assert_eq!(server.row("approvals", &second).await["consumed"], true);
+    assert_eq!(server.row("organizations", &beta).await["customer"], true);
+
+    // A handler's Ctx writes run the hooks too. A stale version in
+    // update_versioned is the 412 of a stale If-Match, and leaves the
+    // approval unconsumed.
+    let third = server
+        .create("approvals", json!({ "organization": beta }))
+        .await;
+    let (deal, _) = server.hooked_deal(&beta, "Three").await;
+    let close = format!("/api/v1/deals/{deal}/close");
+    let (status, stale, _) = server.post(&close, json!({ "expected": 7 }), None).await;
+    assert_eq!(status, StatusCode::PRECONDITION_FAILED, "{stale}");
+    assert_eq!(server.row("approvals", &third).await["consumed"], false);
+    let (status, closed, _) = server.post(&close, json!({ "expected": 1 }), None).await;
+    assert_eq!(status, StatusCode::OK, "{closed}");
+    assert_eq!(
+        (&closed["stage"], &closed["version"]),
+        (&json!("won"), &json!(2))
+    );
+    assert_eq!(server.row("approvals", &third).await["consumed"], true);
+    server.db.drop().await;
+}
+
+#[tokio::test]
+async fn two_wins_never_consume_one_approval_twice() {
+    let server = Server::start_with(hooked()).await;
+    let pool = server.db.pool().await;
+    let org = server.organization("Acme").await;
+    let approval = server
+        .create("approvals", json!({ "organization": org }))
+        .await;
+    let (one, one_etag) = server.hooked_deal(&org, "One").await;
+    let (two, two_etag) = server.hooked_deal(&org, "Two").await;
+
+    // Hold the approval so both wins reach get_for_update and wait there.
+    let mut holding = pool.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM approvals WHERE id = $1::uuid FOR UPDATE")
+        .bind(&approval)
+        .execute(&mut *holding)
+        .await
+        .unwrap();
+    let win = |deal: &str, etag: &str| {
+        let request = Request::builder()
+            .method("POST")
+            .uri(format!("/api/v1/deals/{deal}/win"))
+            .header(header::AUTHORIZATION, format!("Bearer {MEMBER}"))
+            .header("Trestle-Tenant", server.north.to_string())
+            .header(header::IF_MATCH, etag)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+        let app = server.app.clone();
+        tokio::spawn(async move { app.oneshot(request).await.unwrap().status() })
+    };
+    let wins = [win(&one, &one_etag), win(&two, &two_etag)];
+    let mut waiting = 0;
+    for _ in 0..200 {
+        waiting = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM pg_stat_activity \
+             WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        if waiting >= 2 {
+            break;
+        }
+        assert!(
+            wins.iter().all(|w| !w.is_finished()),
+            "a win finished without waiting for the approval"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert_eq!(waiting, 2, "both wins wait on the approval");
+    holding.commit().await.unwrap();
+    let mut statuses = Vec::new();
+    for w in wins {
+        statuses.push(w.await.unwrap());
+    }
+    statuses.sort();
+    assert_eq!(statuses, [StatusCode::OK, StatusCode::CONFLICT]);
+    let mut won = 0;
+    for deal in [&one, &two] {
+        if server.row("deals", deal).await["stage"] == "won" {
+            won += 1;
+        }
+    }
+    assert_eq!(won, 1, "exactly one deal won");
+    assert_eq!(server.row("approvals", &approval).await["consumed"], true);
     server.db.drop().await;
 }

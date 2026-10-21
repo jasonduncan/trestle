@@ -7,6 +7,10 @@ the intent format · **Depends on:** ADR-018, ADR-024
 `writable = "actions"` is written only by actions; CRUD, handlers and hooks
 are refused it.
 
+**Extended by [ADR-039](039-model-write-hooks.md):** an action runs its
+model's `before_write` and `after_write` hooks around its write, after the
+guards pass; an action on a model with write hooks declares no effects.
+
 **Extended by [ADR-036](036-guarded-actions.md):** `require`, `check` and
 `exists` guard an action on the row as written (409
 `requirement_unmet`), and `repeat = "unchanged"` makes a repeated request a

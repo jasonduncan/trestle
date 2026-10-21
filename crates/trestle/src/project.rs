@@ -312,6 +312,20 @@ impl<S: 'static, X, C> Project<S, X, C> {
         self
     }
 
+    /// Registers a write hook an intent model names
+    /// (`hooks = { before_write = "crm::deal_rules" }` on `[[models]]`,
+    /// ADR-039). It runs on every write to the model: CRUD, actions, and
+    /// [`Ctx`](crate::intent::Ctx) writes from handlers, hooks and Rust
+    /// operations.
+    pub fn write_hook<F, Fut>(mut self, name: &str, f: F) -> Self
+    where
+        F: Fn(crate::intent::Ctx, crate::intent::Write) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<crate::intent::Write, crate::Problem>> + Send + 'static,
+    {
+        self.handlers.write_hook(name, f);
+        self
+    }
+
     /// Settings `serve` adds, and how it builds the state (see
     /// [`ServeExtension`]).
     pub fn serve_with<Y: ServeExtension<S>>(self) -> Project<S, Y, C> {
@@ -408,7 +422,7 @@ where
         let mut identity = false;
         match self.intent.load() {
             Ok(None) => {
-                if !self.handlers.handlers.is_empty() || !self.handlers.hooks.is_empty() {
+                if !self.handlers.is_empty() {
                     intent_problems.push(
                         "handlers or hooks are registered but there is no trestle.toml to name them"
                             .to_owned(),
