@@ -23,10 +23,21 @@ promise.
   them never plans a migration. JSON Schema and OpenAPI carry them as an
   `x-trestle-enum-labels` annotation beside `enum`. Fields without labels
   export exactly as before.
+- A model field can be written only by domain actions (ADR-037):
+  `writable = "actions"` in `trestle.toml` (`FieldDoc.writable`; the
+  default, `"always"`, is unchanged). CRUD create and update contracts and
+  their generated and admin forms leave it out, so sending it is a 422
+  `unknown_field`, and create stores its default. `Ctx::create`,
+  `Ctx::update` and `Row::set` refuse it with a 500 that rolls back. Such a
+  field needs `optional` or a `default`, and an action that sets or accepts
+  it. No migration is involved.
 
 ### Changed
 - `FieldType::Enum` has a `labels` member, so a pattern
   `FieldType::Enum { values }` needs `..`. `FieldDoc` has a `labels` field.
+- `FieldDoc` has a `writable` field and `FieldSpec` a `writable` member
+  (`intent::spec::Writable`); struct literals need them or
+  `..Default::default()`.
 - The browser packages decode `x-trestle-enum-labels`. Renderers from
   0.7.x refuse a schema that uses it.
 

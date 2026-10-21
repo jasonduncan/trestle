@@ -163,6 +163,10 @@ pub struct FieldDoc {
     /// Money fields: the currencies accepted (default: any code).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub currencies: Vec<String>,
+    /// Model fields: `"always"` (the default, also when absent) or
+    /// `"actions"`, written only by domain actions (ADR-037).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub writable: Option<String>,
 }
 
 /// `[[endpoints]]`: CRUD on a model, a handler endpoint, or a declared

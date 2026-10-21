@@ -93,6 +93,7 @@ fn a_document_reads_every_key_and_assembles_like_its_file() {
     assert_eq!(doc.models[0].table.as_deref(), Some("client_accounts"));
     assert_eq!(doc.models[1].fields[1].currencies, ["EUR", "USD"]);
     assert_eq!(doc.models[1].fields[4].labels["won"], "Closed won");
+    assert_eq!(doc.models[1].fields[4].writable.as_deref(), Some("actions"));
     assert_eq!(doc.endpoints[3].accept, ["reason"]);
     assert_eq!(
         doc.admin[0].filters.as_deref(),

@@ -200,6 +200,10 @@ struct FieldSection {
     /// Money fields: the currencies accepted (default: any code).
     #[serde(default)]
     currencies: Vec<String>,
+    /// `"always"` (the default) or `"actions"`: written only by domain
+    /// actions (ADR-037).
+    #[serde(default)]
+    writable: Option<Spanned<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -349,12 +353,30 @@ pub struct FieldSpec {
     pub label: Option<String>,
     /// Money fields: allowed currencies; empty means any.
     pub currencies: Vec<String>,
+    /// Which writes may change the field (ADR-037).
+    pub writable: Writable,
+}
+
+/// Which writes may change a model field (`writable = ...`, ADR-037).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Writable {
+    /// Any write: CRUD create and update, handlers, hooks and actions.
+    #[default]
+    Always,
+    /// Only domain actions (`set` and `accept`). CRUD contracts and forms
+    /// leave it out, and handlers and hooks are refused it.
+    Actions,
 }
 
 impl FieldSpec {
     /// Required on create: not optional and no default.
     pub fn required(&self) -> bool {
         !self.optional && self.default.is_none()
+    }
+
+    /// Written only by domain actions (`writable = "actions"`).
+    pub fn managed(&self) -> bool {
+        self.writable == Writable::Actions
     }
 }
 
@@ -899,6 +921,12 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
             };
             let mut input = Vec::new();
             for f in &e.input {
+                if let Some(w) = &f.writable {
+                    problems.push(format!(
+                        "{}: writable = ... is for model fields, not handler input",
+                        lines.at(w)
+                    ));
+                }
                 if let Some(spec) = field(&lines, f, &mut problems) {
                     input.push(spec);
                 }
@@ -1083,6 +1111,7 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
             forms: e.forms,
         });
     }
+    check_managed(&lines, &raw.models, &models, &endpoints, &mut problems);
     let admin = admin_specs(
         &lines,
         &raw.admin,
@@ -1141,6 +1170,49 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
     }
 }
 
+/// A managed field (ADR-037) takes its default on create, so it needs one
+/// (or `optional`), and some action on its model must write it.
+fn check_managed(
+    lines: &Lines<'_>,
+    raw: &[ModelSection],
+    models: &[Arc<ModelSpec>],
+    endpoints: &[EndpointSpec],
+    problems: &mut Vec<String>,
+) {
+    for model in models {
+        let Some(raw_model) = raw.iter().find(|m| *m.id.get_ref() == model.id) else {
+            continue;
+        };
+        for f in model.fields.iter().filter(|f| f.managed()) {
+            let at = raw_model
+                .fields
+                .iter()
+                .find(|r| *r.id.get_ref() == f.id)
+                .map(|r| lines.at(&r.id))
+                .unwrap_or_default();
+            if f.required() {
+                problems.push(format!(
+                    "{at}: field {:?} is written only by actions, so create cannot set it; \
+                     make it optional or give it a default",
+                    f.id
+                ));
+            }
+            let written = endpoints.iter().any(|e| {
+                matches!(e, EndpointSpec::Action { model: m, set, accept, .. }
+                    if *m == model.id
+                        && (set.iter().any(|(n, _)| *n == f.id) || accept.contains(&f.id)))
+            });
+            if !written {
+                problems.push(format!(
+                    "{at}: field {:?} is written only by actions, but no action on {} sets or \
+                     accepts it",
+                    f.id, model.id
+                ));
+            }
+        }
+    }
+}
+
 /// A generated form needs a widget for every field it shows: plain `uuid`
 /// fields have none (make them `ref`s), and a `ref` picks from its model's
 /// list endpoint by that model's label field.
@@ -1169,7 +1241,11 @@ fn check_forms(
                 };
                 (
                     model,
-                    m.fields.iter().map(|f| f.id.as_str()).collect(),
+                    m.fields
+                        .iter()
+                        .filter(|f| !f.managed())
+                        .map(|f| f.id.as_str())
+                        .collect(),
                     format!("forms of {model}"),
                 )
             }
@@ -1582,6 +1658,17 @@ fn field(lines: &Lines<'_>, f: &FieldSection, problems: &mut Vec<String>) -> Opt
             }
         }
     }
+    let writable = match f.writable.as_ref().map(|w| (w, w.get_ref().as_str())) {
+        None | Some((_, "always")) => Writable::Always,
+        Some((_, "actions")) => Writable::Actions,
+        Some((w, other)) => {
+            problems.push(format!(
+                "{}: writable = {other:?}; use \"always\" (the default) or \"actions\"",
+                lines.at(w)
+            ));
+            Writable::Always
+        }
+    };
     let default = match &f.default {
         None => None,
         Some(v) => {
@@ -1614,5 +1701,6 @@ fn field(lines: &Lines<'_>, f: &FieldSection, problems: &mut Vec<String>) -> Opt
         to_table: None,
         label: f.label.clone(),
         currencies: f.currencies.clone(),
+        writable,
     })
 }

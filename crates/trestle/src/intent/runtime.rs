@@ -93,12 +93,14 @@ impl Row {
         })
     }
 
-    /// Sets a declared field (hooks use this to adjust a record).
+    /// Sets a declared field (hooks use this to adjust a record). A field
+    /// with `writable = "actions"` is refused (ADR-037).
     pub fn set(&mut self, field: &str, value: impl Serialize) -> Result<(), Problem> {
         self.known(field)?;
         if matches!(field, "id" | "version" | "created_at") {
             return Err(internal(&format!("field {field:?} is managed by Trestle")));
         }
+        refuse_managed(&self.model, [field])?;
         let value = serde_json::to_value(value).map_err(|e| internal(&e.to_string()))?;
         self.data.insert(field.to_owned(), value);
         Ok(())
@@ -260,6 +262,9 @@ impl Ctx {
     pub async fn create(&self, model: &str, values: Value) -> Result<Row, Problem> {
         self.check_writable()?;
         let model = &self.model(model)?;
+        if let Some(values) = values.as_object() {
+            refuse_managed(model, values.keys().map(String::as_str))?;
+        }
         let contract = create_contract(model);
         let values = contract.validate(&values).map_err(Problem::from)?;
         let values = values.as_object().cloned().unwrap_or_default();
@@ -275,6 +280,7 @@ impl Ctx {
             .as_object()
             .cloned()
             .ok_or_else(|| internal("update values must be a JSON object"))?;
+        refuse_managed(model, instance.keys().map(String::as_str))?;
         instance.insert("id".into(), json!(id));
         let contract = update_contract(model, false);
         let values = contract
@@ -301,6 +307,37 @@ impl Ctx {
         })
         .await
     }
+}
+
+/// Refuses a write by trusted code (a handler, a hook or a Rust operation)
+/// that names a field only actions may write (ADR-037). It is a bug in that
+/// code, not in the request: a 500 whose log names the field.
+fn refuse_managed<'a>(
+    model: &ModelSpec,
+    fields: impl IntoIterator<Item = &'a str>,
+) -> Result<(), Problem> {
+    match fields
+        .into_iter()
+        .find(|name| model.field(name).is_some_and(FieldSpec::managed))
+    {
+        None => Ok(()),
+        Some(name) => Err(internal(&format!(
+            "field {name:?} of {} is written only by actions (writable = \"actions\"); \
+             a handler or hook may not write it",
+            model.id
+        ))),
+    }
+}
+
+/// The values a CRUD write may store: every field except the ones only
+/// actions write (ADR-037).
+fn crud_writes(model: &ModelSpec, values: &Map<String, Value>) -> Map<String, Value> {
+    model
+        .fields
+        .iter()
+        .filter(|f| !f.managed())
+        .filter_map(|f| values.get(&f.id).map(|v| (f.id.clone(), v.clone())))
+        .collect()
 }
 
 /// A Rust handler for an endpoint (`handler = "notes::pin"`).
@@ -590,8 +627,15 @@ where
                     } else {
                         &[Audience::Product]
                     };
+                    // CRUD forms show what CRUD writes (ADR-037).
+                    let crud_fields: Vec<&str> = spec
+                        .fields
+                        .iter()
+                        .filter(|f| !f.managed())
+                        .map(|f| f.id.as_str())
+                        .collect();
                     if *forms {
-                        let fields: Vec<&str> = spec.fields.iter().map(|f| f.id.as_str()).collect();
+                        let fields = &crud_fields;
                         let name = noun(model);
                         if ops.contains(&Crud::Create) {
                             let form = FormPresentation::for_operation(
@@ -600,7 +644,7 @@ where
                             )
                             .title(&format!("New {name}"))
                             .submit("Create");
-                            app.form(form_fields(form, spec, intent, &fields));
+                            app.form(form_fields(form, spec, intent, fields));
                         }
                         if ops.contains(&Crud::Update) {
                             let form = FormPresentation::for_operation(
@@ -609,7 +653,7 @@ where
                             )
                             .title(&format!("Edit {name}"))
                             .submit("Save");
-                            app.form(form_fields(form, spec, intent, &fields));
+                            app.form(form_fields(form, spec, intent, fields));
                         }
                     }
                     let mut view = admin.map(|a| {
@@ -618,7 +662,7 @@ where
                             .filters(&a.filters.iter().map(String::as_str).collect::<Vec<_>>())
                     });
                     if let Some(v) = view.take() {
-                        let fields: Vec<&str> = spec.fields.iter().map(|f| f.id.as_str()).collect();
+                        let fields = &crud_fields;
                         let name = noun(model);
                         let mut v = v;
                         for (op, form, title, submit) in [
@@ -641,7 +685,7 @@ where
                             .audience(Audience::Admin)
                             .title(&title)
                             .submit(submit);
-                            app.form(form_fields(presentation, spec, intent, &fields));
+                            app.form(form_fields(presentation, spec, intent, fields));
                             v = if op == Crud::Create {
                                 v.create_form(&id)
                             } else {
@@ -1082,7 +1126,7 @@ fn policy_id(permission: &str) -> String {
 
 fn create_contract(model: &ModelSpec) -> ContractDoc {
     let mut doc = ContractDoc::input(&format!("{}.create", model.id), "1");
-    for f in &model.fields {
+    for f in model.fields.iter().filter(|f| !f.managed()) {
         doc = doc.field(field_contract(f, f.required()));
     }
     doc
@@ -1093,7 +1137,7 @@ fn update_contract(model: &ModelSpec, versioned: bool) -> ContractDoc {
     if versioned {
         doc = doc.field(Field::digits("expected_version"));
     }
-    for f in &model.fields {
+    for f in model.fields.iter().filter(|f| !f.managed()) {
         doc = doc.field(field_contract(f, false));
     }
     doc
@@ -1781,10 +1825,9 @@ impl<S> IntentOp<S> {
                         let mut row = Row::new(model.clone(), input);
                         row = self.hook(ctx, hooks, "validate", row).await?;
                         row = self.hook(ctx, hooks, "before_create", row).await?;
+                        let values = crud_writes(model, &row.data);
                         let created = ctx
-                            .with(async |conn, scope| {
-                                insert(conn, model, scope, row.data.clone()).await
-                            })
+                            .with(async |conn, scope| insert(conn, model, scope, values).await)
                             .await?;
                         let created = self.hook(ctx, hooks, "after_create", created).await?;
                         Ok(created.to_json())
@@ -1806,13 +1849,7 @@ impl<S> IntentOp<S> {
                         }
                         merged = self.hook(ctx, hooks, "validate", merged).await?;
                         merged = self.hook(ctx, hooks, "before_update", merged).await?;
-                        let changes: Map<String, Value> = model
-                            .fields
-                            .iter()
-                            .filter_map(|f| {
-                                merged.data.get(&f.id).map(|v| (f.id.clone(), v.clone()))
-                            })
-                            .collect();
+                        let changes = crud_writes(model, &merged.data);
                         let updated = ctx
                             .with(async |conn, scope| {
                                 update(conn, model, scope, id, changes, version).await

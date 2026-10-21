@@ -3,6 +3,10 @@
 **Status:** Proposed (2026-10-17) · **Design doc:** §9.4, §10 · **Amends:**
 the intent format · **Depends on:** ADR-018, ADR-024
 
+**Extended by [ADR-037](037-managed-fields.md):** a field with
+`writable = "actions"` is written only by actions; CRUD, handlers and hooks
+are refused it.
+
 ## Context
 
 Rust resources expose transitions as explicit actions (`lessons.publish`),
