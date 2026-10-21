@@ -19,6 +19,8 @@ promise.
   accepted the 2026-10-20 review (`docs/security-review.md`), with its
   findings fixed in 0.7.x, as that review. A more comprehensive review is
   planned.
+- vite 8.3.4 (development only): fixes the `launch-editor` advisories
+  GHSA-698v-4r3x-3vcv, GHSA-r825-w8mm-5pxw and GHSA-587h-7wmj-h5pm.
 
 ## [0.7.1] - 2026-10-20
 
