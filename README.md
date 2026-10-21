@@ -133,7 +133,12 @@ With `passwords = false` and no `oidc`, there are no accounts or
 `/api/v1/auth/*` routes (ADR-034).
 
 Roles are granted per tenant membership, so `[roles]` and endpoint
-permissions require `[tenancy]`. Endpoints and hooks can name Rust
+permissions require `[tenancy]`. A grant can be limited to a model's row
+scopes (ADR-040): with `[models.scopes] own = { field = "owner", through =
+"crm.member", actor = "actor" }`, a role granted `"crm.sell@own"` lists,
+reads and changes only the rows whose owner is the caller's member row.
+Other rows are 404, and a write that would move a row out of the scopes is
+403. Endpoints and hooks can name Rust
 handlers, and a model's `hooks = { before_write = .., after_write = .. }`
 run on every write to it, whichever endpoint, action or handler makes it
 (ADR-039); `trestle new` writes a fuller example, and

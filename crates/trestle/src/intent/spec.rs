@@ -178,6 +178,9 @@ struct ModelSection {
     /// Write hooks that run on every write to the model (ADR-039).
     #[serde(default)]
     hooks: BTreeMap<String, Spanned<String>>,
+    /// Row scopes that scoped grants name (ADR-040).
+    #[serde(default)]
+    scopes: BTreeMap<String, Spanned<super::doc::ScopeDoc>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -271,8 +274,14 @@ pub struct Intent {
     pub trestle: Option<String>,
     pub auth: AuthSection,
     pub tenancy: Option<Tenancy>,
-    /// Role → permissions.
+    /// Role → the permissions it holds on every row of the tenant. Every
+    /// role is a key, including one whose grants are all scoped.
     pub roles: BTreeMap<String, BTreeSet<String>>,
+    /// Role → permission → scopes, for a permission the role holds only on
+    /// the rows of those scopes (`"crm.sell@own"`, ADR-040). A permission
+    /// in `roles` for the same role is never here: an unscoped grant
+    /// admits every row.
+    pub scoped: BTreeMap<String, BTreeMap<String, BTreeSet<String>>>,
     /// Shared with the operations and rows built from them, so the intent
     /// lives exactly as long as something uses it.
     pub models: Vec<Arc<ModelSpec>>,
@@ -427,6 +436,29 @@ pub struct ModelSpec {
     /// Write hook point (`before_write`, `after_write`) → its Rust name
     /// (ADR-039). They run on every write path to the model.
     pub hooks: BTreeMap<String, Named>,
+    /// Row scopes (ADR-040): name → how a row is tied to the acting actor.
+    pub scopes: BTreeMap<String, ScopeSpec>,
+}
+
+/// A row scope (ADR-040): the rows of a model tied to the acting actor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopeSpec {
+    /// The field of the row: a `uuid` holding the actor itself, or, with
+    /// `through`, the value a `through` row's `key` must equal.
+    pub field: String,
+    pub through: Option<Through>,
+}
+
+/// `through = "<model>"` on a scope: a row of that model, in the same
+/// tenant, links the scoped row to an actor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Through {
+    pub model: String,
+    pub table: String,
+    /// Its field (or `id`) that equals the scoped row's field.
+    pub key: String,
+    /// Its `uuid` field holding the actor.
+    pub actor: String,
 }
 
 /// `unique = [["name"]]` on a model.
@@ -725,18 +757,61 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
         }
     });
 
-    let mut roles = BTreeMap::new();
+    let mut roles: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut scoped: BTreeMap<String, BTreeMap<String, BTreeSet<String>>> = BTreeMap::new();
     let mut permissions = BTreeSet::new();
+    // Scoped grants are checked against the models' scopes below.
+    let mut scope_grants = Vec::new();
     for (role, perms) in &raw.roles {
         if !ident(role) {
             problems.push(format!(
                 "{file}: role {role:?} must be a lowercase identifier"
             ));
         }
-        let set: BTreeSet<String> = perms.iter().map(|p| p.get_ref().clone()).collect();
+        let mut set = BTreeSet::new();
+        for grant in perms {
+            let text = grant.get_ref();
+            match text.split_once('@') {
+                None => {
+                    set.insert(text.clone());
+                }
+                Some((permission, scope)) => {
+                    if permission.is_empty() || !ident(scope) {
+                        problems.push(format!(
+                            "{}: grant {text:?} must be \"<permission>@<scope>\", with a \
+                             lowercase scope name",
+                            lines.at(grant)
+                        ));
+                        continue;
+                    }
+                    if permission == AUTHENTICATED {
+                        problems.push(format!(
+                            "{}: \"{AUTHENTICATED}\" is held by every signed-in actor; it cannot \
+                             be granted for a scope",
+                            lines.at(grant)
+                        ));
+                        continue;
+                    }
+                    scope_grants.push((grant, scope.to_owned()));
+                    scoped
+                        .entry(role.clone())
+                        .or_default()
+                        .entry(permission.to_owned())
+                        .or_default()
+                        .insert(scope.to_owned());
+                }
+            }
+        }
         permissions.extend(set.iter().cloned());
         roles.insert(role.clone(), set);
     }
+    // An unscoped grant admits every row, so it absorbs scoped ones.
+    for (role, grants) in &mut scoped {
+        let all = &roles[role];
+        grants.retain(|permission, _| !all.contains(permission));
+        permissions.extend(grants.keys().cloned());
+    }
+    scoped.retain(|_, grants| !grants.is_empty());
     if !roles.is_empty() && tenancy.is_none() {
         problems.push(format!(
             "{file}: [roles] needs [tenancy]: roles are granted per tenant membership"
@@ -895,6 +970,7 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
             unique,
             label,
             hooks,
+            scopes: BTreeMap::new(),
         }));
     }
     // References resolve once every model is known.
@@ -921,6 +997,39 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
                     ));
                 }
             }
+        }
+    }
+
+    // Scopes name fields of other models, so they resolve once every
+    // model and ref is known (ADR-040).
+    let resolved_models = models.clone();
+    for model in &mut models {
+        let Some(raw_model) = raw.models.iter().find(|m| *m.id.get_ref() == model.id) else {
+            continue;
+        };
+        let mut scopes = BTreeMap::new();
+        for (name, doc) in &raw_model.scopes {
+            if let Some(spec) = scope_spec(
+                &lines,
+                (model, &resolved_models),
+                name,
+                doc,
+                tenancy.is_some(),
+                &mut problems,
+            ) {
+                scopes.insert(name.clone(), spec);
+            }
+        }
+        Arc::make_mut(model).scopes = scopes;
+    }
+    for (grant, scope) in &scope_grants {
+        if !raw.models.iter().any(|m| m.scopes.contains_key(scope)) {
+            problems.push(format!(
+                "{}: grant {:?} names scope {scope:?}, which no model declares; add \
+                 scopes = {{ {scope} = {{ field = \"...\" }} }} to a model",
+                lines.at(grant),
+                grant.get_ref()
+            ));
         }
     }
 
@@ -1373,6 +1482,7 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
             auth: raw.auth,
             tenancy,
             roles,
+            scoped,
             models,
             endpoints,
             admin,
@@ -1832,6 +1942,108 @@ fn check_fits(f: &FieldSpec, v: &toml::Value) -> bool {
         }
         _ => fits(f.ty, &f.values, f.precision, f.scale, v),
     }
+}
+
+/// One row scope of `model` (ADR-040): a `uuid` field holding the actor,
+/// or a field matched to the `key` of a `through` row that holds it.
+fn scope_spec(
+    lines: &Lines<'_>,
+    (model, models): (&ModelSpec, &[Arc<ModelSpec>]),
+    name: &str,
+    doc: &Spanned<super::doc::ScopeDoc>,
+    tenancy: bool,
+    problems: &mut Vec<String>,
+) -> Option<ScopeSpec> {
+    let at = lines.at(doc);
+    let id = &model.id;
+    let before = problems.len();
+    let doc = doc.get_ref();
+    if !ident(name) {
+        problems.push(format!(
+            "{at}: scope {name:?} of {id} must be a lowercase identifier"
+        ));
+    }
+    if !tenancy {
+        problems.push(format!(
+            "{at}: scope {name} of {id} needs [tenancy]: scopes limit role grants, which are \
+             per tenant membership"
+        ));
+    }
+    let Some(field) = model.field(&doc.field) else {
+        problems.push(format!(
+            "{at}: scope {name} of {id}: field {:?} is not a field of {id}",
+            doc.field
+        ));
+        return None;
+    };
+    let Some(through_id) = &doc.through else {
+        if doc.key.is_some() || doc.actor.is_some() {
+            problems.push(format!(
+                "{at}: scope {name} of {id}: key and actor are for a scope with through = \"<model>\""
+            ));
+        }
+        if field.ty != FieldType::Uuid {
+            problems.push(format!(
+                "{at}: scope {name} of {id}: without through, field {:?} must be a uuid field \
+                 holding the actor",
+                field.id
+            ));
+        }
+        return (problems.len() == before).then(|| ScopeSpec {
+            field: field.id.clone(),
+            through: None,
+        });
+    };
+    let Some(through) = models.iter().find(|m| m.id == *through_id) else {
+        problems.push(format!(
+            "{at}: scope {name} of {id}: through {through_id:?} is not a model in this file"
+        ));
+        return None;
+    };
+    let actor = match &doc.actor {
+        None => {
+            problems.push(format!(
+                "{at}: scope {name} of {id} needs actor = \"<uuid field of {through_id}>\""
+            ));
+            String::new()
+        }
+        Some(actor) => {
+            if !through
+                .field(actor)
+                .is_some_and(|f| f.ty == FieldType::Uuid)
+            {
+                problems.push(format!(
+                    "{at}: scope {name} of {id}: actor {actor:?} must be a uuid field of \
+                     {through_id} holding the actor"
+                ));
+            }
+            actor.clone()
+        }
+    };
+    let key = doc.key.clone().unwrap_or_else(|| "id".to_owned());
+    match (key_type(through, &key), field.ty) {
+        (None, _) => problems.push(format!(
+            "{at}: scope {name} of {id}: key {key:?} is not id or a field of {through_id}"
+        )),
+        // A ref to a model that isn't in the file is reported already.
+        (_, FieldType::Ref) if field.to_table.is_none() => {}
+        (Some(theirs), FieldType::Ref | FieldType::Uuid)
+            if theirs == (field.ty, field.to.clone()) => {}
+        (Some(_), _) => problems.push(format!(
+            "{at}: scope {name} of {id}: field {:?} and {through_id}.{key} are not the same type; \
+             a ref must point to the model {key} names, or both be uuid fields",
+            field.id
+        )),
+    }
+    (problems.len() == before).then(|| ScopeSpec {
+        field: field.id.clone(),
+        through: Some(Through {
+            model: through.id.clone(),
+            table: through.table.clone(),
+            key,
+            actor,
+        }),
+    })
 }
 
 /// The type a `match` side compares as: `id` is a ref to its own model.

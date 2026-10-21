@@ -8,6 +8,12 @@
 written model's write hooks, and `Ctx` gains `get_for_update` and
 `update_versioned`.
 
+**Extended by [ADR-040](040-row-scoped-authority.md):** `[roles]` may grant
+a permission for row scopes only (`"crm.sell@own"`). Such a grant admits
+generated CRUD and actions on the scoped rows, and shows views. It does not
+admit `Permission::new` or handler endpoints, whose `Ctx` sees the whole
+tenant. `recheck` also refuses a role that changed to a narrower grant.
+
 ## Context
 
 An intent project extends `trestle.toml` with Rust in only two ways:

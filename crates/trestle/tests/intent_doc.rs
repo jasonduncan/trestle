@@ -102,6 +102,17 @@ fn a_document_reads_every_key_and_assembles_like_its_file() {
     assert_eq!(doc.models[1].fields[4].writable.as_deref(), Some("actions"));
     assert_eq!(doc.models[1].hooks["before_write"], "crm::deal_rules");
     assert_eq!(doc.models[1].hooks["after_write"], "crm::deal_effects");
+    assert_eq!(doc.models[0].scopes["mine"].field, "external");
+    assert_eq!(
+        doc.models[1].scopes["own"].through.as_deref(),
+        Some("crm.account")
+    );
+    assert_eq!(doc.models[1].scopes["own"].key.as_deref(), Some("id"));
+    assert_eq!(
+        doc.models[1].scopes["own"].actor.as_deref(),
+        Some("external")
+    );
+    assert_eq!(doc.roles["member"][1], "crm.write@own");
     assert_eq!(doc.endpoints[3].accept, ["reason"]);
     assert_eq!(
         doc.endpoints[3].check[0].gt.as_ref().unwrap()["currency"].as_str(),
