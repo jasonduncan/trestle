@@ -234,6 +234,16 @@ struct EndpointSection {
     when: BTreeMap<String, Vec<toml::Value>>,
     #[serde(default)]
     accept: Vec<String>,
+    /// Guarded actions (ADR-036): fields the written row must have, the
+    /// comparisons it must pass, related rows that must exist, and what
+    /// asking again for the same state does.
+    #[serde(default)]
+    require: Vec<String>,
+    #[serde(default)]
+    check: Vec<super::doc::CheckDoc>,
+    #[serde(default)]
+    exists: Vec<super::doc::ExistsDoc>,
+    repeat: Option<Spanned<String>>,
     /// Publish generated forms for this endpoint's writes (ADR-026).
     #[serde(default)]
     forms: bool,
@@ -484,8 +494,102 @@ pub enum EndpointSpec {
         when: Vec<(String, Vec<serde_json::Value>)>,
         /// Fields the caller may supply, copied onto the row.
         accept: Vec<String>,
+        /// Fields that must be non-null in the row as written (ADR-036).
+        require: Vec<String>,
+        /// Comparisons the row as written must pass (ADR-036).
+        check: Vec<CheckSpec>,
+        /// Related rows that must exist in the tenant (ADR-036).
+        exists: Vec<ExistsSpec>,
+        /// What a request for the state the row already has does.
+        repeat: Repeat,
         forms: bool,
     },
+}
+
+/// A comparison operator of an action `check` (ADR-036).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Compare {
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+impl Compare {
+    pub const ALL: [Compare; 6] = [
+        Compare::Eq,
+        Compare::Ne,
+        Compare::Lt,
+        Compare::Le,
+        Compare::Gt,
+        Compare::Ge,
+    ];
+
+    /// The key in the file: `eq`, `ne`, `lt`, `le`, `gt` or `ge`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Compare::Eq => "eq",
+            Compare::Ne => "ne",
+            Compare::Lt => "lt",
+            Compare::Le => "le",
+            Compare::Gt => "gt",
+            Compare::Ge => "ge",
+        }
+    }
+
+    /// The SQL operator.
+    pub fn sql(self) -> &'static str {
+        match self {
+            Compare::Eq => "=",
+            Compare::Ne => "<>",
+            Compare::Lt => "<",
+            Compare::Le => "<=",
+            Compare::Gt => ">",
+            Compare::Ge => ">=",
+        }
+    }
+
+    /// Whether it orders values (anything but `eq` and `ne`).
+    pub fn orders(self) -> bool {
+        !matches!(self, Compare::Eq | Compare::Ne)
+    }
+}
+
+/// `check = [{ field = "value", ge = "0" }]` on an action.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CheckSpec {
+    pub field: String,
+    pub op: Compare,
+    /// The constant, as JSON: a string for decimals, dates, instants and
+    /// durations; for money, a decimal string (the amount, whatever the
+    /// currency) or `{amount, currency}`.
+    pub value: serde_json::Value,
+}
+
+/// `exists = [{ model = "...", match = {...}, null = [...] }]` on an
+/// action.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExistsSpec {
+    /// The related model.
+    pub model: String,
+    /// The related model's field → this model's field (either may be
+    /// `id`), in the related field's order.
+    pub matches: Vec<(String, String)>,
+    /// Fields of the related row that must be null.
+    pub null: Vec<String>,
+}
+
+/// `repeat = ...` on an action (ADR-036).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Repeat {
+    /// A second request fails its `when` rule as usual (409).
+    #[default]
+    Refuse,
+    /// When every `set` constant already holds, the action changes nothing
+    /// and returns the row (200).
+    Unchanged,
 }
 
 /// What an action writes into a field.
@@ -746,29 +850,6 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
         }
     }
 
-    // Refs make one app need another (ADR-032), so they can't go round in
-    // a circle: migrations and lifecycle need an order.
-    let mut needs: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
-    let app_of: BTreeMap<&str, &str> = models
-        .iter()
-        .map(|m| (m.id.as_str(), m.app.as_str()))
-        .collect();
-    for model in &models {
-        for to in model.fields.iter().filter_map(|f| f.to.as_deref()) {
-            if let Some(&app) = app_of.get(to)
-                && app != model.app
-            {
-                needs.entry(model.app.as_str()).or_default().insert(app);
-            }
-        }
-    }
-    if let Some(cycle) = app_cycle(&needs) {
-        problems.push(format!(
-            "{file}: apps refer to each other's models in a circle ({}); refs between apps go one way",
-            cycle.join(" → ")
-        ));
-    }
-
     let known_permission = |p: &str| p == AUTHENTICATED || permissions.contains(p);
     let check_permission = |p: &Spanned<String>, problems: &mut Vec<String>| {
         let name = p.get_ref();
@@ -797,7 +878,13 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
             .map(|m| lines.at(m))
             .or_else(|| e.id.as_ref().map(|i| lines.at(i)))
             .unwrap_or_else(|| format!("{file}: endpoint #{}", index + 1));
-        let action = !e.set.is_empty() || !e.when.is_empty() || !e.accept.is_empty();
+        let action = !e.set.is_empty()
+            || !e.when.is_empty()
+            || !e.accept.is_empty()
+            || !e.require.is_empty()
+            || !e.check.is_empty()
+            || !e.exists.is_empty()
+            || e.repeat.is_some();
         if e.handler.is_some() || action {
             // A custom endpoint: Rust (handler) or a declared action.
             for (present, key) in [
@@ -909,8 +996,9 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
                     continue;
                 };
                 if let Some(action) = action_spec(
+                    &lines,
                     &where_,
-                    spec,
+                    (spec, &models),
                     e,
                     (id_text, &method, route, &permission),
                     &mut problems,
@@ -1110,6 +1198,44 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
             hooks,
             forms: e.forms,
         });
+    }
+    // Refs make one app need another (ADR-032), and so does an action's
+    // `exists` (ADR-036), so they can't go round in a circle: migrations
+    // and lifecycle need an order.
+    let mut needs: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    let app_of: BTreeMap<&str, &str> = models
+        .iter()
+        .map(|m| (m.id.as_str(), m.app.as_str()))
+        .collect();
+    for model in &models {
+        for to in model.fields.iter().filter_map(|f| f.to.as_deref()) {
+            if let Some(&app) = app_of.get(to)
+                && app != model.app
+            {
+                needs.entry(model.app.as_str()).or_default().insert(app);
+            }
+        }
+    }
+    for e in &endpoints {
+        let EndpointSpec::Action { id, exists, .. } = e else {
+            continue;
+        };
+        let Some((from, _)) = id.split_once('.') else {
+            continue;
+        };
+        for x in exists {
+            if let Some(&app) = app_of.get(x.model.as_str())
+                && app != from
+            {
+                needs.entry(from).or_default().insert(app);
+            }
+        }
+    }
+    if let Some(cycle) = app_cycle(&needs) {
+        problems.push(format!(
+            "{file}: apps refer to each other's models in a circle ({}); refs between apps go one way",
+            cycle.join(" → ")
+        ));
     }
     check_managed(&lines, &raw.models, &models, &endpoints, &mut problems);
     let admin = admin_specs(
@@ -1412,8 +1538,9 @@ fn admin_specs(
 
 /// Checks a declared action and builds it.
 fn action_spec(
+    lines: &Lines<'_>,
     at: &str,
-    model: &ModelSpec,
+    (model, models): (&ModelSpec, &[Arc<ModelSpec>]),
     e: &EndpointSection,
     (id, method, path, permission): (&str, &http::Method, &str, &str),
     problems: &mut Vec<String>,
@@ -1488,6 +1615,44 @@ fn action_spec(
             problems.push(format!("{at}: action {id:?} both sets and accepts {name}"));
         }
     }
+    for name in &e.require {
+        field(name, problems);
+    }
+    let mut check = Vec::new();
+    for c in &e.check {
+        let Some(f) = field(&c.field, problems) else {
+            continue;
+        };
+        if let Some(spec) = check_spec(at, id, f, c, problems) {
+            check.push(spec);
+        }
+    }
+    let mut exists = Vec::new();
+    for x in &e.exists {
+        if let Some(spec) = exists_spec(at, id, model, models, x, problems) {
+            exists.push(spec);
+        }
+    }
+    let repeat = match e.repeat.as_ref().map(|r| (r, r.get_ref().as_str())) {
+        None | Some((_, "refuse")) => Repeat::Refuse,
+        Some((r, "unchanged")) => {
+            if !set.iter().any(|(_, v)| matches!(v, SetValue::Value(_))) {
+                problems.push(format!(
+                    "{}: action {id:?}: repeat = \"unchanged\" compares the set constants, and it \
+                     has none (\"now\" is never unchanged)",
+                    lines.at(r)
+                ));
+            }
+            Repeat::Unchanged
+        }
+        Some((r, other)) => {
+            problems.push(format!(
+                "{}: repeat = {other:?}; use \"refuse\" (the default) or \"unchanged\"",
+                lines.at(r)
+            ));
+            Repeat::Refuse
+        }
+    };
     (problems.len() == before).then(|| EndpointSpec::Action {
         id: id.to_owned(),
         model: model.id.clone(),
@@ -1496,7 +1661,161 @@ fn action_spec(
         set,
         when,
         accept: e.accept.clone(),
+        require: e.require.clone(),
+        check,
+        exists,
+        repeat,
         forms: e.forms,
+    })
+}
+
+/// One `check` entry: exactly one operator, which suits the field, and a
+/// constant that fits it.
+fn check_spec(
+    at: &str,
+    id: &str,
+    f: &FieldSpec,
+    c: &super::doc::CheckDoc,
+    problems: &mut Vec<String>,
+) -> Option<CheckSpec> {
+    let name = &f.id;
+    let given: Vec<(Compare, &toml::Value)> = Compare::ALL
+        .into_iter()
+        .zip([&c.eq, &c.ne, &c.lt, &c.le, &c.gt, &c.ge])
+        .filter_map(|(op, v)| v.as_ref().map(|v| (op, v)))
+        .collect();
+    let [(op, value)] = given.as_slice() else {
+        problems.push(format!(
+            "{at}: action {id:?}: a check on {name} takes exactly one of eq, ne, lt, le, gt, ge"
+        ));
+        return None;
+    };
+    let op = *op;
+    match f.ty {
+        FieldType::Ref | FieldType::Uuid => {
+            problems.push(format!(
+                "{at}: action {id:?}: check cannot compare {name}, an ID; use require or exists"
+            ));
+            return None;
+        }
+        FieldType::Bool | FieldType::Text | FieldType::Enum if op.orders() => {
+            problems.push(format!(
+                "{at}: action {id:?}: check {} on {name}: bool, text and enum fields take eq or ne",
+                op.as_str()
+            ));
+            return None;
+        }
+        _ => {}
+    }
+    if !check_fits(f, value) {
+        problems.push(format!(
+            "{at}: action {id:?}: check {} {value} does not fit {name}",
+            op.as_str()
+        ));
+        return None;
+    }
+    Some(CheckSpec {
+        field: name.clone(),
+        op,
+        value: serde_json::to_value(value).ok()?,
+    })
+}
+
+/// A `check` constant: what [`fits`] accepts, plus instants and money (a
+/// decimal amount, or `{ amount, currency }` with a currency the field
+/// takes).
+fn check_fits(f: &FieldSpec, v: &toml::Value) -> bool {
+    use trestle_core::protocol::scalar;
+    let amount = |s: &str| scalar::check_decimal(s, f.precision, f.scale).is_ok();
+    match (f.ty, v) {
+        (FieldType::Instant, toml::Value::String(s)) => scalar::normalize_instant(s).is_some(),
+        (FieldType::Money, toml::Value::String(s)) => amount(s),
+        (FieldType::Money, toml::Value::Table(t)) => {
+            t.len() == 2
+                && t.get("amount")
+                    .and_then(toml::Value::as_str)
+                    .is_some_and(amount)
+                && t.get("currency")
+                    .and_then(toml::Value::as_str)
+                    .is_some_and(|c| {
+                        scalar::is_currency(c)
+                            && (f.currencies.is_empty() || f.currencies.iter().any(|x| x == c))
+                    })
+        }
+        _ => fits(f.ty, &f.values, f.precision, f.scale, v),
+    }
+}
+
+/// The type a `match` side compares as: `id` is a ref to its own model.
+fn key_type(model: &ModelSpec, name: &str) -> Option<(FieldType, Option<String>)> {
+    if name == "id" {
+        return Some((FieldType::Ref, Some(model.id.clone())));
+    }
+    model.field(name).map(|f| (f.ty, f.to.clone()))
+}
+
+/// One `exists` entry: a model of the file, fields on both sides that
+/// compare as the same type, and nullable `null` fields.
+fn exists_spec(
+    at: &str,
+    id: &str,
+    model: &ModelSpec,
+    models: &[Arc<ModelSpec>],
+    x: &super::doc::ExistsDoc,
+    problems: &mut Vec<String>,
+) -> Option<ExistsSpec> {
+    let before = problems.len();
+    let Some(related) = models.iter().find(|m| m.id == x.model) else {
+        problems.push(format!(
+            "{at}: action {id:?}: exists names {:?}, which is not a model in this file",
+            x.model
+        ));
+        return None;
+    };
+    if x.matches.is_empty() {
+        problems.push(format!(
+            "{at}: action {id:?}: exists {} needs match = {{ <its field> = \"<field of {}>\" }}",
+            related.id, model.id
+        ));
+    }
+    for (theirs, ours) in &x.matches {
+        let (Some(t), Some(o)) = (key_type(related, theirs), key_type(model, ours)) else {
+            problems.push(format!(
+                "{at}: action {id:?}: exists {} matches {theirs} = {ours}; {theirs} must be id or a \
+                 field of {} and {ours} id or a field of {}",
+                related.id, related.id, model.id
+            ));
+            continue;
+        };
+        if t.0 == FieldType::Money || t != o {
+            problems.push(format!(
+                "{at}: action {id:?}: exists {} matches {theirs} = {ours}, which are not the same \
+                 type (refs must point to the same model; money cannot be matched)",
+                related.id
+            ));
+        }
+    }
+    for name in &x.null {
+        match related.field(name) {
+            None => problems.push(format!(
+                "{at}: action {id:?}: exists null {name:?} is not a field of {}",
+                related.id
+            )),
+            Some(f) if !f.optional => problems.push(format!(
+                "{at}: action {id:?}: exists null {name:?}: {}.{name} is required, so never null",
+                related.id
+            )),
+            Some(_) => {}
+        }
+    }
+    (problems.len() == before).then(|| ExistsSpec {
+        model: related.id.clone(),
+        matches: x
+            .matches
+            .iter()
+            .map(|(t, o)| (t.clone(), o.clone()))
+            .collect(),
+        null: x.null.clone(),
     })
 }
 

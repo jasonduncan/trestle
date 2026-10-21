@@ -43,7 +43,9 @@ waiting for:
 - relations: `type = "ref"`, with tenant-checked writes (ADR-024), also to
   another app's model when refs between apps go one way (ADR-032);
 - domain actions: `set`, `when` and `accept` on an endpoint (ADR-025),
-  and fields only they write: `writable = "actions"` (ADR-037);
+  guarded by `require`, `check` and `exists`, with `repeat = "unchanged"`
+  for idempotent transitions (ADR-036), and fields only they write:
+  `writable = "actions"` (ADR-037);
 - generated forms: `forms = true` (ADR-026);
 - admin views: `[[admin]]` (ADR-029).
 

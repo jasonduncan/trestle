@@ -76,6 +76,17 @@ permission = "crm.write"
 set = { stage = "won", closed_at = "now" }
 when = { stage = ["open"] }
 accept = ["reason"]
+require = ["amount", "due"]
+check = [
+  { field = "amount", gt = { amount = "1.00", currency = "USD" } },
+  { field = "amount", ge = "0" },
+  { field = "rate", lt = "100" },
+  { field = "rate", le = "99.99" },
+  { field = "due", ne = "2026-01-01" },
+  { field = "effort", eq = "PT1H" },
+]
+exists = [{ model = "crm.account", match = { id = "account" }, null = ["external"] }]
+repeat = "unchanged"
 forms = true
 
 [[admin]]

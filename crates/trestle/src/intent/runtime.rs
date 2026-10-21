@@ -30,7 +30,8 @@ use trestle_protocol::{Audience, ContractDoc, Field, FormPresentation, Widget};
 use uuid::Uuid;
 
 use super::spec::{
-    AUTHENTICATED, Crud, EndpointSpec, FieldSpec, FieldType, Intent, ModelSpec, SetValue,
+    AUTHENTICATED, CheckSpec, Compare, Crud, EndpointSpec, FieldSpec, FieldType, Intent, ModelSpec,
+    Repeat, SetValue,
 };
 
 /// Header that selects the tenant to act in. Grants nothing by itself.
@@ -1155,11 +1156,31 @@ enum Kind {
     Action(Arc<Action>),
 }
 
-/// A declared state transition (ADR-025).
+/// A declared state transition (ADR-025), with its guards (ADR-036).
 struct Action {
     set: Vec<(String, SetValue)>,
     when: Vec<(String, Vec<Value>)>,
     accept: Vec<String>,
+    require: Vec<String>,
+    check: Vec<CheckSpec>,
+    exists: Vec<Exists>,
+    /// `repeat = "unchanged"`: the `set` constants as `eq` checks on the
+    /// current row; all true means there is nothing to do.
+    unchanged: Option<Vec<CheckSpec>>,
+}
+
+/// An `exists` guard resolved to SQL names (ADR-036).
+struct Exists {
+    /// `crm.affiliation`, and `affiliation` for messages.
+    model: String,
+    label: String,
+    table: String,
+    /// Related column, its SQL type, and the field of the acting row.
+    matches: Vec<(String, &'static str, String)>,
+    /// Related columns that must be null.
+    null: Vec<String>,
+    /// Field errors point here: the first matched field of the row.
+    pointer: String,
 }
 
 struct IntentOp<S> {
@@ -1192,6 +1213,10 @@ where
         set,
         when,
         accept,
+        require,
+        check,
+        exists,
+        repeat,
         ..
     } = endpoint
     else {
@@ -1209,11 +1234,61 @@ where
         contract = contract.field(field_contract(f, false));
     }
     let contract = contract.field(Field::digits("expected_version"));
+    let mut effects = Effects::new().writes(model.as_str());
+    let mut guards = Vec::new();
+    for x in exists {
+        let related = resolved
+            .intent
+            .models
+            .iter()
+            .find(|m| m.id == x.model)
+            .expect("validated");
+        effects = effects.reads(related.id.as_str());
+        let column = |m: &ModelSpec, name: &str| match m.field(name) {
+            Some(f) if f.ty == FieldType::Money => money_columns(f).0,
+            _ => name.to_owned(),
+        };
+        guards.push(Exists {
+            model: related.id.clone(),
+            label: related
+                .id
+                .split_once('.')
+                .map_or(related.id.as_str(), |(_, n)| n)
+                .replace('_', " "),
+            table: related.table.clone(),
+            matches: x
+                .matches
+                .iter()
+                .map(|(theirs, ours)| {
+                    let ty = related.field(theirs).map_or("uuid", |f| f.ty.sql());
+                    (theirs.clone(), ty, ours.clone())
+                })
+                .collect(),
+            null: x.null.iter().map(|n| column(related, n)).collect(),
+            pointer: x
+                .matches
+                .first()
+                .map(|(_, ours)| format!("/{ours}"))
+                .unwrap_or_default(),
+        });
+    }
+    let unchanged = (*repeat == Repeat::Unchanged).then(|| {
+        set.iter()
+            .filter_map(|(field, value)| match value {
+                SetValue::Value(v) => Some(CheckSpec {
+                    field: field.clone(),
+                    op: Compare::Eq,
+                    value: v.clone(),
+                }),
+                SetValue::Now => None,
+            })
+            .collect()
+    });
     let op = IntentOp::<S> {
         info: OperationDescriptor::new(id.as_str(), "1", Mode::Write)
             .audiences(audiences)
             .summary(format!("{id}: an action on {model}"))
-            .effects(Effects::new().writes(model.as_str())),
+            .effects(effects),
         permission: Permission::declared(resolved, permission),
         input: contract,
         output: representation(spec),
@@ -1223,6 +1298,10 @@ where
             set: set.clone(),
             when: when.clone(),
             accept: accept.clone(),
+            require: require.clone(),
+            check: check.clone(),
+            exists: guards,
+            unchanged,
         })),
         _state: PhantomData,
     };
@@ -1679,15 +1758,24 @@ impl<S> IntentOp<S> {
                 let model = &self.model;
                 let row = ctx
                     .with(async |conn, scope| {
-                        let current = fetch(conn, model, scope, id, true)
+                        let row = fetch(conn, model, scope, id, true)
                             .await?
-                            .ok_or_else(Problem::not_found)?
-                            .to_json();
-                        if current["version"].as_i64() != Some(version) {
+                            .ok_or_else(Problem::not_found)?;
+                        let current = &row.data;
+                        if current.get("version").and_then(Value::as_i64) != Some(version) {
                             return Err(Problem::precondition_failed());
                         }
+                        // Asking for the state the row already has (ADR-036).
+                        if let Some(unchanged) = &action.unchanged
+                            && compare(conn, model, current, unchanged)
+                                .await?
+                                .into_iter()
+                                .all(|met| met)
+                        {
+                            return Ok(row);
+                        }
                         for (field, allowed) in &action.when {
-                            if !allowed.contains(&current[field.as_str()]) {
+                            if !allowed.contains(current.get(field).unwrap_or(&Value::Null)) {
                                 let list: Vec<String> =
                                     allowed.iter().map(Value::to_string).collect();
                                 return Err(Problem::conflict("invalid_state").with_detail(
@@ -1715,6 +1803,7 @@ impl<S> IntentOp<S> {
                             };
                             values.insert(field.clone(), value);
                         }
+                        guard(conn, model, scope, action, current, &values).await?;
                         update(conn, model, scope, id, values, Some(version))
                             .await?
                             .ok_or_else(Problem::precondition_failed)
@@ -1881,6 +1970,223 @@ impl<S> IntentOp<S> {
             }
         }
     }
+}
+
+/// An action's `require`, `check` and `exists` (ADR-036), on the row as it
+/// would be after the write. Every unmet condition is reported in one 409
+/// `requirement_unmet`; a null value never meets a condition.
+async fn guard(
+    conn: &mut PgConnection,
+    model: &ModelSpec,
+    scope: &Scope,
+    action: &Action,
+    current: &Map<String, Value>,
+    values: &Map<String, Value>,
+) -> Result<(), Problem> {
+    if action.require.is_empty() && action.check.is_empty() && action.exists.is_empty() {
+        return Ok(());
+    }
+    let mut after = current.clone();
+    for (k, v) in values {
+        after.insert(k.clone(), v.clone());
+    }
+    let value = |field: &str| after.get(field).filter(|v| !v.is_null());
+    let mut errors = Vec::new();
+    for field in &action.require {
+        if value(field).is_none() {
+            errors.push(trestle_core::FieldError::new(
+                format!("/{field}"),
+                "required",
+                format!("This needs {field}."),
+            ));
+        }
+    }
+    let met = compare(conn, model, &after, &action.check).await?;
+    for (check, met) in action.check.iter().zip(met) {
+        if met {
+            continue;
+        }
+        let field = &check.field;
+        let shown = match &check.value {
+            Value::Object(m) => format!(
+                "{} {}",
+                m.get("amount").and_then(Value::as_str).unwrap_or_default(),
+                m.get("currency")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+            ),
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        let params = json!({ "op": check.op.as_str(), "value": check.value });
+        let theirs = check.value.get("currency").and_then(Value::as_str);
+        let ours = value(field)
+            .and_then(|v| v.get("currency"))
+            .and_then(Value::as_str);
+        let error = match (theirs, ours) {
+            (Some(theirs), Some(ours)) if theirs != ours => trestle_core::FieldError::new(
+                format!("/{field}"),
+                "currency_mismatch",
+                format!("{field} is in {ours}, so it cannot be compared with {shown}."),
+            ),
+            _ => trestle_core::FieldError::new(
+                format!("/{field}"),
+                "check",
+                format!("{field} must be {} {shown}.", compare_words(check.op)),
+            ),
+        };
+        errors.push(error.with_params(params));
+    }
+    for x in &action.exists {
+        if !exists(conn, scope, x, &after).await? {
+            let matched: Vec<String> = x
+                .matches
+                .iter()
+                .map(|(theirs, _, ours)| format!("{theirs} = {ours}"))
+                .collect();
+            errors.push(
+                trestle_core::FieldError::new(
+                    x.pointer.clone(),
+                    "exists",
+                    format!(
+                        "This needs a matching {} ({}).",
+                        x.label,
+                        matched.join(", ")
+                    ),
+                )
+                .with_params(json!({ "model": x.model })),
+            );
+        }
+    }
+    if errors.is_empty() {
+        return Ok(());
+    }
+    let detail: Vec<&str> = errors.iter().map(|e| e.message.as_str()).collect();
+    Err(Problem::conflict("requirement_unmet")
+        .with_detail(&detail.join(" "))
+        .with_errors(errors))
+}
+
+fn compare_words(op: Compare) -> &'static str {
+    match op {
+        Compare::Eq => "equal to",
+        Compare::Ne => "other than",
+        Compare::Lt => "less than",
+        Compare::Le => "at most",
+        Compare::Gt => "more than",
+        Compare::Ge => "at least",
+    }
+}
+
+/// Evaluates comparisons on a row in one query, in PostgreSQL's types
+/// (numeric, date, timestamptz, interval), so `"10.5"` equals `"10.50"`
+/// and offsets don't matter. A null side is never met.
+async fn compare(
+    conn: &mut PgConnection,
+    model: &ModelSpec,
+    row: &Map<String, Value>,
+    checks: &[CheckSpec],
+) -> Result<Vec<bool>, Problem> {
+    if checks.is_empty() {
+        return Ok(Vec::new());
+    }
+    let text = |v: &Value| match v {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    let mut binds = Vec::new();
+    let mut exprs = Vec::new();
+    for c in checks {
+        let f = model
+            .field(&c.field)
+            .ok_or_else(|| internal(&format!("{:?} is not a field of {}", c.field, model.id)))?;
+        let op = c.op.sql();
+        let expr = if f.ty == FieldType::Money {
+            let (amount, currency) = match &c.value {
+                Value::Object(m) => (
+                    m.get("amount").map(text).unwrap_or_default(),
+                    m.get("currency").map(text),
+                ),
+                other => (text(other), None),
+            };
+            binds.push(amount);
+            let mut expr = format!(
+                "($1::jsonb->'{0}'->>'amount')::numeric {op} ${1}::numeric",
+                f.id,
+                binds.len() + 1
+            );
+            if let Some(currency) = currency {
+                binds.push(currency);
+                expr = format!(
+                    "{expr} AND ($1::jsonb->'{}'->>'currency') = ${}",
+                    f.id,
+                    binds.len() + 1
+                );
+            }
+            expr
+        } else {
+            binds.push(text(&c.value));
+            let ty = f.ty.sql();
+            format!(
+                "($1::jsonb->>'{}')::{ty} {op} ${}::{ty}",
+                f.id,
+                binds.len() + 1
+            )
+        };
+        exprs.push(format!("COALESCE(({expr}), false)"));
+    }
+    let sql = format!("SELECT ARRAY[{}]::boolean[]", exprs.join(", "));
+    let mut q =
+        sqlx::query_scalar::<_, Vec<bool>>(&sql).bind(Value::Object(row.clone()).to_string());
+    for b in binds {
+        q = q.bind(b);
+    }
+    Ok(q.fetch_one(&mut *conn).await?)
+}
+
+/// Whether a related row in the caller's tenant matches `row`. The row
+/// found is locked `FOR SHARE` until the action commits, so no concurrent
+/// update (setting `ended_at`, say) or delete can undo the condition
+/// before then; one waiting on such an update rechecks the new version.
+async fn exists(
+    conn: &mut PgConnection,
+    scope: &Scope,
+    x: &Exists,
+    row: &Map<String, Value>,
+) -> Result<bool, Problem> {
+    let mut binds = Vec::new();
+    for (_, _, ours) in &x.matches {
+        match row.get(ours) {
+            None | Some(Value::Null) => return Ok(false),
+            Some(Value::String(s)) => binds.push(s.clone()),
+            Some(other) => binds.push(other.to_string()),
+        }
+    }
+    let mut conditions = Vec::new();
+    let mut next = 1;
+    if let Some((col, _)) = &scope.tenant {
+        conditions.push(format!("t.{col} = $1"));
+        next = 2;
+    }
+    for (i, (theirs, ty, _)) in x.matches.iter().enumerate() {
+        conditions.push(format!("t.{theirs} = ${}::{ty}", next + i));
+    }
+    for column in &x.null {
+        conditions.push(format!("t.{column} IS NULL"));
+    }
+    let sql = format!(
+        "SELECT 1 FROM {} t WHERE {} LIMIT 1 FOR SHARE",
+        x.table,
+        conditions.join(" AND ")
+    );
+    let mut q = sqlx::query_scalar::<_, i32>(&sql);
+    if let Some((_, t)) = &scope.tenant {
+        q = q.bind(*t);
+    }
+    for b in binds {
+        q = q.bind(b);
+    }
+    Ok(q.fetch_optional(&mut *conn).await?.is_some())
 }
 
 // SQL. Identifiers are validated lowercase names from the intent; values

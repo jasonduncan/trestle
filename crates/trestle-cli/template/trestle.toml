@@ -50,6 +50,11 @@ order = "-created_at"
 # permission = "notes.write"
 # set = { archived = true }
 # when = { archived = [false] }
+# Guards (ADR-036), on the row as written: non-null fields, comparisons,
+# and related rows that must exist in the tenant. Unmet is a 409.
+# require = ["title"]
+# check = [{ field = "title", ne = "Untitled" }]
+# repeat = "unchanged"   # archiving an archived note is a 200 no-op
 
 # Show notes in the admin shell to callers with a permission (add it to a
 # role first). Buttons still run each operation's own permission.

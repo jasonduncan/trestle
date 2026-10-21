@@ -31,6 +31,15 @@ promise.
   `Ctx::update` and `Row::set` refuse it with a 500 that rolls back. Such a
   field needs `optional` or a `default`, and an action that sets or accepts
   it. No migration is involved.
+- Guarded actions (ADR-036): `require`, `check` (`eq`, `ne`, `lt`, `le`,
+  `gt`, `ge`, money included) and `exists` (a matching row of another
+  model in the tenant, locked `FOR SHARE`) on an action endpoint hold on
+  the row as it would be written; every unmet condition is reported in one
+  409 `requirement_unmet`, and nothing is written. `repeat = "unchanged"`
+  makes a request for the state the row already has a 200 no-op with the
+  same version. `EndpointDoc` gains `require`, `check` (`CheckDoc`),
+  `exists` (`ExistsDoc`) and `repeat`. An action with `exists` declares
+  `reads` of that model, and its app requires the model's app (ADR-032).
 
 ### Changed
 - `FieldType::Enum` has a `labels` member, so a pattern
@@ -38,6 +47,9 @@ promise.
 - `FieldDoc` has a `writable` field and `FieldSpec` a `writable` member
   (`intent::spec::Writable`); struct literals need them or
   `..Default::default()`.
+- `EndpointSpec::Action` has `require`, `check`, `exists` and `repeat`
+  members (`intent::spec::{CheckSpec, ExistsSpec, Compare, Repeat}`);
+  patterns without `..` need them.
 - The browser packages decode `x-trestle-enum-labels`. Renderers from
   0.7.x refuse a schema that uses it.
 
