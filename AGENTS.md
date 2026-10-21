@@ -28,9 +28,10 @@ M0–M5 are built (2026-09-26). The project owner approved the pilot on 2026-10-
 exit); approval is the owner's alone and is never self-granted. Sign-in defaults to password
 accounts (an OIDC provider is optional and only mock-tested). Gmail SMTP sent a real
 `pilot mail test` on 2026-10-20. `deploy/Caddyfile` passes `make drill-edge` locally.
-The 2026-10-20 review's findings (`docs/security-review.md`) are fixed in 0.7.0 (SR-07
-mitigated). Still open: the external review (§12.4), a separate gate; the edge on a real host
-(ACME, DNS, firewall); publishing the npm packages (`@trestle-framework/*`). Do not claim general
+The 2026-10-20 review's findings (`docs/security-review.md`) are fixed in 0.7.x (SR-07
+mitigated); on 2026-10-21 the owner accepted that review as the §12.4 external review, closing
+the gate (the owner's decision alone), and plans a more comprehensive review later. Still open:
+the edge on a real host (ACME, DNS, firewall); publishing the npm packages (`@trestle-framework/*`). Do not claim general
 maturity or benchmark leadership. ADRs: 001–033 (015 reopens 009: jobs and outbox).
 
 ## Non-negotiables

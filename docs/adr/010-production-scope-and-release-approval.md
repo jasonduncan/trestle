@@ -59,6 +59,8 @@ rounds, with a prewarm and alternating targets.
 
 `docs/security-review.md` (self-review) lists controls, proofs and seven
 residual risks. External review has not happened and is a sign-off item.
+*(2026-10-21: closed. The owner accepted the 2026-10-20 review, whose findings
+are fixed in 0.7.x, as the §12.4 review.)*
 The review changed the code before this ADR:
 
 - The hot path held three process-wide locks: the metrics registry (with

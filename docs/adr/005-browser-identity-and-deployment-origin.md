@@ -134,7 +134,8 @@ the server.)
 - Choose the identity provider, register the client, and run the login
   against it (the mock is not a substitute).
 - External review of the session and CSRF design and of the login routes is
-  required before the pilot (§12.4).
+  required before the pilot (§12.4). *Done:* on 2026-10-21 the owner accepted
+  the 2026-10-20 review (`docs/security-review.md`) as that review.
 
 ## Addendum (2026-09-26): password accounts
 

@@ -14,6 +14,12 @@ promise.
 
 ## [Unreleased]
 
+### Security
+- The design's external-review gate (§12.4) is closed: the project owner
+  accepted the 2026-10-20 review (`docs/security-review.md`), with its
+  findings fixed in 0.7.x, as that review. A more comprehensive review is
+  planned.
+
 ## [0.7.1] - 2026-10-20
 
 ### Security

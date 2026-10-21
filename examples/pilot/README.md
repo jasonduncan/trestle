@@ -237,9 +237,9 @@ run unmodified against it):
 | Production boot checks | `examples/pilot/src/server.rs`: no dev tokens, a provider, keys, https, database TLS |
 | Rate limits and admission control | `crates/trestle-core/src/admission.rs` (429 `rate_limited`, 503 `overloaded`) |
 | Observability | `crates/trestle-core/src/metrics.rs`, internal `/metrics` (`TRESTLE_METRICS_BIND`); bounded labels |
-| Edge configuration | `deploy/Caddyfile` (not validated, Caddy is not installed), `deploy/pilot.service`, `deploy/pilot.env.example` |
+| Edge configuration | `deploy/Caddyfile` (checked locally by `make drill-edge`; not yet on a real host), `deploy/pilot.service`, `deploy/pilot.env.example` |
 | Recovery runbooks and compatibility matrix | `docs/runbooks/`, `docs/compatibility.md` |
-| Security review | `docs/security-review.md` (self-review; external review still required) |
+| Security review | `docs/security-review.md` (2026-10-20 review, findings fixed in 0.7.x; accepted by the owner as the §12.4 external review on 2026-10-21) |
 | Jobs and outbox | not needed by the pilot; ADR-009 records the deferral |
 
 | M5 demonstration | Evidence |
