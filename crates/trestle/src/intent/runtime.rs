@@ -720,6 +720,10 @@ where
                     // Every CRUD endpoint is a resource: the conventional
                     // bindings, and the admin profile when one is declared.
                     let mut resource = app.resource(model.as_str(), spec.path());
+                    if endpoint.idempotent() {
+                        // Create, update and delete; actions carry their own.
+                        resource = resource.idempotency_key();
+                    }
                     for op in ops {
                         let permission = if op.writes() { write } else { read };
                         let built = crud_operation::<S>(
@@ -787,6 +791,7 @@ where
                     permission,
                     handler,
                     input,
+                    idempotent,
                 } => {
                     if id.split_once('.').map(|(a, _)| a) != Some(self.id.as_str()) {
                         continue;
@@ -820,7 +825,10 @@ where
                         kind: Kind::Handler(handler.name.clone()),
                         _state: PhantomData,
                     };
-                    let http = Http::new(method.clone(), path.clone());
+                    let mut http = Http::new(method.clone(), path.clone());
+                    if *idempotent {
+                        http = http.idempotency_key();
+                    }
                     app.dyn_operation(Arc::new(op), Some(http));
                 }
                 EndpointSpec::Action {
@@ -1305,9 +1313,12 @@ where
         })),
         _state: PhantomData,
     };
-    let http = Http::post(path.clone())
+    let mut http = Http::post(path.clone())
         .if_match("expected_version")
         .etag("version");
+    if endpoint.idempotent() {
+        http = http.idempotency_key();
+    }
     (Arc::new(op), http)
 }
 

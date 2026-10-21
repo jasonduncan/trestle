@@ -230,6 +230,11 @@ pub struct EndpointDoc {
     /// Publish generated forms for this endpoint's writes (ADR-026).
     #[serde(default, skip_serializing_if = "is_default")]
     pub forms: bool,
+    /// The endpoint's writes accept an `Idempotency-Key`: CRUD create,
+    /// update and delete, an action, or a handler that is not a GET
+    /// (ADR-038).
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub idempotent: bool,
 }
 
 /// One `check = [...]` entry of an action: a field compared with a

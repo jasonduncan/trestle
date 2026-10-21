@@ -150,6 +150,7 @@ impl<S> AppBuilder<S> {
         ResourceRegistration {
             builder: self,
             index,
+            idempotency_key: false,
         }
     }
 

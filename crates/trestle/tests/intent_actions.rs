@@ -211,6 +211,25 @@ impl Server {
         body: Option<Value>,
         if_match: Option<&str>,
     ) -> (StatusCode, Value, Option<String>) {
+        let reply = self.keyed(method, uri, token, body, if_match, None).await;
+        (
+            reply.status,
+            serde_json::from_slice(&reply.bytes).unwrap_or(Value::Null),
+            reply.etag,
+        )
+    }
+
+    /// [`send`](Self::send) with an optional `Idempotency-Key` (ADR-038),
+    /// keeping the exact body bytes and the replay marker.
+    async fn keyed(
+        &self,
+        method: &str,
+        uri: &str,
+        token: &str,
+        body: Option<Value>,
+        if_match: Option<&str>,
+        key: Option<&str>,
+    ) -> Reply {
         let tenant = if token == OUTSIDER {
             self.south
         } else {
@@ -224,6 +243,9 @@ impl Server {
         if let Some(tag) = if_match {
             req = req.header(header::IF_MATCH, tag);
         }
+        if let Some(key) = key {
+            req = req.header("Idempotency-Key", key);
+        }
         let req = req
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(body.unwrap_or(json!({})).to_string()))
@@ -234,12 +256,33 @@ impl Server {
             .headers()
             .get(header::ETAG)
             .map(|v| v.to_str().unwrap().to_owned());
-        let bytes = res.into_body().collect().await.unwrap().to_bytes();
-        (
+        let replayed = res.headers().contains_key("idempotency-replayed");
+        let location = res
+            .headers()
+            .get(header::LOCATION)
+            .map(|v| v.to_str().unwrap().to_owned());
+        let bytes = res.into_body().collect().await.unwrap().to_bytes().to_vec();
+        Reply {
             status,
-            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+            bytes,
             etag,
-        )
+            location,
+            replayed,
+        }
+    }
+}
+
+struct Reply {
+    status: StatusCode,
+    bytes: Vec<u8>,
+    etag: Option<String>,
+    location: Option<String>,
+    replayed: bool,
+}
+
+impl Reply {
+    fn json(&self) -> Value {
+        serde_json::from_slice(&self.bytes).unwrap_or(Value::Null)
     }
 }
 
@@ -1163,5 +1206,355 @@ async fn exists_needs_a_current_related_row_in_the_callers_tenant() {
     let body: Value =
         serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(unmet(&body), pairs(&[("/principal_contact", "exists")]));
+    server.db.drop().await;
+}
+
+/// ADR-038: `CRM` with an idempotent CRUD endpoint (create and update) and
+/// an idempotent `crm.win`; `crm.reopen` stays without keys.
+fn keyed_text() -> String {
+    let text = CRM
+        .replace(
+            r#"crud = ["get", "create"]"#,
+            r#"crud = ["get", "create", "update"]
+idempotent = true"#,
+        )
+        .replace(
+            r#"accept = ["reason"]"#,
+            r#"accept = ["reason"]
+idempotent = true"#,
+        );
+    assert_eq!(text.matches("idempotent = true").count(), 2);
+    text
+}
+
+/// Runs a built-in command the way the project binary would.
+fn cli(text: &str, dir: &std::path::Path, args: &[&str]) {
+    let project = || {
+        trestle::project()
+            .intent_str("trestle.toml", text)
+            .migrations_dir(dir)
+    };
+    let mut argv = vec!["crm"];
+    argv.extend_from_slice(args);
+    let matches = project().command().try_get_matches_from(argv).unwrap();
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(project().run_matches(&matches))
+        .unwrap_or_else(|e| panic!("{args:?}: {e}"));
+}
+
+#[test]
+fn idempotent_endpoints_are_writes_and_bring_the_receipt_table() {
+    let problems = |from: &str, to: &str| {
+        let text = CRM.replace(from, to);
+        assert_ne!(text, CRM, "the replacement applies: {from}");
+        trestle::intent::parse("trestle.toml", &text)
+            .err()
+            .map(|e| e.problems.join("\n"))
+            .unwrap_or_default()
+    };
+    // Reads can't take a key.
+    let read_only = problems(
+        r#"crud = ["get", "create"]"#,
+        r#"crud = ["get"]
+idempotent = true"#,
+    );
+    assert!(
+        read_only
+            .contains("idempotent = true is for writes, and crud = [...] lists only list and get"),
+        "{read_only}"
+    );
+    let get = problems(
+        "[[endpoints]]\nid = \"crm.reopen\"",
+        "[[endpoints]]\nid = \"crm.peek\"\nmodel = \"crm.deal\"\npath = \"GET /api/v1/deals/{id}/peek\"\n\
+         permission = \"crm.read\"\nhandler = \"crm::peek\"\nidempotent = true\n\n\
+         [[endpoints]]\nid = \"crm.reopen\"",
+    );
+    assert!(
+        get.contains(
+            r#"endpoint "crm.peek" is a GET, which only reads; idempotent = true is for writes"#
+        ),
+        "{get}"
+    );
+
+    // The receipt app is installed only when some endpoint is idempotent,
+    // and a project that installed it itself keeps its own.
+    let receipts = |registry: &trestle::Registry<State>| {
+        registry
+            .apps()
+            .iter()
+            .filter(|a| &*a.id == "idempotency")
+            .count()
+    };
+    let text = keyed_text();
+    let keyed = trestle::project()
+        .intent_str("trestle.toml", &text)
+        .assemble()
+        .unwrap();
+    assert_eq!(receipts(&keyed), 1);
+    let accepting: Vec<&str> = keyed
+        .operations()
+        .iter()
+        .filter(|o| o.accepts_idempotency_key())
+        .map(|o| &*o.info.id)
+        .collect();
+    assert_eq!(
+        accepting,
+        ["crm.deal.create", "crm.deal.update", "crm.win"],
+        "the CRUD writes and the idempotent action; never get or crm.reopen"
+    );
+    // OpenAPI documents the optional header where it is accepted, as for
+    // Rust bindings.
+    let openapi = keyed
+        .openapi(trestle::protocol::Audience::Product)
+        .to_string();
+    assert_eq!(openapi.matches(r#""name":"Idempotency-Key""#).count(), 3);
+    let own = trestle::project()
+        .install_app(trestle::core::idempotency::IdempotencyApp)
+        .intent_str("trestle.toml", &text)
+        .assemble()
+        .unwrap();
+    assert_eq!(receipts(&own), 1);
+    let plain = crm().assemble().unwrap();
+    assert_eq!(receipts(&plain), 0);
+    assert!(
+        plain
+            .desired_schema()
+            .model("idempotency.receipt")
+            .is_none()
+    );
+
+    // `makemigrations` writes the receipt table's migration with the
+    // intent's, and only then.
+    let dir = std::env::temp_dir().join(format!("trestle-u19-{}", uuid::Uuid::new_v4()));
+    cli(
+        &text,
+        &dir.join("keyed"),
+        &["makemigrations", "--name", "initial"],
+    );
+    cli(
+        CRM,
+        &dir.join("plain"),
+        &["makemigrations", "--name", "initial"],
+    );
+    for app in ["idempotency", "crm", "workspace"] {
+        assert!(
+            dir.join("keyed")
+                .join(app)
+                .join("0001_initial.sql")
+                .exists(),
+            "no migration for {app}"
+        );
+    }
+    assert!(
+        dir.join("plain")
+            .join("crm")
+            .join("0001_initial.sql")
+            .exists()
+    );
+    assert!(!dir.join("plain").join("idempotency").exists());
+    cli(&text, &dir.join("keyed"), &["makemigrations", "--check"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn idempotent_endpoints_replay_after_reauthorizing() {
+    let server =
+        Server::start_with(trestle::project().intent_str("trestle.toml", &keyed_text())).await;
+    let pool = server.db.pool().await;
+    let deals = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM deals")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+
+    // Create: the repeat replays the stored bytes, status and Location.
+    let body = json!({ "title": "Big" });
+    let first = server
+        .keyed(
+            "POST",
+            "/api/v1/deals",
+            MEMBER,
+            Some(body.clone()),
+            None,
+            Some("create-1"),
+        )
+        .await;
+    assert_eq!(first.status, StatusCode::CREATED, "{}", first.json());
+    assert!(!first.replayed);
+    let again = server
+        .keyed(
+            "POST",
+            "/api/v1/deals",
+            MEMBER,
+            Some(body.clone()),
+            None,
+            Some("create-1"),
+        )
+        .await;
+    assert_eq!(again.status, StatusCode::CREATED);
+    assert!(again.replayed);
+    assert_eq!(again.bytes, first.bytes);
+    assert_eq!(again.location, first.location);
+    assert_eq!(again.etag, first.etag);
+    assert_eq!(deals().await, 1, "one row");
+    // The same key with another body is the ADR-016 conflict.
+    let other = server
+        .keyed(
+            "POST",
+            "/api/v1/deals",
+            MEMBER,
+            Some(json!({ "title": "Small" })),
+            None,
+            Some("create-1"),
+        )
+        .await;
+    assert_eq!(other.status, StatusCode::CONFLICT);
+    assert_eq!(other.json()["code"], "idempotency_key_reused");
+    assert_eq!(deals().await, 1);
+
+    // An action: the replay answers with the first version; nothing runs.
+    let deal = first.json();
+    let id = deal["id"].as_str().unwrap();
+    let win = format!("/api/v1/deals/{id}/win");
+    let reason = json!({ "reason": "Signed" });
+    let won = server
+        .keyed(
+            "POST",
+            &win,
+            MEMBER,
+            Some(reason.clone()),
+            first.etag.as_deref(),
+            Some("win-1"),
+        )
+        .await;
+    assert_eq!(won.status, StatusCode::OK, "{}", won.json());
+    assert_eq!(won.json()["version"], 2);
+    let again = server
+        .keyed(
+            "POST",
+            &win,
+            MEMBER,
+            Some(reason.clone()),
+            first.etag.as_deref(),
+            Some("win-1"),
+        )
+        .await;
+    assert_eq!(again.status, StatusCode::OK, "{}", again.json());
+    assert!(again.replayed);
+    assert_eq!(again.bytes, won.bytes);
+    assert_eq!(again.etag, won.etag);
+    let (_, current, _) = server
+        .call(&format!("/api/v1/deals/{id}"), MEMBER, None, None)
+        .await;
+    assert_eq!(current["version"], 2, "the replay wrote nothing");
+    let other = server
+        .keyed(
+            "POST",
+            &win,
+            MEMBER,
+            Some(json!({ "reason": "Lost" })),
+            first.etag.as_deref(),
+            Some("win-1"),
+        )
+        .await;
+    assert_eq!(other.json()["code"], "idempotency_key_reused");
+
+    // CRUD update shares its endpoint's opt-in.
+    let patch = format!("/api/v1/deals/{id}");
+    let renamed = server
+        .keyed(
+            "PATCH",
+            &patch,
+            MEMBER,
+            Some(json!({ "title": "Bigger" })),
+            won.etag.as_deref(),
+            Some("patch-1"),
+        )
+        .await;
+    assert_eq!(renamed.status, StatusCode::OK, "{}", renamed.json());
+    let again = server
+        .keyed(
+            "PATCH",
+            &patch,
+            MEMBER,
+            Some(json!({ "title": "Bigger" })),
+            won.etag.as_deref(),
+            Some("patch-1"),
+        )
+        .await;
+    assert!(again.replayed);
+    assert_eq!(again.bytes, renamed.bytes);
+
+    // Endpoints without `idempotent = true` refuse a key, never ignore it.
+    let reopen = server
+        .keyed(
+            "POST",
+            &format!("/api/v1/deals/{id}/reopen"),
+            MEMBER,
+            None,
+            renamed.etag.as_deref(),
+            Some("reopen-1"),
+        )
+        .await;
+    assert_eq!(reopen.status, StatusCode::BAD_REQUEST);
+    assert_eq!(reopen.json()["code"], "idempotency_unsupported");
+    let read = server
+        .keyed("GET", &patch, MEMBER, None, None, Some("get-1"))
+        .await;
+    assert_eq!(read.json()["code"], "idempotency_unsupported");
+    let (_, current, _) = server.call(&patch, MEMBER, None, None).await;
+    assert_eq!(current["stage"], "won", "the refused reopen ran nothing");
+
+    // Registry::invoke honours the opt-in the same way.
+    let member = trestle::core::invocation::Invocation::for_actor(
+        trestle::core::identity::ActorId(uuid::Uuid::parse_str(MEMBER_ID).unwrap()),
+    )
+    .with_tenant(server.north);
+    let replayed = server
+        .registry
+        .invoke(
+            &server.state,
+            "crm.deal.create",
+            &member.clone().with_idempotency_key("create-1"),
+            &body,
+        )
+        .await
+        .unwrap();
+    assert_eq!(replayed, deal, "the receipt is shared with HTTP");
+    let refused = server
+        .registry
+        .invoke(
+            &server.state,
+            "crm.reopen",
+            &member.clone().with_idempotency_key("reopen-2"),
+            &json!({ "id": id, "expected_version": 3 }),
+        )
+        .await
+        .expect_err("no opt-in");
+    assert_eq!(refused.code(), "idempotency_unsupported");
+    assert_eq!(deals().await, 1);
+
+    // A replay is authorized again: once the member is only a viewer, the
+    // stored answer is not disclosed.
+    sqlx::query("UPDATE workspace_memberships SET role = 'viewer' WHERE actor_id = $1")
+        .bind(uuid::Uuid::parse_str(MEMBER_ID).unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+    let demoted = server
+        .keyed(
+            "POST",
+            "/api/v1/deals",
+            MEMBER,
+            Some(body),
+            None,
+            Some("create-1"),
+        )
+        .await;
+    assert_eq!(demoted.status, StatusCode::FORBIDDEN, "{}", demoted.json());
+    assert!(!demoted.replayed);
+    assert_eq!(demoted.json()["code"], "permission_denied");
     server.db.drop().await;
 }
