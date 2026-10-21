@@ -23,5 +23,16 @@ curl -H "Authorization: Bearer <token>" \
      http://localhost:8000/api/v1/notes
 ```
 
+People sign in with a password (`[auth] passwords`, on by default).
+Invite someone, then grant their actor ID a role as above. The printed link
+opens `/set-password` on `TRESTLE_PUBLIC_ORIGIN`, so that origin needs a
+frontend page for it, such as `SetPassword` from
+`@trestle-framework/interaction-react`:
+
+```sh
+trestle account invite --email you@example.com     # prints a one-time link
+trestle account list                               # shows the actor ID to grant
+```
+
 After editing models in `trestle.toml`: `trestle makemigrations`, then
 `trestle check`. `cargo test` boots the server against a throwaway database.

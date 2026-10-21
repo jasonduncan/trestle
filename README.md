@@ -125,6 +125,13 @@ fn main() -> std::process::ExitCode {
 }
 ```
 
+People sign in with email and password by default (`[auth] passwords`,
+on unless set to `false`; `oidc = "google"` adds a provider). The project
+then installs the identity app: `makemigrations` writes its migration, and
+`trestle account invite --email …` prints a one-time link to set a password.
+With `passwords = false` and no `oidc`, there are no accounts or
+`/api/v1/auth/*` routes (ADR-034).
+
 Roles are granted per tenant membership, so `[roles]` and endpoint
 permissions require `[tenancy]`. Endpoints and hooks can name Rust
 handlers; `trestle new` writes a fuller example, and

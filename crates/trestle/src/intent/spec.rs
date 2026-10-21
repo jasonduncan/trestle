@@ -133,6 +133,15 @@ impl Oidc {
     }
 }
 
+impl AuthSection {
+    /// Whether people sign in in a browser: passwords, an OpenID Connect
+    /// provider, or both. The project then installs the identity app
+    /// (accounts, sessions and the `/api/v1/auth/*` routes, ADR-034).
+    pub fn sign_in(&self) -> bool {
+        self.passwords || self.oidc.is_some()
+    }
+}
+
 fn yes() -> bool {
     true
 }
