@@ -3,15 +3,25 @@
 Reviewed through commit: `62c841e758e648730bdf2e63b5a0eb062beca0a6`
 (0.6.0 plus the npm namespace change).
 This is a source review, dependency audit and local adversarial test pass by
-Codex. It does not certify the external-review gate in design §12.4 as closed.
+Codex. It did not itself close the external-review gate in design §12.4; the
+project owner did (below).
 The current AGENTS.md records owner pilot approval on 2026-10-20; this review
 does not grant or replace that decision. The review itself changed only
 documentation and evidence.
 
 **Remediation (2026-10-20):** SR-01 to SR-06 are fixed and SR-07 is mitigated
 in 0.7.0; each finding's **Status** line names the change and its test. The
-findings below are kept as written at review time. The external-review gate
-(§12.4) remains open.
+findings below are kept as written at review time.
+
+**§12.4 gate (2026-10-21):** closed by the project owner, who accepted this
+review, with its findings fixed in 0.7.x (0.7.1 on crates.io), as the external
+review §12.4 requires. It covers the four areas §12.4 names: policy boundaries
+(identity → tenant policy), session and CSRF behaviour (browser → session),
+the metadata resolver (metadata → UI) and state-changing operations
+(transport → executor, retry/worker → writes); see the scope table below.
+The owner plans a more comprehensive review later. Review again before
+distributing restricted API keys (SR-07) or after changing any of those
+boundaries.
 
 The most urgent finding is an unauthenticated availability attack: stalled
 JSON uploads can retain all admission permits. Other findings concern password
@@ -388,5 +398,5 @@ and data; bound OIDC stale-key trust before enabling that provider path;
 repair client URL validation and update the development dependency; resolve
 scope enforcement before distributing restricted API keys. Then rerun focused
 regressions and the relevant deployment/browser checks. Closure of the
-external-review requirement remains a separate decision from the recorded
-owner pilot approval.
+external-review requirement was a separate decision from the owner's pilot
+approval; the owner made it on 2026-10-21 (see the top of this document).
