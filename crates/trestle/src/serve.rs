@@ -407,6 +407,22 @@ fn local_database(options: &PgConnectOptions) -> bool {
         || matches!(options.get_host(), "localhost" | "127.0.0.1" | "::1")
 }
 
+/// Whether the identity app is installed (ADR-034): the app `identity`,
+/// with each of its models exactly as `trestle_identity` declares them, so
+/// a project model that only shares a name doesn't count.
+fn identity_installed<S>(registry: &Registry<S>) -> bool {
+    let schema = registry.desired_schema();
+    registry.apps().iter().any(|app| &*app.id == "identity")
+        && [
+            trestle_identity::session_model(),
+            trestle_identity::login_model(),
+            trestle_identity::account_model(),
+            trestle_identity::account_token_model(),
+        ]
+        .iter()
+        .all(|model| schema.model(model.id()) == Some(&model.state()))
+}
+
 /// Refuses, listing every problem at once, a configuration `serve` must
 /// not start with. Runs before anything connects to the database, so an
 /// unauthenticated database (SR-03) never sees the credentials.
@@ -427,12 +443,7 @@ pub(crate) fn refuse_unsafe<S, X: ServeExtension<S>>(
         );
     }
     let browser_sessions = config.password_login || config.oidc_client_id.is_some();
-    if browser_sessions
-        && registry
-            .desired_schema()
-            .model("identity.session")
-            .is_none()
-    {
+    if browser_sessions && !identity_installed(registry) {
         problems.push(
             "browser sign-in needs the identity tables: install trestle::identity::IdentityApp \
              (trestle.toml projects get it from [auth]) and run makemigrations"

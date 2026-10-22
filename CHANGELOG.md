@@ -14,6 +14,13 @@ promise.
 
 ## [Unreleased]
 
+### Fixed
+- `serve`'s check that browser sign-in has the identity tables (ADR-034)
+  passed for any model named `identity.session`, such as one of a project's
+  own `identity` app, and the server then failed at the first sign-in. It
+  now needs the identity app's own models, exactly as `trestle_identity`
+  declares them.
+
 ## [0.8.1] - 2026-10-22
 
 ### Security
