@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 use trestle::intent::toml;
-use trestle::intent::{EndpointDoc, FieldDoc, IntentDoc, ModelDoc, TenancyDoc};
+use trestle::intent::{EndpointDoc, FieldDoc, IntentDoc, ModelDoc, TenancyDoc, Write};
 use trestle::prelude::*;
 use trestle::protocol::Audience;
 use trestle::testing::TestApp;
@@ -22,6 +22,10 @@ async fn passthrough(_ctx: Ctx, row: Row) -> Result<Row> {
     Ok(row)
 }
 
+async fn unchanged(_ctx: Ctx, write: Write) -> Result<Write> {
+    Ok(write)
+}
+
 async fn flag(ctx: Ctx, input: Input) -> Result<Row> {
     ctx.get("crm.deal", input.id()?).await
 }
@@ -35,6 +39,8 @@ fn crm(project: trestle::Project) -> trestle::Project {
     project
         .handler("crm::flag", flag)
         .hook("crm::tidy", passthrough)
+        .write_hook("crm::deal_rules", unchanged)
+        .write_hook("crm::deal_effects", unchanged)
 }
 
 fn notes(project: trestle::Project) -> trestle::Project {
@@ -94,6 +100,8 @@ fn a_document_reads_every_key_and_assembles_like_its_file() {
     assert_eq!(doc.models[1].fields[1].currencies, ["EUR", "USD"]);
     assert_eq!(doc.models[1].fields[4].labels["won"], "Closed won");
     assert_eq!(doc.models[1].fields[4].writable.as_deref(), Some("actions"));
+    assert_eq!(doc.models[1].hooks["before_write"], "crm::deal_rules");
+    assert_eq!(doc.models[1].hooks["after_write"], "crm::deal_effects");
     assert_eq!(doc.endpoints[3].accept, ["reason"]);
     assert_eq!(
         doc.endpoints[3].check[0].gt.as_ref().unwrap()["currency"].as_str(),

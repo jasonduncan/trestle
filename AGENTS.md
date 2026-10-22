@@ -32,7 +32,7 @@ The 2026-10-20 review's findings (`docs/security-review.md`) are fixed in 0.7.x 
 mitigated); on 2026-10-21 the owner accepted that review as the §12.4 external review, closing
 the gate (the owner's decision alone), and plans a more comprehensive review later. Still open:
 the edge on a real host (ACME, DNS, firewall); publishing the npm packages (`@trestle-framework/*`). Do not claim general
-maturity or benchmark leadership. ADRs: 001–038 (015 reopens 009: jobs and outbox).
+maturity or benchmark leadership. ADRs: 001–039 (015 reopens 009: jobs and outbox).
 
 ## Non-negotiables
 - Installing a model publishes nothing (I01). Endpoints, forms and writable fields are explicit.
@@ -78,7 +78,9 @@ maturity or benchmark leadership. ADRs: 001–038 (015 reopens 009: jobs and out
 - Rust operations in an intent project (ADR-031) check roles with `intent::Permission` and
   touch intent models only through `Ctx::run` on the operation's own connection; never
   repeat tenancy, membership or CRUD SQL. A `Ctx` exists only inside a handler, a hook or
-  `Ctx::run`, and writes only on `DynConn::Write`.
+  `Ctx::run`, and writes only on `DynConn::Write`. Every write to an intent model goes
+  through `Ctx::write`, which runs the model's write hooks (ADR-039); never add a write
+  path around it.
 - Reads use `trestle_core::query::select(scope, ..)`; there is no unscoped variant on purpose.
 - Intent `ref` writes check the target row is in the caller's tenant (`check_references`, ADR-024)
   and report another tenant's row exactly like a missing one; never add a write path around it.

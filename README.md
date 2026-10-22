@@ -134,7 +134,9 @@ With `passwords = false` and no `oidc`, there are no accounts or
 
 Roles are granted per tenant membership, so `[roles]` and endpoint
 permissions require `[tenancy]`. Endpoints and hooks can name Rust
-handlers; `trestle new` writes a fuller example, and
+handlers, and a model's `hooks = { before_write = .., after_write = .. }`
+run on every write to it, whichever endpoint, action or handler makes it
+(ADR-039); `trestle new` writes a fuller example, and
 `crates/trestle/examples/notes_intent/` shows both. `trestle check` validates
 the file and reports problems with line numbers.
 

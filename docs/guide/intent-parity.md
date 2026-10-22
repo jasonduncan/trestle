@@ -33,7 +33,7 @@ decision for later:
 | Operation IDs | `units.list`, `units.create`, `units.get` | `units.unit.list`, `.create`, `.get` |
 | `version` in responses | string of digits (`"1"`) | integer |
 | List paging | signed keyset cursor | signed keyset cursor (ADR-024) |
-| Audit | records an audit event on create | none (it would need an `after_create` hook) |
+| Audit | records an audit event on create | none (it would need an `after_create` hook, or a model `after_write` hook, ADR-039) |
 | Admin profile | product and admin audiences | product only, unless the file adds `[[admin]]` (ADR-029) |
 | Error message wording | "...already exists in this school." | "A unit with this name already exists." |
 
@@ -48,6 +48,8 @@ waiting for:
   `writable = "actions"` (ADR-037);
 - safe retries: `idempotent = true` makes an endpoint's writes accept an
   `Idempotency-Key` (ADR-038);
+- rules on every write: a model's `before_write` and `after_write` hooks
+  run on CRUD, actions and `Ctx` writes alike (ADR-039);
 - generated forms: `forms = true` (ADR-026);
 - admin views: `[[admin]]` (ADR-029).
 

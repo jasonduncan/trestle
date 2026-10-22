@@ -30,6 +30,7 @@ unique = [["name"]]
 
 [[models]]
 id = "crm.deal"
+hooks = { before_write = "crm::deal_rules", after_write = "crm::deal_effects" }
 fields = [
   { id = "title", type = "text", max = 100 },
   { id = "amount", type = "money", precision = 10, scale = 2, currencies = ["EUR", "USD"], optional = true },

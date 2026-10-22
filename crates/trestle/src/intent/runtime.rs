@@ -138,6 +138,9 @@ impl Input {
 #[derive(Clone)]
 pub struct Ctx {
     inner: Arc<CtxInner>,
+    /// Models whose write hooks are running, outermost first (ADR-039). A
+    /// write to one of them from inside its hooks does not run them again.
+    hooking: Vec<String>,
 }
 
 struct CtxInner {
@@ -173,6 +176,7 @@ impl Ctx {
                 intent: resolved.clone(),
                 writes,
             }),
+            hooking: Vec::new(),
         };
         let result = f(handle.clone()).await;
         let conn = handle.inner.conn.lock().await.take();
@@ -235,6 +239,21 @@ impl Ctx {
         .await
     }
 
+    /// One record, locked `FOR UPDATE` until the operation commits, or 404
+    /// (ADR-039). Another write to the row, and another `get_for_update`
+    /// of it, waits until then, so hooks and operations can serialize on
+    /// a related row. Only in a write.
+    pub async fn get_for_update(&self, model: &str, id: Uuid) -> Result<Row, Problem> {
+        self.check_writable()?;
+        let model = &self.model(model)?;
+        self.with(async |conn, scope| {
+            fetch(conn, model, scope, id, true)
+                .await?
+                .ok_or_else(Problem::not_found)
+        })
+        .await
+    }
+
     /// Records matching `filter` (field equality), newest first.
     pub async fn list(&self, model: &str, filter: Value) -> Result<Vec<Row>, Problem> {
         let model = &self.model(model)?;
@@ -259,7 +278,8 @@ impl Ctx {
     }
 
     /// Creates a record. Values are validated against the model's create
-    /// contract, as if they came from a request.
+    /// contract, as if they came from a request. The model's write hooks
+    /// run (ADR-039).
     pub async fn create(&self, model: &str, values: Value) -> Result<Row, Problem> {
         self.check_writable()?;
         let model = &self.model(model)?;
@@ -269,44 +289,314 @@ impl Ctx {
         let contract = create_contract(model);
         let values = contract.validate(&values).map_err(Problem::from)?;
         let values = values.as_object().cloned().unwrap_or_default();
-        self.with(async |conn, scope| insert(conn, model, scope, values).await)
+        self.write(model, CTX_OPERATION, Change::Create, None, values)
             .await
     }
 
-    /// Changes fields of a record (no version check), or 404.
+    /// Changes fields of a record (no version check), or 404. The model's
+    /// write hooks run (ADR-039).
     pub async fn update(&self, model: &str, id: Uuid, values: Value) -> Result<Row, Problem> {
         self.check_writable()?;
         let model = &self.model(model)?;
-        let mut instance = values
-            .as_object()
-            .cloned()
-            .ok_or_else(|| internal("update values must be a JSON object"))?;
-        refuse_managed(model, instance.keys().map(String::as_str))?;
-        instance.insert("id".into(), json!(id));
-        let contract = update_contract(model, false);
-        let values = contract
-            .validate(&Value::Object(instance))
-            .map_err(Problem::from)?;
-        let mut values = values.as_object().cloned().unwrap_or_default();
-        values.remove("id");
-        self.with(async |conn, scope| {
-            update(conn, model, scope, id, values, None)
-                .await?
-                .ok_or_else(Problem::not_found)
-        })
-        .await
+        let values = update_values(model, id, values)?;
+        let change = Change::Update { id, version: None };
+        self.write(model, CTX_OPERATION, change, None, values).await
     }
 
-    /// Deletes a record, or 404.
+    /// Changes fields of a record only if its version is still
+    /// `expected_version` (ADR-039): 404 if it is missing, and the 412
+    /// `precondition_failed` of a stale `If-Match` if another write got
+    /// there first. The row is locked `FOR UPDATE` before the comparison.
+    /// The model's write hooks run.
+    pub async fn update_versioned(
+        &self,
+        model: &str,
+        id: Uuid,
+        expected_version: i64,
+        values: Value,
+    ) -> Result<Row, Problem> {
+        self.check_writable()?;
+        let model = &self.model(model)?;
+        let values = update_values(model, id, values)?;
+        let current = self
+            .with(async |conn, scope| fetch(conn, model, scope, id, true).await)
+            .await?
+            .ok_or_else(Problem::not_found)?;
+        if current.data.get("version").and_then(Value::as_i64) != Some(expected_version) {
+            return Err(Problem::precondition_failed());
+        }
+        let change = Change::Update {
+            id,
+            version: Some(expected_version),
+        };
+        self.write(model, CTX_OPERATION, change, Some(current), values)
+            .await
+    }
+
+    /// Deletes a record, or 404. The model's write hooks run (ADR-039).
     pub async fn delete(&self, model: &str, id: Uuid) -> Result<Row, Problem> {
         self.check_writable()?;
         let model = &self.model(model)?;
-        self.with(async |conn, scope| {
-            delete(conn, model, scope, id, None)
+        let change = Change::Delete { id, version: None };
+        self.write(model, CTX_OPERATION, change, None, Map::new())
+            .await
+    }
+
+    /// The model's write hooks, unless it has none or they are already
+    /// running in this chain of hooks (ADR-039).
+    fn write_hooks(&self, model: &ModelSpec) -> Result<Option<WriteHooks>, Problem> {
+        if model.hooks.is_empty() || self.hooking.contains(&model.id) {
+            return Ok(None);
+        }
+        if self.hooking.len() >= MAX_HOOK_DEPTH {
+            return Err(internal(&format!(
+                "write hooks nested more than {MAX_HOOK_DEPTH} deep: {} -> {}",
+                self.hooking.join(" -> "),
+                model.id
+            )));
+        }
+        let find = |point: &str| {
+            model
+                .hooks
+                .get(point)
+                .map(|named| {
+                    self.inner
+                        .intent
+                        .handlers
+                        .write_hooks
+                        .get(&named.name)
+                        .cloned()
+                        .ok_or_else(|| {
+                            internal(&format!("write hook {:?} is not registered", named.name))
+                        })
+                })
+                .transpose()
+        };
+        Ok(Some(WriteHooks {
+            before: find("before_write")?,
+            after: find("after_write")?,
+        }))
+    }
+
+    /// The context a model's write hooks get: the same connection, actor
+    /// and tenant, with the model added to the running chain.
+    fn nested(&self, model: &ModelSpec) -> Ctx {
+        let mut hooking = self.hooking.clone();
+        hooking.push(model.id.clone());
+        Ctx {
+            inner: self.inner.clone(),
+            hooking,
+        }
+    }
+
+    /// Every write to an intent model goes through here, whichever path
+    /// asked for it (ADR-039): the model's `before_write` hook (which may
+    /// add changes), the row write, then its `after_write` hook, all on the
+    /// operation's connection. `old` is the row as locked by the caller;
+    /// for an update or delete with hooks it is fetched `FOR UPDATE` here
+    /// otherwise.
+    async fn write(
+        &self,
+        model: &Arc<ModelSpec>,
+        operation: &str,
+        change: Change,
+        mut old: Option<Row>,
+        mut values: Map<String, Value>,
+    ) -> Result<Row, Problem> {
+        let hooks = self.write_hooks(model)?;
+        let kind = change.kind();
+        if let (Some(_), None, Change::Update { id, .. } | Change::Delete { id, .. }) =
+            (&hooks, &old, &change)
+        {
+            let id = *id;
+            old = Some(
+                self.with(async |conn, scope| fetch(conn, model, scope, id, true).await)
+                    .await?
+                    .ok_or_else(Problem::not_found)?,
+            );
+        }
+        if let Some(before) = hooks.as_ref().and_then(|h| h.before.clone()) {
+            let new = match kind {
+                WriteKind::Create => Some(Row::new(model.clone(), values.clone())),
+                WriteKind::Update => old.clone().map(|mut row| {
+                    row.data.extend(values.clone());
+                    row
+                }),
+                WriteKind::Delete => None,
+            };
+            let write = Write {
+                operation: operation.to_owned(),
+                kind,
+                old: old.clone(),
+                new,
+                changes: Map::new(),
+                before: true,
+            };
+            let write = before(self.nested(model), write).await?;
+            values.extend(write.changes);
+        }
+        let missing = |version: Option<i64>| {
+            if version.is_some() {
+                Problem::precondition_failed()
+            } else {
+                Problem::not_found()
+            }
+        };
+        let written = match change {
+            Change::Create => {
+                self.with(async |conn, scope| insert(conn, model, scope, values).await)
+                    .await?
+            }
+            Change::Update { id, version } => self
+                .with(async |conn, scope| update(conn, model, scope, id, values, version).await)
                 .await?
-                .ok_or_else(Problem::not_found)
-        })
-        .await
+                .ok_or_else(|| missing(version))?,
+            Change::Delete { id, version } => self
+                .with(async |conn, scope| delete(conn, model, scope, id, version).await)
+                .await?
+                .ok_or_else(|| missing(version))?,
+        };
+        if let Some(after) = hooks.and_then(|h| h.after) {
+            let write = Write {
+                operation: operation.to_owned(),
+                kind,
+                old,
+                new: (kind != WriteKind::Delete).then(|| written.clone()),
+                changes: Map::new(),
+                before: false,
+            };
+            after(self.nested(model), write).await?;
+        }
+        Ok(written)
+    }
+}
+
+/// `Write::operation` for writes made through [`Ctx`]: by handlers, hooks
+/// and Rust operations (ADR-039).
+const CTX_OPERATION: &str = "ctx";
+
+/// A backstop on nested write hooks (ADR-039). A model's hooks never
+/// re-enter themselves, so a chain is at most as long as the number of
+/// hooked models; this bounds it regardless.
+const MAX_HOOK_DEPTH: usize = 8;
+
+/// The row write [`Ctx::write`] makes.
+enum Change {
+    Create,
+    /// `version: Some` is a conditional write whose miss is a 412.
+    Update {
+        id: Uuid,
+        version: Option<i64>,
+    },
+    Delete {
+        id: Uuid,
+        version: Option<i64>,
+    },
+}
+
+impl Change {
+    fn kind(&self) -> WriteKind {
+        match self {
+            Change::Create => WriteKind::Create,
+            Change::Update { .. } => WriteKind::Update,
+            Change::Delete { .. } => WriteKind::Delete,
+        }
+    }
+}
+
+/// A model's registered write hooks.
+struct WriteHooks {
+    before: Option<WriteHookFn>,
+    after: Option<WriteHookFn>,
+}
+
+/// Validated update values for `Ctx::update` and `Ctx::update_versioned`.
+fn update_values(
+    model: &ModelSpec,
+    id: Uuid,
+    values: Value,
+) -> Result<Map<String, Value>, Problem> {
+    let mut instance = values
+        .as_object()
+        .cloned()
+        .ok_or_else(|| internal("update values must be a JSON object"))?;
+    refuse_managed(model, instance.keys().map(String::as_str))?;
+    instance.insert("id".into(), json!(id));
+    let contract = update_contract(model, false);
+    let values = contract
+        .validate(&Value::Object(instance))
+        .map_err(Problem::from)?;
+    let mut values = values.as_object().cloned().unwrap_or_default();
+    values.remove("id");
+    Ok(values)
+}
+
+/// What a write changes (ADR-039).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteKind {
+    Create,
+    Update,
+    Delete,
+}
+
+impl WriteKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WriteKind::Create => "create",
+            WriteKind::Update => "update",
+            WriteKind::Delete => "delete",
+        }
+    }
+}
+
+/// One write to a model, as its write hooks see it (ADR-039).
+#[derive(Debug, Clone)]
+pub struct Write {
+    operation: String,
+    kind: WriteKind,
+    old: Option<Row>,
+    new: Option<Row>,
+    changes: Map<String, Value>,
+    before: bool,
+}
+
+impl Write {
+    /// The operation whose write this is (`crm.deal.update`, `crm.win`),
+    /// or `"ctx"` for a write through [`Ctx`] from a handler, a hook or a
+    /// Rust operation.
+    pub fn operation(&self) -> &str {
+        &self.operation
+    }
+
+    pub fn kind(&self) -> WriteKind {
+        self.kind
+    }
+
+    /// The row before the write, locked `FOR UPDATE`; `None` on create.
+    pub fn old(&self) -> Option<&Row> {
+        self.old.as_ref()
+    }
+
+    /// In `before_write`, the row about to be written (on create, the
+    /// values to insert, without `id` or defaults); in `after_write`, the
+    /// row as written. `None` on delete.
+    pub fn row(&self) -> Option<&Row> {
+        self.new.as_ref()
+    }
+
+    /// Changes a field of the row about to be written. Only `before_write`
+    /// on a create or update may; like [`Row::set`], it refuses fields
+    /// only actions write (ADR-037).
+    pub fn set(&mut self, field: &str, value: impl Serialize) -> Result<(), Problem> {
+        let Some(row) = self.new.as_mut().filter(|_| self.before) else {
+            return Err(internal(
+                "only a before_write hook on a create or update may change the row",
+            ));
+        };
+        row.set(field, value)?;
+        let value = row.data.get(field).cloned().unwrap_or(Value::Null);
+        self.changes.insert(field.to_owned(), value);
+        Ok(())
     }
 }
 
@@ -346,12 +636,17 @@ pub type HandlerFn =
     Arc<dyn Fn(Ctx, Input) -> BoxFuture<'static, Result<Row, Problem>> + Send + Sync>;
 /// A Rust hook on a CRUD endpoint (`hooks = { validate = "notes::check" }`).
 pub type HookFn = Arc<dyn Fn(Ctx, Row) -> BoxFuture<'static, Result<Row, Problem>> + Send + Sync>;
+/// A model's write hook (`hooks = { before_write = "crm::deal_rules" }` on
+/// `[[models]]`, ADR-039): runs on every write to the model.
+pub type WriteHookFn =
+    Arc<dyn Fn(Ctx, Write) -> BoxFuture<'static, Result<Write, Problem>> + Send + Sync>;
 
 /// Handlers and hooks registered by name in the project binary.
 #[derive(Clone, Default)]
 pub struct Handlers {
     pub(crate) handlers: BTreeMap<String, HandlerFn>,
     pub(crate) hooks: BTreeMap<String, HookFn>,
+    pub(crate) write_hooks: BTreeMap<String, WriteHookFn>,
 }
 
 impl Handlers {
@@ -371,6 +666,22 @@ impl Handlers {
     {
         self.hooks
             .insert(name.to_owned(), Arc::new(move |c, r| Box::pin(f(c, r))));
+    }
+
+    /// A model's write hook (ADR-039). It returns the [`Write`] it was
+    /// given, with any changes `before_write` made through [`Write::set`].
+    pub fn write_hook<F, Fut>(&mut self, name: &str, f: F)
+    where
+        F: Fn(Ctx, Write) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<Write, Problem>> + Send + 'static,
+    {
+        self.write_hooks
+            .insert(name.to_owned(), Arc::new(move |c, w| Box::pin(f(c, w))));
+    }
+
+    /// Whether nothing is registered.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.handlers.is_empty() && self.hooks.is_empty() && self.write_hooks.is_empty()
     }
 }
 
@@ -429,6 +740,28 @@ impl Resolved {
                         }
                     }
                 }
+            }
+        }
+        let mut used_write_hooks = Vec::new();
+        for model in &intent.models {
+            for (point, hook) in &model.hooks {
+                used_write_hooks.push(hook.name.clone());
+                if !handlers.write_hooks.contains_key(&hook.name) {
+                    let fname = hook.name.rsplit("::").next().unwrap_or("hook");
+                    problems.push(format!(
+                        "{file}:{} {point} hook of model {} names {:?}, which is not registered; \
+                         add .write_hook({:?}, {fname}) in src/main.rs",
+                        hook.line, model.id, hook.name, hook.name
+                    ));
+                }
+            }
+        }
+        for name in handlers.write_hooks.keys() {
+            if !used_write_hooks.contains(name) {
+                problems.push(format!(
+                    "write hook {name:?} is registered but no model in {file} names it; \
+                     add it under hooks = {{ before_write = ... }} on a model or remove the registration"
+                ));
             }
         }
         for name in handlers.handlers.keys() {
@@ -1292,11 +1625,16 @@ where
             })
             .collect()
     });
+    let mut info = OperationDescriptor::new(id.as_str(), "1", Mode::Write)
+        .audiences(audiences)
+        .summary(format!("{id}: an action on {model}"));
+    // The model's write hooks are Rust that may do anything, so an action
+    // that runs them declares nothing, like a hooked CRUD write (ADR-039).
+    if spec.hooks.is_empty() {
+        info = info.effects(effects);
+    }
     let op = IntentOp::<S> {
-        info: OperationDescriptor::new(id.as_str(), "1", Mode::Write)
-            .audiences(audiences)
-            .summary(format!("{id}: an action on {model}"))
-            .effects(effects),
+        info,
         permission: Permission::declared(resolved, permission),
         input: contract,
         output: representation(spec),
@@ -1390,15 +1728,17 @@ where
         ),
     };
     // Generated CRUD touches only its model. A hook is Rust code that may
-    // do anything, so a write that runs one declares nothing (ADR-018).
-    let hooked = match op {
-        Crud::List | Crud::Get => &[][..],
-        Crud::Create => &["validate", "before_create", "after_create"][..],
-        Crud::Update => &["validate", "before_update", "after_update"][..],
-        Crud::Delete => &["before_delete"][..],
-    }
-    .iter()
-    .any(|point| hooks.contains_key(*point));
+    // do anything, so a write that runs one declares nothing (ADR-018),
+    // and that includes the model's write hooks (ADR-039).
+    let hooked = (op.writes() && !model.hooks.is_empty())
+        || match op {
+            Crud::List | Crud::Get => &[][..],
+            Crud::Create => &["validate", "before_create", "after_create"][..],
+            Crud::Update => &["validate", "before_update", "after_update"][..],
+            Crud::Delete => &["before_delete"][..],
+        }
+        .iter()
+        .any(|point| hooks.contains_key(*point));
     let effects = match (op.writes(), hooked) {
         (false, _) => Some(Effects::new().reads(model.id.as_str())),
         (true, false) => Some(Effects::new().writes(model.id.as_str())),
@@ -1767,7 +2107,14 @@ impl<S> IntentOp<S> {
                         })?,
                 };
                 let model = &self.model;
-                let row = ctx
+                // Everything up to the write runs on the locked row; the
+                // write itself, with the model's write hooks, follows
+                // (ADR-039).
+                enum Planned {
+                    Unchanged(Row),
+                    Write(Row, Map<String, Value>),
+                }
+                let planned = ctx
                     .with(async |conn, scope| {
                         let row = fetch(conn, model, scope, id, true)
                             .await?
@@ -1783,7 +2130,7 @@ impl<S> IntentOp<S> {
                                 .into_iter()
                                 .all(|met| met)
                         {
-                            return Ok(row);
+                            return Ok(Planned::Unchanged(row));
                         }
                         for (field, allowed) in &action.when {
                             if !allowed.contains(current.get(field).unwrap_or(&Value::Null)) {
@@ -1815,11 +2162,20 @@ impl<S> IntentOp<S> {
                             values.insert(field.clone(), value);
                         }
                         guard(conn, model, scope, action, current, &values).await?;
-                        update(conn, model, scope, id, values, Some(version))
-                            .await?
-                            .ok_or_else(Problem::precondition_failed)
+                        Ok(Planned::Write(row, values))
                     })
                     .await?;
+                let row = match planned {
+                    Planned::Unchanged(row) => row,
+                    Planned::Write(current, values) => {
+                        let change = Change::Update {
+                            id,
+                            version: Some(version),
+                        };
+                        ctx.write(model, &self.info.id, change, Some(current), values)
+                            .await?
+                    }
+                };
                 Ok(row.to_json())
             }
             Kind::Handler(name) => {
@@ -1927,7 +2283,7 @@ impl<S> IntentOp<S> {
                         row = self.hook(ctx, hooks, "before_create", row).await?;
                         let values = crud_writes(model, &row.data);
                         let created = ctx
-                            .with(async |conn, scope| insert(conn, model, scope, values).await)
+                            .write(model, &self.info.id, Change::Create, None, values)
                             .await?;
                         let created = self.hook(ctx, hooks, "after_create", created).await?;
                         Ok(created.to_json())
@@ -1951,11 +2307,14 @@ impl<S> IntentOp<S> {
                         merged = self.hook(ctx, hooks, "before_update", merged).await?;
                         let changes = crud_writes(model, &merged.data);
                         let updated = ctx
-                            .with(async |conn, scope| {
-                                update(conn, model, scope, id, changes, version).await
-                            })
-                            .await?
-                            .ok_or_else(Problem::precondition_failed)?;
+                            .write(
+                                model,
+                                &self.info.id,
+                                Change::Update { id, version },
+                                Some(current),
+                                changes,
+                            )
+                            .await?;
                         let updated = self.hook(ctx, hooks, "after_update", updated).await?;
                         Ok(updated.to_json())
                     }
@@ -1970,11 +2329,17 @@ impl<S> IntentOp<S> {
                         }) {
                             return Err(Problem::precondition_failed());
                         }
-                        self.hook(ctx, hooks, "before_delete", current).await?;
+                        self.hook(ctx, hooks, "before_delete", current.clone())
+                            .await?;
                         let deleted = ctx
-                            .with(async |conn, scope| delete(conn, model, scope, id, version).await)
-                            .await?
-                            .ok_or_else(Problem::precondition_failed)?;
+                            .write(
+                                model,
+                                &self.info.id,
+                                Change::Delete { id, version },
+                                Some(current),
+                                Map::new(),
+                            )
+                            .await?;
                         Ok(deleted.to_json())
                     }
                 }

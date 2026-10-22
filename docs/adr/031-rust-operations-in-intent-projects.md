@@ -4,6 +4,10 @@
 **Design doc:** §3.4, §6.2 · **Amends:** the intent API, ADR-029 ·
 **Depends on:** ADR-013, ADR-014, ADR-030
 
+**Extended by [ADR-039](039-model-write-hooks.md):** `Ctx` writes run the
+written model's write hooks, and `Ctx` gains `get_for_update` and
+`update_versioned`.
+
 ## Context
 
 An intent project extends `trestle.toml` with Rust in only two ways:

@@ -125,6 +125,10 @@ pub struct ModelDoc {
     /// The field that names a row in relation pickers (ADR-026).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// Write hook point (`before_write`, `after_write`) → the Rust name it
+    /// runs, on every write to the model (ADR-039).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub hooks: BTreeMap<String, String>,
 }
 
 /// A model field, or an input field of a handler endpoint.
