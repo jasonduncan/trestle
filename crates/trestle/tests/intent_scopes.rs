@@ -467,12 +467,14 @@ fn a_scoped_models_tenant_wide_unique_set_is_a_warning() {
     let warnings = trestle::intent::parse("trestle.toml", &text)
         .unwrap()
         .warnings();
-    assert_eq!(warnings.len(), 1, "{warnings:#?}");
-    assert!(
-        warnings[0].contains(
-            r#"unique set ["title"] of crm.opportunity has no scope field (owner, team)"#
-        ),
-        "{warnings:#?}"
+    // Each set is flagged for every granted scope whose field it lacks:
+    // with the team in it, an @own caller still meets teammates' rows.
+    assert_eq!(
+        warnings,
+        [
+            r#"unique set ["title"] of crm.opportunity leaves out the field of scopes own (owner), team (team), so a caller granted one learns whether a row it can't see holds the value (ADR-040). Add the field to the set if the values are private to the scope"#,
+            r#"unique set ["team", "title"] of crm.opportunity leaves out the field of scope own (owner), so a caller granted one learns whether a row it can't see holds the value (ADR-040). Add the field to the set if the values are private to the scope"#,
+        ]
     );
 }
 

@@ -16,10 +16,9 @@ promise.
 
 ### Added
 - `Intent::warnings`: what parses but is likely a mistake. The project logs
-  each one when it loads `trestle.toml`. The first is a scoped model's
-  unique set that has none of its scope fields: it is unique across the
-  tenant, so a write inside a scope learns whether a hidden row holds the
-  value (ADR-040).
+  each one when it loads `trestle.toml`. The first is a unique set that
+  leaves out the field of a scope a grant uses: a caller granted that scope
+  learns whether a row it can't see holds the value (ADR-040).
 
 ## [0.8.1] - 2026-10-22
 

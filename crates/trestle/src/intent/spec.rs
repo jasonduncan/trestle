@@ -301,26 +301,42 @@ impl Intent {
     /// What parses but is likely a mistake. The project logs each one when
     /// it loads the file.
     ///
-    /// Today that is a scoped model's unique set without a scope field. It
-    /// is unique across the tenant, so a write inside a scope learns
-    /// whether a hidden row holds its value (ADR-040).
+    /// Today that is a scoped model's unique set without the field of a
+    /// scope that a grant uses. Within that scope the set is checked
+    /// against rows the caller can't see, so a write learns whether a
+    /// hidden row holds its value (ADR-040).
     pub fn warnings(&self) -> Vec<String> {
+        let granted: BTreeSet<&str> = self
+            .scoped
+            .values()
+            .flat_map(|grants| grants.values().flatten())
+            .map(String::as_str)
+            .collect();
         let mut warnings = Vec::new();
         for model in &self.models {
-            if model.scopes.is_empty() {
-                continue;
-            }
-            let fields: BTreeSet<&str> = model.scopes.values().map(|s| s.field.as_str()).collect();
             for set in &model.unique {
-                if !set.fields.iter().any(|f| fields.contains(f.as_str())) {
+                let missing: Vec<String> = model
+                    .scopes
+                    .iter()
+                    .filter(|(name, scope)| {
+                        granted.contains(name.as_str()) && !set.fields.contains(&scope.field)
+                    })
+                    .map(|(name, scope)| format!("{name} ({})", scope.field))
+                    .collect();
+                if !missing.is_empty() {
+                    let scopes = if missing.len() == 1 {
+                        "scope"
+                    } else {
+                        "scopes"
+                    };
                     warnings.push(format!(
-                        "unique set {:?} of {} has no scope field ({}), so it is unique across \
-                         the tenant: a scoped write learns whether a hidden row holds its value \
-                         (ADR-040). Add the scope field to the set if the values are private to \
-                         a scope",
+                        "unique set {:?} of {} leaves out the field of {scopes} {}, so a caller \
+                         granted one learns whether a row it can't see holds the value \
+                         (ADR-040). Add the field to the set if the values are private to the \
+                         scope",
                         set.fields,
                         model.id,
-                        fields.iter().copied().collect::<Vec<_>>().join(", ")
+                        missing.join(", ")
                     ));
                 }
             }
