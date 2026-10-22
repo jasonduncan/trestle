@@ -59,6 +59,7 @@ read = "crm.read"
 write = "crm.write"
 filter = ["stage"]
 forms = true
+idempotent = true
 
 [[endpoints]]
 id = "crm.flag"
@@ -67,6 +68,7 @@ path = "POST /api/v1/deals/{id}/flag"
 permission = "crm.write"
 handler = "crm::flag"
 input = [{ id = "note", type = "text", max = 200 }]
+idempotent = true
 
 [[endpoints]]
 id = "crm.win"
@@ -88,6 +90,7 @@ check = [
 exists = [{ model = "crm.account", match = { id = "account" }, null = ["external"] }]
 repeat = "unchanged"
 forms = true
+idempotent = true
 
 [[admin]]
 model = "crm.deal"

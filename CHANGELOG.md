@@ -40,6 +40,20 @@ promise.
   same version. `EndpointDoc` gains `require`, `check` (`CheckDoc`),
   `exists` (`ExistsDoc`) and `repeat`. An action with `exists` declares
   `reads` of that model, and its app requires the model's app (ADR-032).
+- Idempotent intent endpoints (ADR-038): `idempotent = true` on a
+  `trestle.toml` endpoint makes its writes accept an `Idempotency-Key`
+  exactly like a Rust binding with `.idempotency_key()` (ADR-016): CRUD
+  create, update and delete, an action, or a handler that is not a GET.
+  A repeat with the same key and body replays the committed answer after
+  the policy admits and rechecks; another body is 409
+  `idempotency_key_reused`; other endpoints still refuse a key with 400
+  `idempotency_unsupported`. `idempotent = true` on a read is a parse
+  problem. The project then installs `IdempotencyApp` itself (unless it
+  installed it already): `makemigrations` plans the receipt table and
+  `serve` requires its migrations applied. `EndpointDoc.idempotent`,
+  `Intent::idempotent` and `EndpointSpec::idempotent`. In Rust,
+  `ResourceRegistration::idempotency_key()` keys a resource's conventional
+  write verbs.
 
 ### Changed
 - `FieldType::Enum` has a `labels` member, so a pattern
@@ -50,6 +64,8 @@ promise.
 - `EndpointSpec::Action` has `require`, `check`, `exists` and `repeat`
   members (`intent::spec::{CheckSpec, ExistsSpec, Compare, Repeat}`);
   patterns without `..` need them.
+- `EndpointSpec::Crud`, `Custom` and `Action` have an `idempotent` member,
+  and `EndpointDoc` an `idempotent` field (ADR-038).
 - The browser packages decode `x-trestle-enum-labels`. Renderers from
   0.7.x refuse a schema that uses it.
 

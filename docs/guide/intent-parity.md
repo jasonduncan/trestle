@@ -46,6 +46,8 @@ waiting for:
   guarded by `require`, `check` and `exists`, with `repeat = "unchanged"`
   for idempotent transitions (ADR-036), and fields only they write:
   `writable = "actions"` (ADR-037);
+- safe retries: `idempotent = true` makes an endpoint's writes accept an
+  `Idempotency-Key` (ADR-038);
 - generated forms: `forms = true` (ADR-026);
 - admin views: `[[admin]]` (ADR-029).
 

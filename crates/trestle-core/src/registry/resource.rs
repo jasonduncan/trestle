@@ -214,6 +214,8 @@ where
 pub struct ResourceRegistration<'a, S> {
     pub(crate) builder: &'a mut AppBuilder<S>,
     pub(crate) index: usize,
+    /// [`ResourceRegistration::idempotency_key`] was called.
+    pub(crate) idempotency_key: bool,
 }
 
 impl<S> ResourceRegistration<'_, S>
@@ -228,6 +230,27 @@ where
 
     fn path(&self) -> Arc<str> {
         self.builder.resources[self.index].path.clone()
+    }
+
+    /// The conventional binding of a write verb, keyed when the resource
+    /// asked for it.
+    fn write(&self, http: Http) -> Http {
+        if self.idempotency_key {
+            http.idempotency_key()
+        } else {
+            http
+        }
+    }
+
+    /// The conventional write bindings registered after this call (create,
+    /// update, delete and [`action`](Self::action)) accept an optional
+    /// `Idempotency-Key` ([`Http::idempotency_key`], ADR-016). Call it
+    /// before those verbs. [`action_at`](Self::action_at) keeps the binding
+    /// it is given. The project needs
+    /// `trestle_core::idempotency::IdempotencyApp`.
+    pub fn idempotency_key(mut self) -> Self {
+        self.idempotency_key = true;
+        self
     }
 
     fn register(&mut self, op: impl ResourceOp<S>, http: Http) -> Arc<str> {
@@ -250,7 +273,8 @@ where
     /// `POST {path}`: 201 with `Location: {path}/{id}`.
     pub fn create(mut self, op: impl ResourceOp<S>) -> Self {
         let path = self.path();
-        let id = self.register(op, Http::post(&*path).created(format!("{path}/{{id}}")));
+        let http = self.write(Http::post(&*path).created(format!("{path}/{{id}}")));
+        let id = self.register(op, http);
         self.resource().create = Some(id);
         self
     }
@@ -267,7 +291,8 @@ where
     /// `expected_version`.
     pub fn update(mut self, op: impl ResourceOp<S>) -> Self {
         let path = self.path();
-        let http = Http::patch(format!("{path}/{{id}}")).if_match(EXPECTED_VERSION_FIELD);
+        let http =
+            self.write(Http::patch(format!("{path}/{{id}}")).if_match(EXPECTED_VERSION_FIELD));
         let id = self.register(op, http);
         self.resource().update = Some(id);
         self
@@ -276,9 +301,11 @@ where
     /// `DELETE {path}/{id}`; `If-Match` required; 204.
     pub fn delete(mut self, op: impl ResourceOp<S>) -> Self {
         let path = self.path();
-        let http = Http::delete(format!("{path}/{{id}}"))
-            .if_match(EXPECTED_VERSION_FIELD)
-            .no_content();
+        let http = self.write(
+            Http::delete(format!("{path}/{{id}}"))
+                .if_match(EXPECTED_VERSION_FIELD)
+                .no_content(),
+        );
         let id = op.register(self.builder, http);
         self.resource().delete = Some(id);
         self
@@ -288,7 +315,8 @@ where
     /// usually carries `expected_version` (409 when stale, §6.4).
     pub fn action(mut self, name: &str, op: impl ResourceOp<S>) -> Self {
         let path = self.path();
-        let id = self.register(op, Http::post(format!("{path}/{{id}}/actions/{name}")));
+        let http = self.write(Http::post(format!("{path}/{{id}}/actions/{name}")));
+        let id = self.register(op, http);
         self.resource().actions.push((name.to_owned(), id));
         self
     }

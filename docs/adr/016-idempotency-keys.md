@@ -10,6 +10,11 @@ receipt selection. Retained response bodies must also satisfy the current output
 contract before disclosure. A refusal leaves the receipt and effect intact and
 does not re-enter execution.
 
+**Extended by [ADR-038](038-idempotent-intent-endpoints.md):** a
+`trestle.toml` endpoint opts in with `idempotent = true` (CRUD writes,
+actions, non-GET handlers), and the project then installs `IdempotencyApp`
+itself.
+
 ## Context
 
 §6.4 requires the following.

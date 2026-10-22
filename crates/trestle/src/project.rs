@@ -33,6 +33,9 @@ use crate::reconcile::{self, Failure, exit};
 use crate::serve::{self, ServeConfig};
 use crate::{App, Environment, Erased, State, StateParts};
 
+/// The idempotency app's ID ([`trestle_core::idempotency::IdempotencyApp`]).
+const IDEMPOTENCY_APP: &str = "idempotency";
+
 type BoxFuture = Pin<Box<dyn Future<Output = Result<(), String>>>>;
 type Handler<S, C> = Box<dyn Fn(C, CommandContext<S>) -> BoxFuture>;
 
@@ -420,8 +423,22 @@ where
                     if !self.named {
                         name = Arc::from(r.intent.name.as_str());
                     }
-                    for app in r.apps::<S>() {
+                    // `idempotent = true` needs the receipt table (ADR-038).
+                    // A project that installed it itself keeps its own.
+                    let receipts =
+                        r.intent.idempotent() && !apps.iter().any(|a| a.id() == IDEMPOTENCY_APP);
+                    let generated = r.apps::<S>();
+                    if receipts && generated.iter().any(|a| a.id() == IDEMPOTENCY_APP) {
+                        intent_problems.push(format!(
+                            "{file}: the app ID \"{IDEMPOTENCY_APP}\" is taken by \
+                             Idempotency-Key receipts (idempotent = true); use another app ID"
+                        ));
+                    }
+                    for app in generated {
                         apps.push(Box::new(app));
+                    }
+                    if receipts {
+                        apps.push(Box::new(trestle_core::idempotency::IdempotencyApp));
                     }
                     for build in self.intent_apps {
                         apps.push(build(&r));
@@ -1768,8 +1785,9 @@ async fn tenant<S>(
     Ok(())
 }
 
-/// Intent apps declare no schema requirements by hand, so `serve` requires
-/// every committed migration of those apps to be applied.
+/// Intent apps, and the idempotency app `idempotent = true` needs, declare
+/// no schema requirements by hand, so `serve` requires every committed
+/// migration of those apps to be applied.
 async fn intent_migrations_applied<S>(
     ctx: &CommandContext<S>,
     intent: &Resolved,
@@ -1783,6 +1801,9 @@ async fn intent_migrations_applied<S>(
         .collect();
     if let Some(t) = &intent.intent.tenancy {
         apps.push(&t.name);
+    }
+    if intent.intent.idempotent() {
+        apps.push(IDEMPOTENCY_APP);
     }
     let required: Vec<trestle_historical::MigrationRef> = set
         .iter()

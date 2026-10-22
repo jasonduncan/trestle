@@ -247,6 +247,9 @@ struct EndpointSection {
     /// Publish generated forms for this endpoint's writes (ADR-026).
     #[serde(default)]
     forms: bool,
+    /// Its writes accept an `Idempotency-Key` (ADR-016, ADR-038).
+    #[serde(default)]
+    idempotent: bool,
 }
 
 /// A validated intent file.
@@ -264,6 +267,14 @@ pub struct Intent {
     pub endpoints: Vec<EndpointSpec>,
     pub admin: Vec<AdminSpec>,
     pub views: Vec<super::doc::ViewDoc>,
+}
+
+impl Intent {
+    /// Whether some endpoint accepts an `Idempotency-Key`. The project then
+    /// installs `trestle_core::idempotency::IdempotencyApp` (ADR-038).
+    pub fn idempotent(&self) -> bool {
+        self.endpoints.iter().any(EndpointSpec::idempotent)
+    }
 }
 
 /// A model shown in the admin shell (ADR-029): its CRUD endpoint's list,
@@ -472,6 +483,8 @@ pub enum EndpointSpec {
         order: (String, bool),
         hooks: BTreeMap<String, Named>,
         forms: bool,
+        /// Create, update and delete accept an `Idempotency-Key` (ADR-038).
+        idempotent: bool,
     },
     Custom {
         id: String,
@@ -481,6 +494,8 @@ pub enum EndpointSpec {
         permission: String,
         handler: Named,
         input: Vec<FieldSpec>,
+        /// The binding accepts an `Idempotency-Key` (ADR-038); writes only.
+        idempotent: bool,
     },
     /// A state transition on one row, declared without Rust (ADR-025).
     Action {
@@ -503,7 +518,21 @@ pub enum EndpointSpec {
         /// What a request for the state the row already has does.
         repeat: Repeat,
         forms: bool,
+        /// The binding accepts an `Idempotency-Key` (ADR-038).
+        idempotent: bool,
     },
+}
+
+impl EndpointSpec {
+    /// `idempotent = true`: the endpoint's write bindings accept an
+    /// `Idempotency-Key` (ADR-016, ADR-038).
+    pub fn idempotent(&self) -> bool {
+        match self {
+            EndpointSpec::Crud { idempotent, .. }
+            | EndpointSpec::Custom { idempotent, .. }
+            | EndpointSpec::Action { idempotent, .. } => *idempotent,
+        }
+    }
 }
 
 /// A comparison operator of an action `check` (ADR-036).
@@ -1007,6 +1036,12 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
                 }
                 continue;
             };
+            if e.idempotent && method == http::Method::GET {
+                problems.push(format!(
+                    "{}: endpoint {id_text:?} is a GET, which only reads; idempotent = true is for writes",
+                    lines.at(id)
+                ));
+            }
             let mut input = Vec::new();
             for f in &e.input {
                 if let Some(w) = &f.writable {
@@ -1030,6 +1065,7 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
                     line: lines.line(handler.span()),
                 },
                 input,
+                idempotent: e.idempotent,
             });
             continue;
         }
@@ -1088,6 +1124,11 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
         }
         let needs_read = ops.iter().any(|o| !o.writes());
         let needs_write = ops.iter().any(|o| o.writes());
+        if e.idempotent && !ops.is_empty() && !needs_write {
+            problems.push(format!(
+                "{where_}: idempotent = true is for writes, and crud = [...] lists only list and get"
+            ));
+        }
         let read = match &e.read {
             Some(p) => check_permission(p, &mut problems),
             None if needs_read => {
@@ -1197,6 +1238,7 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
             order,
             hooks,
             forms: e.forms,
+            idempotent: e.idempotent,
         });
     }
     // Refs make one app need another (ADR-032), and so does an action's
@@ -1666,6 +1708,7 @@ fn action_spec(
         exists,
         repeat,
         forms: e.forms,
+        idempotent: e.idempotent,
     })
 }
 

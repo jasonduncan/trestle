@@ -41,6 +41,9 @@ write = "notes.write"
 filter = ["pinned"]
 order = "-created_at"
 # forms = true    # publish create/update forms the React renderer can draw
+# idempotent = true   # create/update/delete accept an Idempotency-Key: a
+#                     # retry with the same key and body replays the first
+#                     # answer (actions and non-GET handlers take it too)
 
 # A transition, declared instead of written in Rust (needs a bool field
 # `archived`): POST /api/v1/notes/{id}/archive with If-Match.

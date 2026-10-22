@@ -101,6 +101,10 @@ fn a_document_reads_every_key_and_assembles_like_its_file() {
     );
     assert_eq!(doc.endpoints[3].exists[0].matches["id"], "account");
     assert_eq!(doc.endpoints[3].repeat.as_deref(), Some("unchanged"));
+    assert!(!doc.endpoints[0].idempotent);
+    assert!(
+        doc.endpoints[1].idempotent && doc.endpoints[2].idempotent && doc.endpoints[3].idempotent
+    );
     assert_eq!(
         doc.admin[0].filters.as_deref(),
         Some(&["stage".to_owned()][..])

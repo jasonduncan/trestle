@@ -32,7 +32,7 @@ The 2026-10-20 review's findings (`docs/security-review.md`) are fixed in 0.7.x 
 mitigated); on 2026-10-21 the owner accepted that review as the §12.4 external review, closing
 the gate (the owner's decision alone), and plans a more comprehensive review later. Still open:
 the edge on a real host (ACME, DNS, firewall); publishing the npm packages (`@trestle-framework/*`). Do not claim general
-maturity or benchmark leadership. ADRs: 001–037 (015 reopens 009: jobs and outbox).
+maturity or benchmark leadership. ADRs: 001–038 (015 reopens 009: jobs and outbox).
 
 ## Non-negotiables
 - Installing a model publishes nothing (I01). Endpoints, forms and writable fields are explicit.
@@ -101,7 +101,8 @@ maturity or benchmark leadership. ADRs: 001–037 (015 reopens 009: jobs and out
   `tokio::spawn`. Handlers are at least once: idempotent, passing `job.idempotency_key()` to
   providers. Database work in a handler goes through `job.invoke` (re-authorized). Job inputs
   are stored in plain text: no credentials, tokens or link secrets in them.
-- Idempotency keys (ADR-016) are opt-in per write binding (`.idempotency_key()`). The receipt is
+- Idempotency keys (ADR-016) are opt-in per write binding (`.idempotency_key()`; in
+  `trestle.toml`, `idempotent = true`, ADR-038). The receipt is
   claimed inside the write transaction after `recheck`; never move it out or before
   authorization. Replays return the stored body only after the policy admits and rechecks.
   A key sent where none is accepted is refused, never ignored.
