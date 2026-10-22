@@ -107,6 +107,10 @@ UPDATE OF t`):
   PostgreSQL changes. A word that becomes reserved later would make an
   existing project's file fail to parse; PostgreSQL rarely reserves new
   words for that reason, and the change would be a breaking-change note.
+  The lists already include words only newer versions reserve
+  (`system_user` from PostgreSQL 16, and the JSON and `merge_action` words
+  from 17), so a project on an older PostgreSQL is refused a few names that
+  would work there today but would break on an upgrade.
 - **Breaking:** an intent file whose table is a `pg_catalog` type name or a
   "cannot be function or type" key word (`table = "date"`) used to pass
   `check`, migrate, and then fail on its first write. It is now refused

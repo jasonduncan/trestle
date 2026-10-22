@@ -60,7 +60,11 @@ which CRUD, actions, handlers, hooks and Rust operations all go through.
   outer intent operation. Logging does not depend on the hook chain: a
   row whose hooks are not re-run in a chain still logs the write. A
   write refused before the row write logs nothing, and one refused after
-  it rolls back with its entry, since both are in one transaction.
+  it rolls back with its entry, since both are in one transaction. SQL
+  that doesn't go through `Ctx::write` logs nothing: a migration's data
+  steps (ADR-020), a hand-written operation's own queries, and anything
+  run in `psql`. The log records the application's writes, not every
+  change to the table.
 - **Old values.** An update or delete of a history model without a row
   already locked by its caller is fetched `FOR UPDATE` first, as for
   hooked models. Old and new are both the row's representation

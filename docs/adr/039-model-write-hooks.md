@@ -71,6 +71,11 @@ lock, and `Ctx::update` doesn't check a version.
   | Action | lock, `If-Match`, `repeat`, `when`, `require`, `check`, `exists` (ADR-036) → `before_write` → the write → `after_write`. An `"unchanged"` no-op writes nothing and runs no hooks. |
   | `Ctx::create`, `update`, `update_versioned`, `delete` | contract validation and the managed-field refusal → `before_write` → the write → `after_write` |
 
+  These are the writes Trestle makes, all through `Ctx::write`. SQL that
+  doesn't go through it runs no hooks: a migration's data steps (ADR-020),
+  a hand-written operation's own queries, and anything run in `psql`. A
+  rule that must hold there too needs a database constraint.
+
   Endpoint hooks come first because they belong to that endpoint's input.
   The model's rule then sees the row exactly as it will be stored, so it
   holds whichever endpoint produced it. Action guards run before
