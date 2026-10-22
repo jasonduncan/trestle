@@ -35,6 +35,8 @@ use crate::{App, Environment, Erased, State, StateParts};
 
 /// The idempotency app's ID ([`trestle_core::idempotency::IdempotencyApp`]).
 const IDEMPOTENCY_APP: &str = "idempotency";
+/// The identity app's ID ([`trestle_identity::IdentityApp`]).
+const IDENTITY_APP: &str = "identity";
 
 type BoxFuture = Pin<Box<dyn Future<Output = Result<(), String>>>>;
 type Handler<S, C> = Box<dyn Fn(C, CommandContext<S>) -> BoxFuture>;
@@ -366,6 +368,7 @@ where
     S: Clone + Send + Sync + 'static,
     PgPool: axum::extract::FromRef<S>,
     trestle_core::identity::Identity: axum::extract::FromRef<S>,
+    trestle_identity::Browser: axum::extract::FromRef<S>,
     X: ServeExtension<S>,
     C: Subcommand + 'static,
 {
@@ -402,6 +405,7 @@ where
         let mut apps: Vec<Box<dyn CoreApp<S>>> = self.apps;
         let mut intent_problems = Vec::new();
         let mut resolved = None;
+        let mut identity = false;
         match self.intent.load() {
             Ok(None) => {
                 if !self.handlers.handlers.is_empty() || !self.handlers.hooks.is_empty() {
@@ -423,10 +427,14 @@ where
                     if !self.named {
                         name = Arc::from(r.intent.name.as_str());
                     }
-                    // `idempotent = true` needs the receipt table (ADR-038).
-                    // A project that installed it itself keeps its own.
+                    // `idempotent = true` needs the receipt table (ADR-038);
+                    // sign-in needs the identity app's tables and routes
+                    // (ADR-034). A project that installed either itself
+                    // keeps its own, with its migration references.
                     let receipts =
                         r.intent.idempotent() && !apps.iter().any(|a| a.id() == IDEMPOTENCY_APP);
+                    let sign_in =
+                        r.intent.auth.sign_in() && !apps.iter().any(|a| a.id() == IDENTITY_APP);
                     let generated = r.apps::<S>();
                     if receipts && generated.iter().any(|a| a.id() == IDEMPOTENCY_APP) {
                         intent_problems.push(format!(
@@ -434,11 +442,21 @@ where
                              Idempotency-Key receipts (idempotent = true); use another app ID"
                         ));
                     }
+                    if sign_in && generated.iter().any(|a| a.id() == IDENTITY_APP) {
+                        intent_problems.push(format!(
+                            "{file}: the app ID \"{IDENTITY_APP}\" is taken by sign-in \
+                             accounts and sessions ([auth]); use another app ID"
+                        ));
+                    }
                     for app in generated {
                         apps.push(Box::new(app));
                     }
                     if receipts {
                         apps.push(Box::new(trestle_core::idempotency::IdempotencyApp));
+                    }
+                    if sign_in {
+                        apps.push(Box::new(trestle_identity::IdentityApp::new(&[])));
+                        identity = true;
                     }
                     for build in self.intent_apps {
                         apps.push(build(&r));
@@ -459,6 +477,7 @@ where
             migrations_dir: source::directory(self.migrations_dir.as_ref()),
             commands: self.commands,
             intent: resolved,
+            identity,
         };
         let assembled = core.assemble();
         if intent_problems.is_empty() {
@@ -535,6 +554,7 @@ where
             &runtime.source,
             &runtime.migrations_dir,
             runtime.intent.as_deref(),
+            runtime.identity,
         )
         .await
     }
@@ -542,6 +562,8 @@ where
 
 struct Runtime<S, C> {
     intent: Option<Arc<Resolved>>,
+    /// The intent's `[auth]` installed the identity app (ADR-034).
+    identity: bool,
     name: Arc<str>,
     source: Source,
     migrations_dir: PathBuf,
@@ -902,6 +924,7 @@ async fn builtin<S, X>(
     source: &Source,
     migrations_dir: &Path,
     intent: Option<&Resolved>,
+    identity: bool,
 ) -> Result<(), Failure>
 where
     S: Clone + Send + Sync + 'static,
@@ -929,7 +952,7 @@ where
             // Before any connection: the boot checks include the database's TLS.
             serve::refuse_unsafe(&ctx.registry, env, &options, &config, &extension)?;
             if let Some(intent) = intent {
-                intent_migrations_applied(ctx, intent, history()?).await?;
+                intent_migrations_applied(ctx, intent, identity, history()?).await?;
             }
             let set = history()?;
             schema_verified(&options, set.clone(), bin).await?;
@@ -1785,12 +1808,13 @@ async fn tenant<S>(
     Ok(())
 }
 
-/// Intent apps, and the idempotency app `idempotent = true` needs, declare
-/// no schema requirements by hand, so `serve` requires every committed
-/// migration of those apps to be applied.
+/// Intent apps, the idempotency app `idempotent = true` needs and the
+/// identity app `[auth]` installs declare no schema requirements by hand, so
+/// `serve` requires every committed migration of those apps to be applied.
 async fn intent_migrations_applied<S>(
     ctx: &CommandContext<S>,
     intent: &Resolved,
+    identity: bool,
     set: MigrationSet,
 ) -> Result<(), String> {
     let mut apps: Vec<&str> = intent
@@ -1804,6 +1828,9 @@ async fn intent_migrations_applied<S>(
     }
     if intent.intent.idempotent() {
         apps.push(IDEMPOTENCY_APP);
+    }
+    if identity {
+        apps.push(IDENTITY_APP);
     }
     let required: Vec<trestle_historical::MigrationRef> = set
         .iter()

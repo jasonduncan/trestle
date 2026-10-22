@@ -1,0 +1,377 @@
+{
+  "format": 2,
+  "app": "identity",
+  "id": "0001_initial",
+  "depends_on": [],
+  "operations": [
+    {
+      "op": "create_model",
+      "model": {
+        "id": "identity.account",
+        "table": "identity_accounts",
+        "fields": [
+          {
+            "id": "identity.account.id",
+            "column": "id",
+            "type": "uuid",
+            "nullable": false,
+            "primary_key": true
+          },
+          {
+            "id": "identity.account.actor_id",
+            "column": "actor_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "id": "identity.account.email",
+            "column": "email",
+            "type": "text",
+            "nullable": false,
+            "check": {
+              "kind": "chars",
+              "min": 3,
+              "max": 254
+            },
+            "check_name": "identity_accounts_email_check"
+          },
+          {
+            "id": "identity.account.password_hash",
+            "column": "password_hash",
+            "type": "text",
+            "nullable": true,
+            "check": {
+              "kind": "chars",
+              "min": 1,
+              "max": 512
+            },
+            "check_name": "identity_accounts_password_hash_check"
+          },
+          {
+            "id": "identity.account.failed_logins",
+            "column": "failed_logins",
+            "type": "integer",
+            "nullable": false,
+            "check": {
+              "kind": "at_least",
+              "min": 0
+            },
+            "check_name": "identity_accounts_failed_logins_check",
+            "default": {
+              "kind": "int",
+              "value": 0
+            }
+          },
+          {
+            "id": "identity.account.locked_until",
+            "column": "locked_until",
+            "type": "timestamptz",
+            "nullable": true
+          },
+          {
+            "id": "identity.account.disabled_at",
+            "column": "disabled_at",
+            "type": "timestamptz",
+            "nullable": true
+          },
+          {
+            "id": "identity.account.password_changed_at",
+            "column": "password_changed_at",
+            "type": "timestamptz",
+            "nullable": true
+          },
+          {
+            "id": "identity.account.created_at",
+            "column": "created_at",
+            "type": "timestamptz",
+            "nullable": false,
+            "default": {
+              "kind": "now"
+            }
+          }
+        ],
+        "unique": [
+          {
+            "name": "identity_accounts_email_key",
+            "fields": [
+              "identity.account.email"
+            ]
+          },
+          {
+            "name": "identity_accounts_actor_key",
+            "fields": [
+              "identity.account.actor_id"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "op": "create_model",
+      "model": {
+        "id": "identity.account_token",
+        "table": "identity_account_tokens",
+        "fields": [
+          {
+            "id": "identity.account_token.id",
+            "column": "id",
+            "type": "uuid",
+            "nullable": false,
+            "primary_key": true
+          },
+          {
+            "id": "identity.account_token.account_id",
+            "column": "account_id",
+            "type": "uuid",
+            "nullable": false,
+            "references": "identity.account"
+          },
+          {
+            "id": "identity.account_token.purpose",
+            "column": "purpose",
+            "type": "text",
+            "nullable": false,
+            "check": {
+              "kind": "one_of",
+              "values": [
+                "invite",
+                "reset"
+              ]
+            },
+            "check_name": "identity_account_tokens_purpose_check"
+          },
+          {
+            "id": "identity.account_token.token_hash",
+            "column": "token_hash",
+            "type": "text",
+            "nullable": false,
+            "check": {
+              "kind": "chars",
+              "min": 64,
+              "max": 64
+            },
+            "check_name": "identity_account_tokens_token_hash_check"
+          },
+          {
+            "id": "identity.account_token.created_at",
+            "column": "created_at",
+            "type": "timestamptz",
+            "nullable": false,
+            "default": {
+              "kind": "now"
+            }
+          },
+          {
+            "id": "identity.account_token.expires_at",
+            "column": "expires_at",
+            "type": "timestamptz",
+            "nullable": false
+          },
+          {
+            "id": "identity.account_token.used_at",
+            "column": "used_at",
+            "type": "timestamptz",
+            "nullable": true
+          }
+        ],
+        "unique": [
+          {
+            "name": "identity_account_tokens_token_hash_key",
+            "fields": [
+              "identity.account_token.token_hash"
+            ]
+          }
+        ],
+        "indexes": [
+          {
+            "name": "identity_account_tokens_account_idx",
+            "fields": [
+              "identity.account_token.account_id"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "op": "create_model",
+      "model": {
+        "id": "identity.login",
+        "table": "identity_logins",
+        "fields": [
+          {
+            "id": "identity.login.id",
+            "column": "id",
+            "type": "uuid",
+            "nullable": false,
+            "primary_key": true
+          },
+          {
+            "id": "identity.login.state_hash",
+            "column": "state_hash",
+            "type": "text",
+            "nullable": false,
+            "check": {
+              "kind": "chars",
+              "min": 64,
+              "max": 64
+            },
+            "check_name": "identity_logins_state_hash_check"
+          },
+          {
+            "id": "identity.login.nonce",
+            "column": "nonce",
+            "type": "text",
+            "nullable": false,
+            "check": {
+              "kind": "chars",
+              "min": 43,
+              "max": 43
+            },
+            "check_name": "identity_logins_nonce_check"
+          },
+          {
+            "id": "identity.login.verifier",
+            "column": "verifier",
+            "type": "text",
+            "nullable": false,
+            "check": {
+              "kind": "chars",
+              "min": 43,
+              "max": 43
+            },
+            "check_name": "identity_logins_verifier_check"
+          },
+          {
+            "id": "identity.login.return_to",
+            "column": "return_to",
+            "type": "text",
+            "nullable": false,
+            "check": {
+              "kind": "chars",
+              "min": 1,
+              "max": 2048
+            },
+            "check_name": "identity_logins_return_to_check"
+          },
+          {
+            "id": "identity.login.created_at",
+            "column": "created_at",
+            "type": "timestamptz",
+            "nullable": false,
+            "default": {
+              "kind": "now"
+            }
+          },
+          {
+            "id": "identity.login.expires_at",
+            "column": "expires_at",
+            "type": "timestamptz",
+            "nullable": false
+          }
+        ],
+        "unique": [
+          {
+            "name": "identity_logins_state_hash_key",
+            "fields": [
+              "identity.login.state_hash"
+            ]
+          }
+        ],
+        "indexes": [
+          {
+            "name": "identity_logins_expires_idx",
+            "fields": [
+              "identity.login.expires_at"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "op": "create_model",
+      "model": {
+        "id": "identity.session",
+        "table": "identity_sessions",
+        "fields": [
+          {
+            "id": "identity.session.id",
+            "column": "id",
+            "type": "uuid",
+            "nullable": false,
+            "primary_key": true
+          },
+          {
+            "id": "identity.session.token_hash",
+            "column": "token_hash",
+            "type": "text",
+            "nullable": false,
+            "check": {
+              "kind": "chars",
+              "min": 64,
+              "max": 64
+            },
+            "check_name": "identity_sessions_token_hash_check"
+          },
+          {
+            "id": "identity.session.actor_id",
+            "column": "actor_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "id": "identity.session.created_at",
+            "column": "created_at",
+            "type": "timestamptz",
+            "nullable": false,
+            "default": {
+              "kind": "now"
+            }
+          },
+          {
+            "id": "identity.session.expires_at",
+            "column": "expires_at",
+            "type": "timestamptz",
+            "nullable": false
+          },
+          {
+            "id": "identity.session.last_seen_at",
+            "column": "last_seen_at",
+            "type": "timestamptz",
+            "nullable": false,
+            "default": {
+              "kind": "now"
+            }
+          },
+          {
+            "id": "identity.session.revoked_at",
+            "column": "revoked_at",
+            "type": "timestamptz",
+            "nullable": true
+          }
+        ],
+        "unique": [
+          {
+            "name": "identity_sessions_token_hash_key",
+            "fields": [
+              "identity.session.token_hash"
+            ]
+          }
+        ],
+        "indexes": [
+          {
+            "name": "identity_sessions_actor_idx",
+            "fields": [
+              "identity.session.actor_id"
+            ]
+          },
+          {
+            "name": "identity_sessions_expires_idx",
+            "fields": [
+              "identity.session.expires_at"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -66,8 +66,18 @@ async fn the_intent_schema_matches_pilots_database() {
     let registry = intent_project().assemble().unwrap();
     let desired = registry.desired_schema();
     let tables: Vec<&str> = desired.models.values().map(|m| m.table.as_str()).collect();
-    assert_eq!(tables.len(), 3, "{tables:?}");
-    for table in ["schools", "school_memberships", "units"] {
+    // Default `[auth]` signs in with passwords, so the identity app's
+    // tables come too (ADR-034); pilot installs the same app.
+    assert_eq!(tables.len(), 7, "{tables:?}");
+    for table in [
+        "schools",
+        "school_memberships",
+        "units",
+        "identity_accounts",
+        "identity_account_tokens",
+        "identity_logins",
+        "identity_sessions",
+    ] {
         assert!(tables.contains(&table), "{table} missing from {tables:?}");
     }
     let mut conn = env.pool.acquire().await.unwrap();

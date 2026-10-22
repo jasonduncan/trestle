@@ -426,6 +426,19 @@ pub(crate) fn refuse_unsafe<S, X: ServeExtension<S>>(
                 .into(),
         );
     }
+    let browser_sessions = config.password_login || config.oidc_client_id.is_some();
+    if browser_sessions
+        && registry
+            .desired_schema()
+            .model("identity.session")
+            .is_none()
+    {
+        problems.push(
+            "browser sign-in needs the identity tables: install trestle::identity::IdentityApp \
+             (trestle.toml projects get it from [auth]) and run makemigrations"
+                .into(),
+        );
+    }
     if config.jobs && config.job_concurrency == 0 {
         problems.push("TRESTLE_JOB_CONCURRENCY must be at least 1".into());
     }
