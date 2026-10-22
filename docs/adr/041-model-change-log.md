@@ -90,6 +90,14 @@ which CRUD, actions, handlers, hooks and Rust operations all go through.
   "new": "won"}}`, where `change` is a union tagged by `field` with one
   variant per model field, and `old` and `new` have that field's type
   (nullable). The executor checks every page against it (ADR-012).
+- **Entries written under an earlier model** (fixed in 0.8.1). The log
+  keeps what was written, but the page is typed by the model as it is
+  now. A change to a field the model no longer has is left out, and a
+  value its field no longer admits (an enum value removed, a range
+  tightened) is shown as `null`. Either way the entry has
+  `incomplete: true`. Before 0.8.1 such an entry failed the page's
+  output check, and that row's history was a 500 from then on.
+  `Ctx::history` returns entries as stored.
 - **Declared effects (ADR-018).** A write that declares effects declares
   `writes` of the log model too, and the history read declares `reads` of
   the model, its log and its scopes' `through` models.

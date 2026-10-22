@@ -2130,19 +2130,58 @@ fn history_contract(model: &ModelSpec) -> ContractDoc {
         .field(Field::text("operation"))
         .field(Field::text("outer_operation").nullable())
         .field(Field::instant("at"))
-        .field(Field::items("changes", &change, max));
+        .field(Field::items("changes", &change, max))
+        .field(Field::boolean("incomplete"));
     ContractDoc::output(&format!("{id}.page"), "1")
         .field(Field::items("items", &entry, MAX_LIMIT as u32))
         .field(Field::text("next_cursor").nullable())
 }
 
-/// An entry as [`history_contract`] shows it.
-fn history_json(entry: &HistoryEntry) -> Value {
-    let changes: Vec<Value> = entry
-        .changes
+/// Each field's value as the published log types it now (ADR-041): a
+/// one-field contract, `value`, per model field.
+fn history_values(model: &ModelSpec) -> BTreeMap<&str, ContractDoc> {
+    model
+        .fields
         .iter()
-        .map(|(field, c)| json!({ "change": { "field": field, "old": c.old, "new": c.new } }))
-        .collect();
+        .map(|f| {
+            let mut value = field_contract(f, true).nullable();
+            value.name = "value".to_owned();
+            let doc =
+                ContractDoc::output(&format!("{}.history.{}", model.id, f.id), "1").field(value);
+            (f.id.as_str(), doc)
+        })
+        .collect()
+}
+
+/// An entry as [`history_contract`] shows it. The log keeps what was
+/// written, but the contract is the model's as it is now, so an entry can
+/// name a field the model no longer has, or hold a value its field no
+/// longer admits (an enum value removed, a range tightened). The first is
+/// left out and the second shown as `null`, and either marks the entry
+/// `incomplete`; `Ctx::history` still returns the entry as stored.
+fn history_json(entry: &HistoryEntry, values: &BTreeMap<&str, ContractDoc>) -> Value {
+    let mut incomplete = false;
+    let mut changes = Vec::new();
+    for (field, c) in &entry.changes {
+        let Some(doc) = values.get(field.as_str()) else {
+            incomplete = true;
+            continue;
+        };
+        let mut shown = |v: &Value| {
+            if v.is_null() {
+                return Value::Null;
+            }
+            match doc.validate(&json!({ "value": v })) {
+                Ok(valid) => valid["value"].clone(),
+                Err(_) => {
+                    incomplete = true;
+                    Value::Null
+                }
+            }
+        };
+        let (old, new) = (shown(&c.old), shown(&c.new));
+        changes.push(json!({ "change": { "field": field, "old": old, "new": new } }));
+    }
     json!({
         "id": entry.id,
         "row": entry.row,
@@ -2153,6 +2192,7 @@ fn history_json(entry: &HistoryEntry) -> Value {
         "outer_operation": entry.outer_operation,
         "at": entry.at,
         "changes": changes,
+        "incomplete": incomplete,
     })
 }
 
@@ -2783,8 +2823,12 @@ impl<S> IntentOp<S> {
                 } else {
                     None
                 };
+                let values = history_values(model);
                 Ok(json!({
-                    "items": entries.iter().map(history_json).collect::<Vec<_>>(),
+                    "items": entries
+                        .iter()
+                        .map(|e| history_json(e, &values))
+                        .collect::<Vec<_>>(),
                     "next_cursor": next,
                 }))
             }

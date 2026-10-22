@@ -1055,3 +1055,116 @@ async fn a_rows_history_is_as_hidden_as_the_row() {
     );
     server.db.drop().await;
 }
+
+#[tokio::test]
+async fn a_log_written_under_an_earlier_model_is_still_served() {
+    // The log keeps what was written; the published page is typed by the
+    // model as it is now. A field that is gone, an enum value renamed and
+    // a range tightened leave entries it can't show in full: those are
+    // marked incomplete, never a 500.
+    let before = CRM
+        .replace(
+            "table = \"opportunities\"\n",
+            "table = \"opportunities\"\nhistory = true\n",
+        )
+        .replace("idempotent = true\n", "idempotent = true\nhistory = true\n")
+        .replace(
+            "  { id = \"team\", type = \"ref\", to = \"crm.team\" },\n]",
+            "  { id = \"team\", type = \"ref\", to = \"crm.team\" },\n  { id = \"note\", type = \"text\", max = 100, optional = true },\n]",
+        );
+    assert!(before.contains("id = \"note\""));
+    let crm = Crm::start_with(&before).await;
+    let [alpha, _, _] = crm.opportunities.clone();
+    let (_, etag) = crm.row(&alpha).await;
+    let (status, body, _) = crm
+        .send(
+            "PATCH",
+            &format!("/api/v1/opportunities/{alpha}"),
+            S1,
+            Some(json!({ "note": "Call back" })),
+            Some(&etag),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // The same database, served by the next version of the model.
+    let after = before
+        .replace(
+            "  { id = \"note\", type = \"text\", max = 100, optional = true },\n",
+            "",
+        )
+        .replace(
+            "values = [\"open\", \"won\"], default = \"open\"",
+            "values = [\"active\", \"won\"], default = \"active\"",
+        )
+        .replace(
+            "when = { stage = [\"open\"] }",
+            "when = { stage = [\"active\"] }",
+        )
+        .replace(
+            "{ id = \"title\", type = \"text\", max = 100 }",
+            "{ id = \"title\", type = \"text\", max = 3 }",
+        );
+    assert_eq!(after.matches("\"active\"").count(), 3);
+    assert!(after.contains("max = 3") && !after.contains("id = \"note\""));
+    let registry = trestle::project()
+        .intent_str("trestle.toml", &after)
+        .handler("crm::peek", peek)
+        .assemble()
+        .unwrap();
+    let app = trestle::router_with(&registry, crm.state.clone(), Default::default());
+    let uri = format!("/api/v1/opportunities/{alpha}/history");
+    let res = app
+        .oneshot(crm.request("GET", &uri, S1, None, None))
+        .await
+        .unwrap();
+    let status = res.status();
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let page: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let items = page["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2, "{page}");
+    // The note's update: its only change names a field that is gone.
+    assert_eq!(items[0]["kind"], "update");
+    assert_eq!(items[0]["changes"], json!([]));
+    assert_eq!(items[0]["incomplete"], true);
+    // The create: the old stage and the long title are shown as null,
+    // and the fields the model still admits as written.
+    assert_eq!(items[1]["kind"], "create");
+    assert_eq!(items[1]["incomplete"], true);
+    let changes: Vec<(String, Value)> = items[1]["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| {
+            (
+                c["change"]["field"].as_str().unwrap().to_owned(),
+                c["change"]["new"].clone(),
+            )
+        })
+        .collect();
+    assert!(
+        changes.contains(&("stage".to_owned(), Value::Null)),
+        "{changes:?}"
+    );
+    assert!(
+        changes.contains(&("title".to_owned(), Value::Null)),
+        "{changes:?}"
+    );
+    assert!(
+        changes.contains(&("owner".to_owned(), json!(crm.members[0]))),
+        "{changes:?}"
+    );
+    // The log itself is unchanged.
+    let pool = crm.db.pool().await;
+    let stage: Value = sqlx::query_scalar(
+        "SELECT changes::jsonb->'stage'->'new' FROM opportunities_history \
+         WHERE row_id = $1::uuid AND kind = 'create'",
+    )
+    .bind(&alpha)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(stage, "open");
+    crm.db.drop().await;
+}
