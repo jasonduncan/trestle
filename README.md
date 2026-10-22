@@ -11,7 +11,9 @@ React forms, an admin or custom screens are separate and optional.
 and 17. It is currently disabled, so changes and releases are checked by running
 its jobs locally ([`docs/guide/releasing.md`](docs/guide/releasing.md)).
 The MSRV is Rust 1.98: the code uses edition 2024, let-chains and
-`AsyncFnOnce`. Trestle has not had an independent security review yet.
+`AsyncFnOnce`. The 2026-10-20 security review
+([`docs/security-review.md`](docs/security-review.md)) was accepted as the
+design's external review; a more comprehensive review is planned.
 
 ## Start a project
 
