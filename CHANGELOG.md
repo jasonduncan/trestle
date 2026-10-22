@@ -14,6 +14,12 @@ promise.
 
 ## [Unreleased]
 
+### Fixed
+- A deadlock (SQLSTATE `40P01`) or serialization failure (`40001`) is now a
+  503 `database_conflict` with `Retry-After: 1`, not a generic 500.
+  PostgreSQL rolled the transaction back, so nothing was written and the
+  request can be sent again.
+
 ## [0.8.1] - 2026-10-22
 
 ### Security
