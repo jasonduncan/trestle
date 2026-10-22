@@ -793,7 +793,7 @@ async fn a_replay_rechecks_the_rows_scope() {
     };
     let (status, deleted, _) = delete("delete-1").await;
     assert_eq!(status, StatusCode::NO_CONTENT, "{deleted}");
-    assert_eq!(delete("delete-1").await.2, true, "a replay while in team A");
+    assert!(delete("delete-1").await.2, "a replay while in team A");
     // While the manager is in team A, a replay returns the stored answer.
     let (status, again, replayed) = crm
         .keyed(
