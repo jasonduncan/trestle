@@ -7,7 +7,9 @@ operations and models, and you get one migration history. Clients such as
 React forms, an admin or custom screens are separate and optional.
 
 **Status:** 0.x and pre-1.0, so the API can change between minor versions (see
-[`CHANGELOG.md`](CHANGELOG.md)). CI runs against PostgreSQL 13 and 17.
+[`CHANGELOG.md`](CHANGELOG.md)). The CI workflow tests against PostgreSQL 13
+and 17. It is currently disabled, so changes and releases are checked by running
+its jobs locally ([`docs/guide/releasing.md`](docs/guide/releasing.md)).
 The MSRV is Rust 1.98: the code uses edition 2024, let-chains and
 `AsyncFnOnce`. Trestle has not had an independent security review yet.
 
