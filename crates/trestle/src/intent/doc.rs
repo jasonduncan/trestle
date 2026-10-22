@@ -172,6 +172,8 @@ pub struct FieldDoc {
     pub max: Option<i64>,
     #[serde(default, skip_serializing_if = "is_default")]
     pub optional: bool,
+    /// A constant of the field's type, stored as the column's default;
+    /// `"now"` on an instant is the time of the create (ADR-043).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

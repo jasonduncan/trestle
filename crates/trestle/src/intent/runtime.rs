@@ -1555,6 +1555,8 @@ fn model_of(spec: &ModelSpec, intent: &Intent) -> Model {
             _ => {}
         }
         match &f.default {
+            // `DEFAULT now()`: the create's transaction time (ADR-043).
+            _ if f.defaults_to_now() => column = column.default_now(),
             Some(Value::Bool(b)) => column = column.default_bool(*b),
             Some(Value::Number(n)) => column = column.default_int(n.as_i64().unwrap_or(0)),
             Some(Value::String(s)) => column = column.default_text(s),
