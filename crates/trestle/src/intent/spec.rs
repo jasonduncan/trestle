@@ -181,6 +181,9 @@ struct ModelSection {
     /// Row scopes that scoped grants name (ADR-040).
     #[serde(default)]
     scopes: BTreeMap<String, Spanned<super::doc::ScopeDoc>>,
+    /// Keep an append-only change log of every write (ADR-041).
+    #[serde(default)]
+    history: Option<Spanned<bool>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -265,6 +268,9 @@ struct EndpointSection {
     /// Its writes accept an `Idempotency-Key` (ADR-016, ADR-038).
     #[serde(default)]
     idempotent: bool,
+    /// Publish `GET <path>/{id}/history`, the model's change log (ADR-041).
+    #[serde(default)]
+    history: bool,
 }
 
 /// A validated intent file.
@@ -438,6 +444,9 @@ pub struct ModelSpec {
     pub hooks: BTreeMap<String, Named>,
     /// Row scopes (ADR-040): name → how a row is tied to the acting actor.
     pub scopes: BTreeMap<String, ScopeSpec>,
+    /// Every write appends a row to the change log, [`ModelSpec::history_table`]
+    /// (ADR-041).
+    pub history: bool,
 }
 
 /// A row scope (ADR-040): the rows of a model tied to the acting actor.
@@ -479,6 +488,14 @@ impl ModelSpec {
     /// Collection path: `/api/v1/<table>`.
     pub fn path(&self) -> String {
         format!("/api/v1/{}", self.table)
+    }
+    /// The change log's model ID (ADR-041): `crm.deal` → `crm.deal_history`.
+    pub fn history_model(&self) -> String {
+        format!("{}_history", self.id)
+    }
+    /// The change log's table (ADR-041): `deals` → `deals_history`.
+    pub fn history_table(&self) -> String {
+        format!("{}_history", self.table)
     }
 }
 
@@ -536,6 +553,9 @@ pub enum EndpointSpec {
         forms: bool,
         /// Create, update and delete accept an `Idempotency-Key` (ADR-038).
         idempotent: bool,
+        /// `GET <path>/{id}/history` reads the model's change log with the
+        /// `read` permission (ADR-041).
+        history: bool,
     },
     Custom {
         id: String,
@@ -971,7 +991,34 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
             label,
             hooks,
             scopes: BTreeMap::new(),
+            history: m.history.as_ref().is_some_and(|h| *h.get_ref()),
         }));
+    }
+    // A change log is a table of its own (ADR-041), so its names must be
+    // free.
+    for model in models.iter().filter(|m| m.history) {
+        let Some(raw_model) = raw.models.iter().find(|m| *m.id.get_ref() == model.id) else {
+            continue;
+        };
+        let at = raw_model
+            .history
+            .as_ref()
+            .map(|h| lines.at(h))
+            .unwrap_or_else(|| lines.at(&raw_model.id));
+        let (id, table) = (model.history_model(), model.history_table());
+        if models.iter().any(|m| m.id == id) || tables.contains(&table) {
+            problems.push(format!(
+                "{at}: history of {} is stored as model {id:?} in table {table:?}, which this \
+                 file already uses; rename one of them",
+                model.id
+            ));
+        }
+        if model.fields.is_empty() {
+            problems.push(format!(
+                "{at}: history of {} records changed fields, and it has none",
+                model.id
+            ));
+        }
     }
     // References resolve once every model is known.
     let targets: BTreeMap<String, String> = models
@@ -1078,6 +1125,7 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
                 (e.order.is_some(), "order"),
                 (!e.hooks.is_empty(), "hooks"),
                 (e.forms && e.handler.is_some(), "forms"),
+                (e.history, "history"),
             ] {
                 if present {
                     problems.push(format!(
@@ -1364,6 +1412,21 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
                 (name.to_owned(), desc)
             }
         };
+        if e.history {
+            if !model.history {
+                problems.push(format!(
+                    "{where_}: history = true publishes the change log of {0}, which needs \
+                     history = true on the model {0}",
+                    model.id
+                ));
+            }
+            if !ops.contains(&Crud::Get) {
+                problems.push(format!(
+                    "{where_}: history = true shows the change log of rows the caller can get; \
+                     add \"get\" to crud = [...]"
+                ));
+            }
+        }
         let mut hooks = BTreeMap::new();
         for (point, name) in &e.hooks {
             if !HOOKS.contains(&point.as_str()) {
@@ -1393,6 +1456,7 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
             hooks,
             forms: e.forms,
             idempotent: e.idempotent,
+            history: e.history,
         });
     }
     // Refs make one app need another (ADR-032), and so does an action's

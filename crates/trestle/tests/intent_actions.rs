@@ -5,7 +5,8 @@
 //! `writable = "actions"` is written by actions only. ADR-036: `require`,
 //! `check` and `exists` guard an action, and `repeat = "unchanged"` makes
 //! a repeated request a no-op. ADR-039: a model's write hooks run on every
-//! write path to it. Needs PostgreSQL.
+//! write path to it. ADR-041: a model with `history = true` logs every
+//! committed write, on every path. Needs PostgreSQL.
 
 use std::sync::Arc;
 
@@ -1640,8 +1641,14 @@ input = [{ id = "expected", type = "int", optional = true }]
 /// `HOOKED` built at run time (ADR-030), with the model write hooks added
 /// to the document in code and registered like any hook.
 fn hooked() -> trestle::Project {
+    hooked_with(|_| {})
+}
+
+/// [`hooked`], with `edit` applied to the document first.
+fn hooked_with(edit: impl FnOnce(&mut trestle::intent::IntentDoc)) -> trestle::Project {
     use std::collections::BTreeMap;
     let mut doc = trestle::intent::IntentDoc::from_toml("trestle.toml", HOOKED).unwrap();
+    edit(&mut doc);
     for model in &mut doc.models {
         model.hooks = match model.id.as_str() {
             "crm.deal" => BTreeMap::from([
@@ -2060,5 +2067,388 @@ async fn two_wins_never_consume_one_approval_twice() {
     }
     assert_eq!(won, 1, "exactly one deal won");
     assert_eq!(server.row("approvals", &approval).await["consumed"], true);
+    server.db.drop().await;
+}
+
+/// ADR-041: `HOOKED` with a change log on every model (approvals have no
+/// write hooks), the deal's log published on its CRUD endpoint, a handler
+/// that reads it with `Ctx::history`, and one that consumes an approval
+/// with an unversioned `Ctx::update`.
+fn logged() -> trestle::Project {
+    hooked_with(|doc| {
+        for model in &mut doc.models {
+            model.history = true;
+        }
+        for endpoint in &mut doc.endpoints {
+            endpoint.history =
+                endpoint.model.as_deref() == Some("crm.deal") && endpoint.id.is_none();
+        }
+        doc.endpoints.push(trestle::intent::EndpointDoc {
+            id: Some("crm.trail".into()),
+            model: Some("crm.deal".into()),
+            path: Some("GET /api/v1/deals/{id}/trail".into()),
+            permission: Some("crm.read".into()),
+            handler: Some("crm::trail".into()),
+            ..Default::default()
+        });
+        doc.endpoints.push(trestle::intent::EndpointDoc {
+            id: Some("crm.consume".into()),
+            model: Some("crm.approval".into()),
+            path: Some("POST /api/v1/approvals/{id}/consume".into()),
+            permission: Some("crm.write".into()),
+            handler: Some("crm::consume".into()),
+            ..Default::default()
+        });
+    })
+    .handler("crm::trail", trail)
+    .handler("crm::consume", consume)
+}
+
+async fn consume(ctx: Ctx, input: Input) -> Result<Row> {
+    ctx.update("crm.approval", input.id()?, json!({ "consumed": true }))
+        .await
+}
+
+/// The deal, with its note naming its log entries, newest first.
+async fn trail(ctx: Ctx, input: Input) -> Result<Row> {
+    let id = input.id()?;
+    let entries = ctx.history("crm.deal", id).await?;
+    let mut row = ctx.get("crm.deal", id).await?;
+    let names: Vec<String> = entries
+        .iter()
+        .map(|e| format!("{} {}", e.kind.as_str(), e.operation))
+        .collect();
+    row.set("note", names.join(", "))?;
+    Ok(row)
+}
+
+impl Server {
+    /// A row's change log as stored, oldest first: kind, version,
+    /// operation, outer operation, actor and changes.
+    async fn logged(&self, table: &str, id: &str) -> Vec<Value> {
+        let pool = self.db.pool().await;
+        let rows: Vec<(String, i64, String, Option<String>, uuid::Uuid, String)> =
+            sqlx::query_as(&format!(
+                "SELECT kind, version, operation, outer_operation, actor_id, changes \
+                 FROM {table}_history WHERE row_id = $1::uuid ORDER BY version, id"
+            ))
+            .bind(id)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        rows.into_iter()
+            .map(|(kind, version, operation, outer, actor, changes)| {
+                json!({
+                    "kind": kind,
+                    "version": version,
+                    "operation": operation,
+                    "outer": outer,
+                    "actor": actor.to_string(),
+                    "changes": serde_json::from_str::<Value>(&changes).unwrap(),
+                })
+            })
+            .collect()
+    }
+}
+
+#[test]
+fn history_is_checked_when_the_file_is_read_and_planned_as_schema() {
+    let problems = |text: &str| match trestle::intent::parse("trestle.toml", text) {
+        Ok(_) => panic!("parsed:\n{text}"),
+        Err(e) => e.problems.join("\n"),
+    };
+    let published = CRM.replace(
+        r#"crud = ["get", "create"]"#,
+        "crud = [\"create\"]\nhistory = true",
+    );
+    let refused = problems(&published);
+    assert!(
+        refused.contains("history = true publishes the change log of crm.deal, which needs history = true on the model crm.deal"),
+        "{refused}"
+    );
+    assert!(
+        refused.contains(r#"history = true shows the change log of rows the caller can get; add "get" to crud = [...]"#),
+        "{refused}"
+    );
+    let handler = problems(&CRM.replace(
+        "set = { stage = \"open\" }",
+        "set = { stage = \"open\" }\nhistory = true",
+    ));
+    assert!(
+        handler.contains(r#""history" is for CRUD endpoints"#),
+        "{handler}"
+    );
+    let taken = problems(
+        &(CRM.replace("id = \"crm.deal\"\n", "id = \"crm.deal\"\nhistory = true\n")
+            + "\n[[models]]\nid = \"crm.log\"\ntable = \"deals_history\"\nfields = [{ id = \"note\", type = \"text\" }]\n"),
+    );
+    assert!(
+        taken.contains(r#"trestle.toml:15: history of crm.deal is stored as model "crm.deal_history" in table "deals_history", which this file already uses"#),
+        "{taken}"
+    );
+
+    // Turning history on is a schema change: `makemigrations` plans the
+    // log's table, and the plan is then clean.
+    let logged = CRM.replace("id = \"crm.deal\"\n", "id = \"crm.deal\"\nhistory = true\n");
+    // A write declares the log it appends to (ADR-018).
+    let registry = trestle::project()
+        .intent_str("trestle.toml", &logged)
+        .assemble()
+        .unwrap();
+    for op in ["crm.win", "crm.deal.create"] {
+        let info = registry.inspect_operation(op).unwrap();
+        assert_eq!(
+            info["effects"]["writes"],
+            json!(["crm.deal", "crm.deal_history"]),
+            "{op}"
+        );
+    }
+    let dir = std::env::temp_dir().join(format!("trestle-u20-{}", uuid::Uuid::new_v4()));
+    cli(CRM, &dir, &["makemigrations", "--name", "initial"]);
+    cli(&logged, &dir, &["makemigrations", "--name", "history"]);
+    let sql = std::fs::read_to_string(dir.join("crm").join("0002_history.sql")).unwrap();
+    assert!(sql.contains("CREATE TABLE deals_history"), "{sql}");
+    assert!(
+        sql.contains("changed_at timestamptz NOT NULL DEFAULT now()"),
+        "{sql}"
+    );
+    assert!(
+        !sql.contains("ALTER TABLE deals "),
+        "the model's own table is unchanged: {sql}"
+    );
+    cli(&logged, &dir, &["makemigrations", "--check"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn history_logs_every_committed_write_once_on_every_path() {
+    let server = Server::start_with(logged()).await;
+    let entry = |kind: &str, version: i64, operation: &str, outer: &str, changes: Value| {
+        json!({
+            "kind": kind, "version": version, "operation": operation, "outer": outer,
+            "actor": MEMBER_ID, "changes": changes,
+        })
+    };
+    let change = |old: Value, new: Value| json!({ "old": old, "new": new });
+
+    // A CRUD create logs the row as written, and the organization's own
+    // after_write (a Ctx write in the create's transaction) logs once more.
+    let acme = server.organization("Acme").await;
+    let created = "crm.organization.create";
+    assert_eq!(
+        server.logged("organizations", &acme).await,
+        [
+            entry(
+                "create",
+                1,
+                created,
+                created,
+                json!({
+                    "name": change(json!(null), json!("Acme")),
+                    "customer": change(json!(null), json!(false)),
+                    "writes": change(json!(null), json!(0)),
+                })
+            ),
+            entry(
+                "update",
+                2,
+                "ctx",
+                created,
+                json!({
+                    "writes": change(json!(0), json!(1)),
+                    "last": change(json!(null), json!(created)),
+                })
+            ),
+        ]
+    );
+
+    // Refused writes log nothing: the action, a CRUD update and a handler
+    // without an approval.
+    let (deal, etag) = server.hooked_deal(&acme, "One").await;
+    let win = format!("/api/v1/deals/{deal}/win");
+    assert_eq!(
+        server.post(&win, json!({}), Some(&etag)).await.0,
+        StatusCode::CONFLICT
+    );
+    let patch = server
+        .send(
+            "PATCH",
+            &format!("/api/v1/deals/{deal}"),
+            MEMBER,
+            Some(json!({ "stage": "won" })),
+            Some(&etag),
+        )
+        .await;
+    assert_eq!(patch.0, StatusCode::CONFLICT);
+    let close = server
+        .post(&format!("/api/v1/deals/{deal}/close"), json!({}), None)
+        .await;
+    assert_eq!(close.0, StatusCode::CONFLICT);
+    assert_eq!(
+        server.logged("deals", &deal).await.len(),
+        1,
+        "only the create"
+    );
+
+    // The action logs one update with its own operation, and the nested
+    // Ctx::update of its after_write logs one on the organization, with
+    // the action as the outer operation.
+    server
+        .create("approvals", json!({ "organization": acme }))
+        .await;
+    let (status, won, _) = server.post(&win, json!({}), Some(&etag)).await;
+    assert_eq!(status, StatusCode::OK, "{won}");
+    let log = server.logged("deals", &deal).await;
+    assert_eq!(log.len(), 2, "{log:#?}");
+    assert_eq!(
+        log[1],
+        entry(
+            "update",
+            2,
+            "crm.win",
+            "crm.win",
+            json!({ "stage": change(json!("open"), json!("won")) })
+        )
+    );
+    let org_log = server.logged("organizations", &acme).await;
+    assert_eq!(org_log.len(), 4, "{org_log:#?}");
+    assert_eq!(
+        org_log[2],
+        entry(
+            "update",
+            3,
+            "ctx",
+            "crm.win",
+            json!({ "customer": change(json!(false), json!(true)) })
+        )
+    );
+    assert_eq!(org_log[3]["outer"], "crm.win");
+
+    // A CRUD update refused after the row write (by the endpoint's
+    // after_update) rolls its log entries back with it.
+    let beta = server.organization("Beta").await;
+    server
+        .create("approvals", json!({ "organization": beta }))
+        .await;
+    let (two, etag) = server.hooked_deal(&beta, "Two").await;
+    let before = server.logged("organizations", &beta).await.len();
+    let path = format!("/api/v1/deals/{two}");
+    let late = server
+        .send(
+            "PATCH",
+            &path,
+            MEMBER,
+            Some(json!({ "stage": "won", "title": "Fail late" })),
+            Some(&etag),
+        )
+        .await;
+    assert_eq!(late.0, StatusCode::CONFLICT, "{}", late.1);
+    assert_eq!(server.logged("deals", &two).await.len(), 1);
+    assert_eq!(server.logged("organizations", &beta).await.len(), before);
+    // The same update committed: one entry, with every changed field.
+    let (status, _, _) = server
+        .send(
+            "PATCH",
+            &path,
+            MEMBER,
+            Some(json!({ "stage": "won", "title": "Order" })),
+            Some(&etag),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let log = server.logged("deals", &two).await;
+    assert_eq!(
+        log[1],
+        entry(
+            "update",
+            2,
+            "crm.deal.update",
+            "crm.deal.update",
+            json!({
+                "stage": change(json!("open"), json!("won")),
+                "title": change(json!("Two"), json!("Order")),
+                "note": change(json!(null), json!("endpoint, model")),
+            })
+        )
+    );
+
+    // The published log: newest first, a page at a time, for any reader of
+    // the row; another tenant's caller gets the 404 of a missing row.
+    let url = format!("/api/v1/deals/{deal}/history");
+    let (status, page, _) = server
+        .send("GET", &format!("{url}?limit=1"), VIEWER, None, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let newest = &page["items"][0];
+    assert_eq!(
+        (
+            &newest["kind"],
+            &newest["version"],
+            &newest["operation"],
+            &newest["outer_operation"],
+            &newest["actor"]
+        ),
+        (
+            &json!("update"),
+            &json!(2),
+            &json!("crm.win"),
+            &json!("crm.win"),
+            &json!(MEMBER_ID)
+        )
+    );
+    assert_eq!(
+        newest["changes"],
+        json!([{ "change": { "field": "stage", "old": "open", "new": "won" } }])
+    );
+    assert!(newest["at"].as_str().unwrap().ends_with('Z'), "{newest}");
+    let cursor = page["next_cursor"].as_str().unwrap();
+    let (_, rest, _) = server
+        .send(
+            "GET",
+            &format!("{url}?limit=1&cursor={cursor}"),
+            VIEWER,
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(rest["items"][0]["kind"], "create", "{rest}");
+    assert_eq!(rest["next_cursor"], Value::Null);
+    let (status, _, _) = server.send("GET", &url, OUTSIDER, None, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // An unversioned Ctx::update of a model without hooks still logs the
+    // value it replaced.
+    let spare = server
+        .create("approvals", json!({ "organization": acme }))
+        .await;
+    let (status, _, _) = server
+        .post(
+            &format!("/api/v1/approvals/{spare}/consume"),
+            json!({}),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        server.logged("approvals", &spare).await[1],
+        entry(
+            "update",
+            2,
+            "ctx",
+            "crm.consume",
+            json!({ "consumed": change(json!(false), json!(true)) })
+        )
+    );
+    // Rust reads the same log through Ctx::history.
+    let (status, row, _) = server
+        .send(
+            "GET",
+            &format!("/api/v1/deals/{deal}/trail"),
+            MEMBER,
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{row}");
+    assert_eq!(row["note"], "update crm.win, create crm.deal.create");
     server.db.drop().await;
 }
