@@ -58,7 +58,7 @@ which CRUD, actions, handlers, hooks and Rust operations all go through.
   `delete` from handlers, endpoint hooks, write hooks and Rust operations.
   A nested write logs its own entry, with `operation = "ctx"` and the
   outer intent operation. Logging does not depend on the hook chain: a
-  model whose hooks are not re-run in a chain still logs the write. A
+  row whose hooks are not re-run in a chain still logs the write. A
   write refused before the row write logs nothing, and one refused after
   it rolls back with its entry, since both are in one transaction.
 - **Old values.** An update or delete of a history model without a row

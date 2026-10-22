@@ -142,9 +142,11 @@ impl Input {
 #[derive(Clone)]
 pub struct Ctx {
     inner: Arc<CtxInner>,
-    /// Models whose write hooks are running, outermost first (ADR-039). A
-    /// write to one of them from inside its hooks does not run them again.
-    hooking: Vec<String>,
+    /// The rows whose write hooks are running, as (model, row ID),
+    /// outermost first (ADR-039). A write to one of these rows from inside
+    /// the chain does not run its hooks again; another row of the same
+    /// model runs them.
+    hooking: Vec<(String, Uuid)>,
 }
 
 struct CtxInner {
@@ -394,16 +396,22 @@ impl Ctx {
             .await
     }
 
-    /// The model's write hooks, unless it has none or they are already
-    /// running in this chain of hooks (ADR-039).
-    fn write_hooks(&self, model: &ModelSpec) -> Result<Option<WriteHooks>, Problem> {
-        if model.hooks.is_empty() || self.hooking.contains(&model.id) {
+    /// The model's write hooks for row `id`, unless it has none or they
+    /// are already running for that row in this chain (ADR-039).
+    fn write_hooks(&self, model: &ModelSpec, id: Uuid) -> Result<Option<WriteHooks>, Problem> {
+        let running = |(m, r): &(String, Uuid)| *m == model.id && *r == id;
+        if model.hooks.is_empty() || self.hooking.iter().any(running) {
             return Ok(None);
         }
         if self.hooking.len() >= MAX_HOOK_DEPTH {
+            let chain: Vec<String> = self
+                .hooking
+                .iter()
+                .map(|(m, r)| format!("{m} {r}"))
+                .collect();
             return Err(internal(&format!(
-                "write hooks nested more than {MAX_HOOK_DEPTH} deep: {} -> {}",
-                self.hooking.join(" -> "),
+                "write hooks nested more than {MAX_HOOK_DEPTH} deep: {} -> {} {id}",
+                chain.join(" -> "),
                 model.id
             )));
         }
@@ -430,11 +438,11 @@ impl Ctx {
         }))
     }
 
-    /// The context a model's write hooks get: the same connection, actor
-    /// and tenant, with the model added to the running chain.
-    fn nested(&self, model: &ModelSpec) -> Ctx {
+    /// The context a row's write hooks get: the same connection, actor
+    /// and tenant, with the row added to the running chain.
+    fn nested(&self, model: &ModelSpec, id: Uuid) -> Ctx {
         let mut hooking = self.hooking.clone();
-        hooking.push(model.id.clone());
+        hooking.push((model.id.clone(), id));
         Ctx {
             inner: self.inner.clone(),
             hooking,
@@ -457,7 +465,12 @@ impl Ctx {
         mut values: Map<String, Value>,
         rows: Option<&RowFilter>,
     ) -> Result<Row, Problem> {
-        let hooks = self.write_hooks(model)?;
+        // A create's ID is chosen here, so its hooks' chain names the row.
+        let id = match &change {
+            Change::Create => Uuid::now_v7(),
+            Change::Update { id, .. } | Change::Delete { id, .. } => *id,
+        };
+        let hooks = self.write_hooks(model, id)?;
         let kind = change.kind();
         if let (true, None, Change::Update { id, .. } | Change::Delete { id, .. }) = (
             hooks.is_some() || model.history || rows.is_some(),
@@ -488,7 +501,7 @@ impl Ctx {
                 changes: Map::new(),
                 before: true,
             };
-            let write = before(self.nested(model), write).await?;
+            let write = before(self.nested(model, id), write).await?;
             values.extend(write.changes);
         }
         // A scoped grant's create or update must leave the row inside its
@@ -521,7 +534,7 @@ impl Ctx {
         };
         let written = match change {
             Change::Create => {
-                self.with(async |conn, scope| insert(conn, model, scope, values).await)
+                self.with(async |conn, scope| insert(conn, model, scope, id, values).await)
                     .await?
             }
             Change::Update { id, version } => self
@@ -557,7 +570,7 @@ impl Ctx {
                 changes: Map::new(),
                 before: false,
             };
-            after(self.nested(model), write).await?;
+            after(self.nested(model, id), write).await?;
         }
         Ok(written)
     }
@@ -567,9 +580,9 @@ impl Ctx {
 /// and Rust operations (ADR-039).
 const CTX_OPERATION: &str = "ctx";
 
-/// A backstop on nested write hooks (ADR-039). A model's hooks never
-/// re-enter themselves, so a chain is at most as long as the number of
-/// hooked models; this bounds it regardless.
+/// The bound on nested write hooks (ADR-039). A row's hooks never
+/// re-enter themselves, but a hook may write other rows of its own model,
+/// whose hooks run; a chain deeper than this is a 500 that rolls back.
 const MAX_HOOK_DEPTH: usize = 8;
 
 /// The row write [`Ctx::write`] makes.
@@ -3576,12 +3589,13 @@ async fn insert(
     conn: &mut PgConnection,
     model: &Arc<ModelSpec>,
     scope: &Scope,
+    id: Uuid,
     values: Map<String, Value>,
 ) -> Result<Row, Problem> {
     check_references(conn, model, scope, &values).await?;
     let mut values = flatten(model, values);
     let mut cols = vec!["id".to_owned()];
-    values.insert("id".into(), json!(Uuid::now_v7()));
+    values.insert("id".into(), json!(id));
     if let Some((col, t)) = &scope.tenant {
         cols.push(col.clone());
         values.insert(col.clone(), json!(t));

@@ -21,6 +21,11 @@ promise.
   answer was a 422 `already_exists` instead of the 403 `out_of_scope`. A
   salesperson limited to their own rows could probe other rows' unique
   values that way.
+- Model write hooks are skipped only for a row whose hooks are already
+  running, not for every row of a model in the chain (ADR-039). A hook that
+  wrote another row of its own model skipped that row's `before_write`, so
+  a rule such as "won needs an approval" could be bypassed from another
+  deal's hook. Chains of such writes are bounded by `MAX_HOOK_DEPTH` (8).
 
 ### Fixed
 - `GET …/{id}/history` no longer fails with a 500 when the log holds entries
