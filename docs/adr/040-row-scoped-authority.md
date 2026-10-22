@@ -194,7 +194,11 @@ Scopes add two checks:
   scoped model may therefore match only its `id` and ref fields, which
   link IDs the caller holds; a match on any other field is refused when
   the file is read, since it would reveal whether a hidden row holds the
-  value. A ref error says only
+  value. What a ref match still reveals is whether some row, hidden or
+  not, links those IDs: an `exists` of an opportunity with `owner = owner`
+  tells a scoped caller whether that member has any opportunity at all.
+  That residual is accepted, since guards such as "the contact is
+  affiliated with the organization" need ref matches. A ref error says only
   whether that ID exists in the tenant (`not_found`, like a missing one),
   and never returns a hidden row's fields. Lists, gets and their counts
   never include hidden rows, so scoped reads give no way to enumerate
