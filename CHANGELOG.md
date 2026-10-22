@@ -42,6 +42,29 @@ promise.
 
 ## [0.8.0] - 2026-10-22
 
+### Upgrading from 0.7
+- **Intent projects with the default `[auth]`** now install the identity
+  app (ADR-034). Run `makemigrations` once, then review and commit
+  `identity/0001_*`; until it is applied, `serve` refuses to start. A
+  project that wants no sign-in sets `passwords = false`.
+- **Custom state:** `Project::assemble`, `run` and `run_matches` require
+  `Browser: FromRef<S>` (ADR-034). `State` provides it; a custom state gets
+  it from `StateParts`.
+- **A grant containing `@` is a scoped grant** (`"crm.sell@own"`, ADR-040),
+  and `Intent.roles` no longer lists scoped grants.
+- **Tables named after a PostgreSQL type or a "cannot be function or type"
+  key word** (`table = "date"`) are refused when the file is read
+  (ADR-042). They used to migrate and then fail on their first write.
+- **Browser packages:** 0.7.x renderers refuse schemas that carry enum
+  labels (ADR-035), so ship the 0.8 packages with the server.
+- **Struct literals and exhaustive matches:**
+  - `ModelDoc` has `hooks`, `scopes` and `history`;
+  - `FieldDoc` has `labels` and `writable`;
+  - `ScopeDoc` has `conditions`;
+  - `EndpointDoc` has new fields;
+  - `..Default::default()` covers all of the above;
+  - `ModelSpec` and the `EndpointSpec` variants have new members.
+
 ### Added
 - Enum fields can label their values for people (ADR-035):
   `labels = { contract = "Agreement" }` in `trestle.toml`,
