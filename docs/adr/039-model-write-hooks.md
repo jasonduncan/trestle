@@ -88,14 +88,18 @@ lock, and `Ctx::update` doesn't check a version.
   own `set` values reach `before_write` in `row()` and are written as
   before.
 - **Nested writes and recursion.** A hook's `Ctx` writes run the hooks of
-  the model they write. Each `Ctx` carries the chain of models whose write
-  hooks are running. A write to a model already in that chain doesn't run
-  that model's hooks again, whichever row it writes and however deep the
-  chain is. This is why a deal's `after_write` that updates the
-  organization runs the organization's hooks, and why an organization's
+  the model they write. Each `Ctx` carries the chain of rows, as (model,
+  row ID), whose write hooks are running; a create's ID is chosen before
+  its `before_write`, so it is in the chain too. A write to a row already
+  in that chain doesn't run its hooks again. Another row of the same
+  model runs them. This is why a deal's `after_write` that updates the
+  organization runs the organization's hooks, why one deal's hook winning
+  another deal runs that deal's rules, and why an organization's
   `after_write` that writes its own row ends there. A chain deeper than 8
-  (`MAX_HOOK_DEPTH`) is a 500 that rolls back. It can't happen while
-  models don't re-enter, but it bounds the rule anyway.
+  (`MAX_HOOK_DEPTH`) is a 500 that rolls back.
+  - Until 0.8.1 the chain held models, not rows: a hook writing another row
+    of its own model skipped that row's hooks, so a rule such as "won
+    needs an approval" could be bypassed from another deal's hook.
 - **`Ctx` additions,** both tenant-scoped in SQL and only in a write:
   - `get_for_update(model, id)`: the row locked `FOR UPDATE` until
     commit, or 404.
@@ -184,8 +188,10 @@ Mutation checks, both caught:
   was written. The operation's response, and its `ETag`, show the row as
   first written. Prefer `Write::set` in `before_write` for changes to the
   row itself.
-- **Hooks don't re-enter their own model,** even for another row of it.
-  A rule that must also cover such writes has to make them itself.
+- **A row's hooks don't re-enter themselves.** A hook that writes its own
+  row through `Ctx` skips that row's hooks, `before_write` included, so
+  such a write is trusted to keep the row's rules. Hooks that write other
+  rows of their own model run those rows' hooks, up to the depth bound.
 - **Breaking for struct literals:** `ModelSpec` has a `hooks` member, and
   `ModelDoc` a `hooks` field, so literals need them or
   `..Default::default()` (for `ModelDoc`). `Handlers` has a new private

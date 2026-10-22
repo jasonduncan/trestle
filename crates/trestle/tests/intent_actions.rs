@@ -2452,3 +2452,79 @@ async fn history_logs_every_committed_write_once_on_every_path() {
     assert_eq!(row["note"], "update crm.win, create crm.deal.create");
     server.db.drop().await;
 }
+
+/// `after_write` on deal, for [`a_hook_writing_another_row_of_its_model_runs_that_rows_hooks`]:
+/// a deal noted `win <id>` wins that other deal through `Ctx`.
+async fn win_named(ctx: Ctx, write: trestle::intent::Write) -> Result<trestle::intent::Write> {
+    let named = match write.row() {
+        Some(new) => new.get::<Option<String>>("note")?,
+        None => None,
+    };
+    if let Some(other) = named.as_deref().and_then(|n| n.strip_prefix("win ")) {
+        let other: uuid::Uuid = other.parse().map_err(|_| Problem::conflict("not_a_deal"))?;
+        ctx.update("crm.deal", other, json!({ "stage": "won" }))
+            .await?;
+    }
+    Ok(write)
+}
+
+#[tokio::test]
+async fn a_hook_writing_another_row_of_its_model_runs_that_rows_hooks() {
+    // Hooks are skipped only for a row whose hooks are already running
+    // (ADR-039): deal A's after_write winning deal B runs B's
+    // before_write, so B can't be won without an approval that way either.
+    use std::collections::BTreeMap;
+    let mut doc = trestle::intent::IntentDoc::from_toml("trestle.toml", HOOKED).unwrap();
+    for model in &mut doc.models {
+        if model.id == "crm.deal" {
+            model.hooks = BTreeMap::from([
+                ("before_write".into(), "crm::deal_rules".into()),
+                ("after_write".into(), "crm::win_named".into()),
+            ]);
+        }
+    }
+    let project = trestle::project()
+        .intent_doc("crm", doc)
+        .handler("crm::close", close)
+        .hook("crm::mark", mark)
+        .hook("crm::late", late)
+        .write_hook("crm::deal_rules", deal_rules)
+        .write_hook("crm::win_named", win_named);
+    let server = Server::start_with(project).await;
+    let acme = server.organization("Acme").await;
+    let (a, a_etag) = server.hooked_deal(&acme, "A").await;
+    let (b, _) = server.hooked_deal(&acme, "B").await;
+    let name_b = |etag: String| {
+        let server = &server;
+        let uri = format!("/api/v1/deals/{a}");
+        let note = format!("win {b}");
+        async move {
+            server
+                .send(
+                    "PATCH",
+                    &uri,
+                    MEMBER,
+                    Some(json!({ "note": note })),
+                    Some(&etag),
+                )
+                .await
+        }
+    };
+
+    // No approval: B's rule refuses, and A's update rolls back with it.
+    let (status, problem, _) = name_b(a_etag.clone()).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{problem}");
+    assert_eq!(problem["code"], "approval_required");
+    assert_eq!(server.row("deals", &b).await["stage"], "open");
+    assert_eq!(server.row("deals", &a).await["note"], Value::Null);
+
+    // With one, B is won and the approval consumed, by B's own rule.
+    let approval = server
+        .create("approvals", json!({ "organization": acme }))
+        .await;
+    let (status, body, _) = name_b(a_etag).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(server.row("deals", &b).await["stage"], "won");
+    assert_eq!(server.row("approvals", &approval).await["consumed"], true);
+    server.db.drop().await;
+}
