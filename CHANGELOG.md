@@ -14,6 +14,14 @@ promise.
 
 ## [Unreleased]
 
+### Security
+- A scoped grant's create, update or action that would leave its row
+  scopes is refused before the statement runs (ADR-040). The check used to
+  come after the write, so when a hidden row held a unique value the
+  answer was a 422 `already_exists` instead of the 403 `out_of_scope`. A
+  salesperson limited to their own rows could probe other rows' unique
+  values that way.
+
 ## [0.8.0] - 2026-10-22
 
 ### Added

@@ -324,7 +324,7 @@ impl Ctx {
         let contract = create_contract(model);
         let values = contract.validate(&values).map_err(Problem::from)?;
         let values = values.as_object().cloned().unwrap_or_default();
-        self.write(model, CTX_OPERATION, Change::Create, None, values)
+        self.write(model, CTX_OPERATION, Change::Create, None, values, None)
             .await
     }
 
@@ -335,7 +335,8 @@ impl Ctx {
         let model = &self.model(model)?;
         let values = update_values(model, id, values)?;
         let change = Change::Update { id, version: None };
-        self.write(model, CTX_OPERATION, change, None, values).await
+        self.write(model, CTX_OPERATION, change, None, values, None)
+            .await
     }
 
     /// Changes fields of a record only if its version is still
@@ -364,7 +365,7 @@ impl Ctx {
             id,
             version: Some(expected_version),
         };
-        self.write(model, CTX_OPERATION, change, Some(current), values)
+        self.write(model, CTX_OPERATION, change, Some(current), values, None)
             .await
     }
 
@@ -373,7 +374,7 @@ impl Ctx {
         self.check_writable()?;
         let model = &self.model(model)?;
         let change = Change::Delete { id, version: None };
-        self.write(model, CTX_OPERATION, change, None, Map::new())
+        self.write(model, CTX_OPERATION, change, None, Map::new(), None)
             .await
     }
 
@@ -444,8 +445,9 @@ impl Ctx {
     /// asked for it (ADR-039): the model's `before_write` hook (which may
     /// add changes), the row write, its change log entry (ADR-041), then
     /// its `after_write` hook, all on the operation's connection. `old` is
-    /// the row as locked by the caller; for an update or delete with hooks
-    /// or history it is fetched `FOR UPDATE` here otherwise.
+    /// the row as locked by the caller; for an update or delete with hooks,
+    /// history or `rows` it is fetched `FOR UPDATE` here otherwise. `rows`
+    /// is the scoped grant a generated operation writes under (ADR-040).
     async fn write(
         &self,
         model: &Arc<ModelSpec>,
@@ -453,12 +455,15 @@ impl Ctx {
         change: Change,
         mut old: Option<Row>,
         mut values: Map<String, Value>,
+        rows: Option<&RowFilter>,
     ) -> Result<Row, Problem> {
         let hooks = self.write_hooks(model)?;
         let kind = change.kind();
-        if let (true, None, Change::Update { id, .. } | Change::Delete { id, .. }) =
-            (hooks.is_some() || model.history, &old, &change)
-        {
+        if let (true, None, Change::Update { id, .. } | Change::Delete { id, .. }) = (
+            hooks.is_some() || model.history || rows.is_some(),
+            &old,
+            &change,
+        ) {
             let id = *id;
             old = Some(
                 self.with(async |conn, scope| fetch(conn, model, scope, id, true).await)
@@ -485,6 +490,27 @@ impl Ctx {
             };
             let write = before(self.nested(model), write).await?;
             values.extend(write.changes);
+        }
+        // A scoped grant's create or update must leave the row inside its
+        // scopes (ADR-040), checked on the row as it will be stored and
+        // before the statement runs. A unique violation aborts the
+        // transaction, so checked only afterwards, an out-of-scope write
+        // would be a 422 when a hidden row holds the value and a 403 when
+        // none does.
+        if let Some(rows) = rows
+            && kind != WriteKind::Delete
+        {
+            let mut stored = old.as_ref().map(|row| row.data.clone()).unwrap_or_default();
+            stored.extend(values.clone());
+            let stored = Value::Object(stored);
+            let admitted = self
+                .within(Some(rows), async |conn, scope| {
+                    stored_inside(conn, model, scope, &stored).await
+                })
+                .await?;
+            if !admitted {
+                return Err(out_of_scope());
+            }
         }
         let missing = |version: Option<i64>| {
             if version.is_some() {
@@ -2697,7 +2723,7 @@ impl<S> IntentOp<S> {
                             version: Some(version),
                         };
                         let row = ctx
-                            .write(model, &self.info.id, change, Some(current), values)
+                            .write(model, &self.info.id, change, Some(current), values, rows)
                             .await?;
                         inside(ctx, model, rows, &row).await?;
                         row
@@ -2869,7 +2895,7 @@ impl<S> IntentOp<S> {
                         row = self.hook(ctx, hooks, "before_create", row).await?;
                         let values = crud_writes(model, &row.data);
                         let created = ctx
-                            .write(model, &self.info.id, Change::Create, None, values)
+                            .write(model, &self.info.id, Change::Create, None, values, rows)
                             .await?;
                         inside(ctx, model, rows, &created).await?;
                         let created = self.hook(ctx, hooks, "after_create", created).await?;
@@ -2902,6 +2928,7 @@ impl<S> IntentOp<S> {
                                 Change::Update { id, version },
                                 Some(current),
                                 changes,
+                                rows,
                             )
                             .await?;
                         inside(ctx, model, rows, &updated).await?;
@@ -2930,6 +2957,7 @@ impl<S> IntentOp<S> {
                                 Change::Delete { id, version },
                                 Some(current),
                                 Map::new(),
+                                rows,
                             )
                             .await?;
                         Ok(deleted.to_json())
@@ -2964,14 +2992,20 @@ async fn inside(
         .await?;
     match found {
         Some(_) => Ok(()),
-        None => Err(Problem::forbidden("out_of_scope")
-            .with_detail("This change would put the record outside the records you may change.")),
+        None => Err(out_of_scope()),
     }
 }
 
-/// Whether a row that is gone (a replayed delete's stored answer) would be
-/// inside the scopes now: the predicate on its stored scope fields, with
-/// the `through` row locked `FOR SHARE` (ADR-040).
+fn out_of_scope() -> Problem {
+    Problem::forbidden("out_of_scope")
+        .with_detail("This change would put the record outside the records you may change.")
+}
+
+/// Whether a row given as values, not read from its table, is inside the
+/// scopes: a replayed delete's stored answer, or a row about to be written.
+/// The predicate runs on its scope fields, with the `through` row locked
+/// `FOR SHARE` (ADR-040). A scope field the values leave out takes its
+/// declared default, as the insert would.
 async fn stored_inside(
     conn: &mut PgConnection,
     model: &ModelSpec,
@@ -2983,10 +3017,15 @@ async fn stored_inside(
     };
     let mut values = Map::new();
     for s in &rows.scopes {
-        values.insert(
-            s.field.clone(),
-            stored.get(&s.field).cloned().unwrap_or(Value::Null),
-        );
+        let declared = || {
+            model
+                .fields
+                .iter()
+                .find(|f| f.id == s.field)
+                .and_then(|f| f.default.clone())
+        };
+        let value = stored.get(&s.field).cloned().or_else(declared);
+        values.insert(s.field.clone(), value.unwrap_or(Value::Null));
     }
     let tenant = scope.tenant.as_ref().map(|(c, _)| c.as_str());
     if let Some((col, t)) = &scope.tenant {
