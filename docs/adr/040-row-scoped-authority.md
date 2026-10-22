@@ -145,7 +145,7 @@ x.<tenant> = t.<tenant> AND x.<key> = t.<field> AND x.<actor> = $actor)`.
 | list, `filter`, `q` search, cursor pages | Only rows inside the scopes are selected. Pages, `next_cursor` and filters never reveal another row; the cursor is already bound to the actor and tenant. |
 | get | A row outside the scopes is 404 `not_found`, exactly like another tenant's. |
 | update, delete, action | The row is found and locked `FOR UPDATE` through the predicate, with the `through` row locked `FOR SHARE`. Outside the scopes, it is 404 before `If-Match` is compared, so a stale version reveals nothing. |
-| create, update, action: the row as written | It must satisfy a granted scope, checked after the write (defaults, endpoint hooks and `before_write` included), with the `through` row locked `FOR SHARE`. Otherwise the result is 403 `out_of_scope` and the transaction rolls back. |
+| create, update, action: the row as written | It must satisfy a granted scope, with the `through` row locked `FOR SHARE`. This is checked on the row as it will be stored (endpoint hooks, `before_write` and declared defaults included) before the statement runs, and again on the written row. Otherwise the result is 403 `out_of_scope` and the transaction rolls back. |
 | `Registry::invoke`, jobs, admin and view buttons | They call the same operations through the executor, so the same decisions apply. |
 
 **Create outside the scopes is a 403, not a 422.** The body is well formed.
@@ -194,7 +194,16 @@ Scopes add two checks:
   whether that ID exists in the tenant (`not_found`, like a missing one),
   and never returns a hidden row's fields. Lists, gets and their counts
   never include hidden rows, so scoped reads give no way to enumerate
-  IDs.
+  IDs. The one exception is a tenant-wide unique set, below: a write
+  inside the scopes learns whether any row holds its value.
+- **Unique sets are tenant-wide.** A write that would leave the scopes is
+  refused before it reaches a unique index, so a hidden row's values never
+  change its answer (fixed in 0.8.1: the check used to come after the
+  write, and a unique violation answered first). A write inside the
+  scopes still gets the 422 `already_exists` when any row of the tenant,
+  hidden or not, holds the value: that is what a tenant-wide unique set
+  means. A model whose unique values must stay private to a scope needs
+  the scope field in the set.
 - **`Ctx` keeps full tenant access.** Handlers, endpoint hooks, model
   write hooks (ADR-039) and `Ctx::run` are trusted code. Their `get`,
   `list` and writes are tenant-scoped, not row-scoped. A hook can apply

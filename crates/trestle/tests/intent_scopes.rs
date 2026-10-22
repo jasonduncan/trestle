@@ -692,6 +692,63 @@ async fn a_scoped_write_rechecks_its_scope_in_the_transaction() {
 }
 
 #[tokio::test]
+async fn a_hidden_rows_unique_value_never_changes_the_answer() {
+    // Titles are unique in the tenant, so a write that leaves the scopes
+    // must be refused before it reaches the unique index: a hidden row's
+    // title must not turn the 403 into a 422.
+    let crm = Crm::start_with(&CRM.replace(
+        "table = \"opportunities\"\n",
+        "table = \"opportunities\"\nunique = [[\"title\"]]\n",
+    ))
+    .await;
+    let [alpha, _, _] = crm.opportunities.clone();
+    let [m1, m2, _, _] = crm.members.clone();
+    let (_, etag) = crm.row(&alpha).await;
+
+    // S1 can't see Charlie (S3's). Creating a row for S2, or handing
+    // Alpha to S2, is out of scope with Charlie's title or a free one.
+    for title in ["Charlie", "Delta"] {
+        let (status, body, _) = crm
+            .send(
+                "POST",
+                "/api/v1/opportunities",
+                S1,
+                Some(json!({ "title": title, "owner": m2, "team": crm.team_a })),
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "create {title}: {body}");
+        assert_eq!(body["code"], "out_of_scope");
+        let (status, body, _) = crm
+            .send(
+                "PATCH",
+                &format!("/api/v1/opportunities/{alpha}"),
+                S1,
+                Some(json!({ "title": title, "owner": m2 })),
+                Some(&etag),
+            )
+            .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "update {title}: {body}");
+        assert_eq!(body["code"], "out_of_scope");
+    }
+    // Inside the scopes, a taken title is still the 422 that names it.
+    let (status, body, _) = crm
+        .send(
+            "POST",
+            "/api/v1/opportunities",
+            S1,
+            Some(json!({ "title": "Charlie", "owner": m1, "team": crm.team_a })),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert!(body.to_string().contains("already_exists"), "{body}");
+    assert_eq!(crm.row(&alpha).await.0["title"], "Alpha");
+
+    crm.db.drop().await;
+}
+
+#[tokio::test]
 async fn a_replay_rechecks_the_rows_scope() {
     let crm = Crm::start().await;
     let pool = crm.db.pool().await;
