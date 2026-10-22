@@ -16,8 +16,8 @@ pub use doc::{
     ScopeDoc, TenancyDoc, ViewDoc, ViewSectionDoc,
 };
 pub use runtime::{
-    Ctx, HandlerFn, Handlers, HookFn, Input, IntentApp, MAX_LIMIT, Permission, Resolved, Row,
-    TENANT_HEADER, Write, WriteHookFn, WriteKind,
+    Ctx, FieldChange, HandlerFn, Handlers, HistoryEntry, HookFn, Input, IntentApp, MAX_LIMIT,
+    Permission, Resolved, Row, TENANT_HEADER, Write, WriteHookFn, WriteKind,
 };
 pub use spec::{AUTHENTICATED, AuthSection, Intent, IntentError, Oidc, OidcProvider, parse};
 

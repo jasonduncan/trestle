@@ -135,6 +135,10 @@ pub struct ModelDoc {
     /// on the rows its scopes admit.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub scopes: BTreeMap<String, ScopeDoc>,
+    /// Every committed write appends a row to the model's change log,
+    /// `<table>_history` (ADR-041).
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub history: bool,
 }
 
 /// One row scope of a model (ADR-040). Without `through`, `field` is a
@@ -261,6 +265,10 @@ pub struct EndpointDoc {
     /// (ADR-038).
     #[serde(default, skip_serializing_if = "is_default")]
     pub idempotent: bool,
+    /// CRUD endpoints: publish `GET <path>/{id}/history`, the change log of
+    /// a row the caller can get. The model needs `history = true` (ADR-041).
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub history: bool,
 }
 
 /// One `check = [...]` entry of an action: a field compared with a

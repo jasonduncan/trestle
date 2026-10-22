@@ -141,7 +141,10 @@ Other rows are 404, and a write that would move a row out of the scopes is
 403. Endpoints and hooks can name Rust
 handlers, and a model's `hooks = { before_write = .., after_write = .. }`
 run on every write to it, whichever endpoint, action or handler makes it
-(ADR-039); `trestle new` writes a fuller example, and
+(ADR-039). `history = true` on a model logs every committed write to it
+(who, which operation, old and new values) in a generated `<table>_history`
+table, and on its CRUD endpoint publishes `GET …/{id}/history` (ADR-041);
+`trestle new` writes a fuller example, and
 `crates/trestle/examples/notes_intent/` shows both. `trestle check` validates
 the file and reports problems with line numbers.
 

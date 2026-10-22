@@ -4,7 +4,8 @@
 //! for some scopes only (`"crm.sell@own"`). Generated operations then see
 //! and change only those rows: other rows are 404 like another tenant's,
 //! a write that would leave the scopes is a 403, and the scope is rechecked
-//! inside the write's transaction. Needs PostgreSQL.
+//! inside the write's transaction. ADR-041: a row's published change log
+//! is as hidden as the row. Needs PostgreSQL.
 
 use std::sync::Arc;
 
@@ -140,8 +141,12 @@ fn uuid(text: &str) -> Uuid {
 
 impl Crm {
     async fn start() -> Self {
+        Self::start_with(CRM).await
+    }
+
+    async fn start_with(text: &str) -> Self {
         let registry = trestle::project()
-            .intent_str("trestle.toml", CRM)
+            .intent_str("trestle.toml", text)
             .handler("crm::peek", peek)
             .assemble()
             .unwrap();
@@ -732,4 +737,78 @@ async fn a_replay_rechecks_the_rows_scope() {
         );
     }
     crm.db.drop().await;
+}
+
+#[tokio::test]
+async fn a_rows_history_is_as_hidden_as_the_row() {
+    let text = CRM
+        .replace(
+            "table = \"opportunities\"\n",
+            "table = \"opportunities\"\nhistory = true\n",
+        )
+        .replace("idempotent = true\n", "idempotent = true\nhistory = true\n");
+    assert_eq!(text.matches("history = true").count(), 2);
+    let server = Crm::start_with(&text).await;
+    let [alpha, bravo, charlie] = server.opportunities.clone();
+    let crm = &server;
+    let history = |id: &str, actor: &'static str| {
+        let uri = format!("/api/v1/opportunities/{id}/history");
+        async move { crm.send("GET", &uri, actor, None, None).await }
+    };
+    // S1 reads the log of their own row, which the director created.
+    let (status, page, _) = history(&alpha, S1).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let items = page["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        (&items[0]["kind"], &items[0]["actor"]),
+        (&json!("create"), &json!(DIRECTOR))
+    );
+    // Another salesperson's row, and another team's for the manager, are
+    // missing, log included; a role without the grant is refused.
+    for (id, actor) in [(&bravo, S1), (&charlie, MANAGER)] {
+        let (status, body, _) = history(id, actor).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert!(body.get("items").is_none());
+    }
+    assert_eq!(history(&bravo, MANAGER).await.0, StatusCode::OK);
+    assert_eq!(history(&alpha, ADMIN).await.0, StatusCode::FORBIDDEN);
+    // S1's own change is logged with S1 as the actor.
+    let (_, etag) = crm.row(&alpha).await;
+    let (status, _, _) = crm
+        .send(
+            "PATCH",
+            &format!("/api/v1/opportunities/{alpha}"),
+            S1,
+            Some(json!({ "title": "Alpha 2" })),
+            Some(&etag),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, page, _) = history(&alpha, S1).await;
+    assert_eq!(page["items"][0]["actor"], S1);
+    assert_eq!(
+        page["items"][0]["changes"],
+        json!([{ "change": { "field": "title", "old": "Alpha", "new": "Alpha 2" } }])
+    );
+    // A deleted row is 404, log included, but its log is kept.
+    let (_, etag) = crm.row(&charlie).await;
+    let uri = format!("/api/v1/opportunities/{charlie}");
+    let (status, _, _) = crm.send("DELETE", &uri, DIRECTOR, None, Some(&etag)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(history(&charlie, DIRECTOR).await.0, StatusCode::NOT_FOUND);
+    let pool = server.db.pool().await;
+    let (kind, version, title): (String, i64, Value) = sqlx::query_as(
+        "SELECT kind, version, changes::jsonb->'title' FROM opportunities_history \
+         WHERE row_id = $1::uuid ORDER BY version DESC, id DESC LIMIT 1",
+    )
+    .bind(&charlie)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        (kind.as_str(), version, title),
+        ("delete", 1, json!({ "old": "Charlie", "new": null }))
+    );
+    server.db.drop().await;
 }

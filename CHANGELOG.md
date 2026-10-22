@@ -95,6 +95,19 @@ promise.
   the 404 of a fresh request, not the stored body. The hook is
   `DynOperation::recheck_replay`, which runs before any `Idempotency-Key`
   replay and admits by default.
+- Model change logs (ADR-041): `history = true` on a `[[models]]` entry
+  (`ModelDoc.history`) appends one row per committed write to a generated
+  `<table>_history` table (model `<app>.<name>_history`, planned by
+  `makemigrations`): the row, its version, the kind, the actor, the
+  operation and the outer operation, the transaction's time, and each
+  changed field's old and new value. It is written inside `Ctx::write`, so
+  CRUD, actions and `Ctx` writes from handlers, hooks and Rust operations
+  are all logged, in the write's transaction; a refused write logs
+  nothing. `Ctx::history(model, id)` reads a row's log (`HistoryEntry`,
+  `FieldChange`), and `history = true` on a CRUD endpoint with `get`
+  (`EndpointDoc.history`) publishes `GET <path>/{id}/history`, read like
+  `get`: tenant first, through the caller's row scopes, newest first with
+  `limit` and `cursor`.
 
 ### Changed
 - `FieldType::Enum` has a `labels` member, so a pattern
@@ -111,6 +124,10 @@ promise.
   (ADR-039). `Ctx::update` and `Ctx::delete` of a model with write hooks
   lock the row `FOR UPDATE` first; actions and CRUD writes on such a model
   no longer declare effects.
+- `ModelSpec` and `EndpointSpec::Crud` have a `history` member, and
+  `ModelDoc` and `EndpointDoc` a `history` field (ADR-041). Writes to a
+  model with `history = true` declare `writes` of its log model, and an
+  unversioned `Ctx::update` or `Ctx::delete` of one locks the row first.
 - `Intent.roles` holds each role's unscoped permissions only, and the new
   `Intent.scoped` holds role → permission → scopes (ADR-040). `ModelSpec`
   has a `scopes` member and `ModelDoc` a `scopes` field. A grant string

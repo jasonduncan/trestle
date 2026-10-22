@@ -31,6 +31,7 @@ scopes = { mine = { field = "external" } }
 
 [[models]]
 id = "crm.deal"
+history = true
 hooks = { before_write = "crm::deal_rules", after_write = "crm::deal_effects" }
 scopes = { own = { field = "account", through = "crm.account", key = "id", actor = "external" } }
 fields = [
@@ -63,6 +64,7 @@ write = "crm.write"
 filter = ["stage"]
 forms = true
 idempotent = true
+history = true
 
 [[endpoints]]
 id = "crm.flag"

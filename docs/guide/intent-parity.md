@@ -33,7 +33,7 @@ decision for later:
 | Operation IDs | `units.list`, `units.create`, `units.get` | `units.unit.list`, `.create`, `.get` |
 | `version` in responses | string of digits (`"1"`) | integer |
 | List paging | signed keyset cursor | signed keyset cursor (ADR-024) |
-| Audit | records an audit event on create | none (it would need an `after_create` hook, or a model `after_write` hook, ADR-039) |
+| Audit | records an audit event on create | none by default; `history = true` on the model logs every write (ADR-041) |
 | Admin profile | product and admin audiences | product only, unless the file adds `[[admin]]` (ADR-029) |
 | Error message wording | "...already exists in this school." | "A unit with this name already exists." |
 
@@ -52,6 +52,8 @@ waiting for:
   run on CRUD, actions and `Ctx` writes alike (ADR-039);
 - row-level permissions: `scopes` on a model and `"<permission>@<scope>"`
   grants in `[roles]` (ADR-040);
+- change logs: `history = true` on a model logs every write, and on its CRUD
+  endpoint publishes the log (ADR-041);
 - generated forms: `forms = true` (ADR-026);
 - admin views: `[[admin]]` (ADR-029).
 

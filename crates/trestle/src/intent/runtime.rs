@@ -154,6 +154,9 @@ struct CtxInner {
     intent: Arc<Resolved>,
     /// False for read operations (GET): their handlers may not mutate.
     writes: bool,
+    /// The intent operation this `Ctx` runs for, recorded as the outer
+    /// operation of a change log entry (ADR-041). `None` under [`Ctx::run`].
+    operation: Option<String>,
 }
 
 impl Ctx {
@@ -165,6 +168,18 @@ impl Ctx {
         resolved: &Arc<Resolved>,
         conn: DynConn,
         ctx: &DynContext,
+        f: impl AsyncFnOnce(Ctx) -> Result<T, Problem>,
+    ) -> (DynConn, Result<T, Problem>) {
+        Self::start(resolved, conn, ctx, None, f).await
+    }
+
+    /// [`Ctx::run`] for an intent operation, which names itself as the
+    /// outer operation of the writes it makes (ADR-041).
+    async fn start<T>(
+        resolved: &Arc<Resolved>,
+        conn: DynConn,
+        ctx: &DynContext,
+        operation: Option<String>,
         f: impl AsyncFnOnce(Ctx) -> Result<T, Problem>,
     ) -> (DynConn, Result<T, Problem>) {
         let (actor, tenant) = match ctx_of(ctx) {
@@ -179,6 +194,7 @@ impl Ctx {
                 tenant,
                 intent: resolved.clone(),
                 writes,
+                operation,
             }),
             hooking: Vec::new(),
         };
@@ -361,6 +377,22 @@ impl Ctx {
             .await
     }
 
+    /// The change log of one row of a model with `history = true`
+    /// (ADR-041), newest first and at most [`MAX_LIMIT`] entries, like
+    /// [`Ctx::list`]. Tenant-scoped, and not narrowed by row scopes: the
+    /// row may be gone, since deletes are logged too.
+    pub async fn history(&self, model: &str, id: Uuid) -> Result<Vec<HistoryEntry>, Problem> {
+        let model = &self.model(model)?;
+        if !model.history {
+            return Err(internal(&format!(
+                "model {} keeps no history; add history = true to it in trestle.toml",
+                model.id
+            )));
+        }
+        self.with(async |conn, scope| history(conn, model, scope, id, MAX_LIMIT, None).await)
+            .await
+    }
+
     /// The model's write hooks, unless it has none or they are already
     /// running in this chain of hooks (ADR-039).
     fn write_hooks(&self, model: &ModelSpec) -> Result<Option<WriteHooks>, Problem> {
@@ -410,10 +442,10 @@ impl Ctx {
 
     /// Every write to an intent model goes through here, whichever path
     /// asked for it (ADR-039): the model's `before_write` hook (which may
-    /// add changes), the row write, then its `after_write` hook, all on the
-    /// operation's connection. `old` is the row as locked by the caller;
-    /// for an update or delete with hooks it is fetched `FOR UPDATE` here
-    /// otherwise.
+    /// add changes), the row write, its change log entry (ADR-041), then
+    /// its `after_write` hook, all on the operation's connection. `old` is
+    /// the row as locked by the caller; for an update or delete with hooks
+    /// or history it is fetched `FOR UPDATE` here otherwise.
     async fn write(
         &self,
         model: &Arc<ModelSpec>,
@@ -424,8 +456,8 @@ impl Ctx {
     ) -> Result<Row, Problem> {
         let hooks = self.write_hooks(model)?;
         let kind = change.kind();
-        if let (Some(_), None, Change::Update { id, .. } | Change::Delete { id, .. }) =
-            (&hooks, &old, &change)
+        if let (true, None, Change::Update { id, .. } | Change::Delete { id, .. }) =
+            (hooks.is_some() || model.history, &old, &change)
         {
             let id = *id;
             old = Some(
@@ -475,6 +507,21 @@ impl Ctx {
                 .await?
                 .ok_or_else(|| missing(version))?,
         };
+        // In the write's transaction: a write that rolls back, before or
+        // after this point, logs nothing (ADR-041).
+        if model.history {
+            let new = (kind != WriteKind::Delete).then_some(&written);
+            let entry = Logged {
+                kind,
+                row: &written,
+                changes: changed(model, old.as_ref(), new),
+                actor: self.inner.actor,
+                operation,
+                outer: self.inner.operation.as_deref(),
+            };
+            self.with(async |conn, scope| log(conn, model, scope, entry).await)
+                .await?;
+        }
         if let Some(after) = hooks.and_then(|h| h.after) {
             let write = Write {
                 operation: operation.to_owned(),
@@ -617,6 +664,86 @@ impl Write {
         self.changes.insert(field.to_owned(), value);
         Ok(())
     }
+}
+
+/// One entry of a model's change log (ADR-041): a committed write to one
+/// row.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HistoryEntry {
+    /// The entry's own ID.
+    pub id: Uuid,
+    /// The row written.
+    pub row: Uuid,
+    /// The row's version after the write; on delete, the version deleted.
+    pub version: i64,
+    pub kind: WriteKind,
+    pub actor: ActorId,
+    /// [`Write::operation`]: the operation whose write this is, or `"ctx"`
+    /// for a write through [`Ctx`].
+    pub operation: String,
+    /// The intent operation whose transaction made the write: the same as
+    /// `operation` for its own write, the outer one for a handler's or a
+    /// hook's. `None` for a Rust operation's [`Ctx::run`].
+    pub outer_operation: Option<String>,
+    /// The transaction's time, RFC 3339 in UTC.
+    pub at: String,
+    /// Field → its value before and after, for the fields whose value
+    /// changed (on create every non-null field, on delete every one that
+    /// was non-null). Values are in their contract form, as in a row.
+    pub changes: BTreeMap<String, FieldChange>,
+}
+
+/// A field's value before and after a write (ADR-041); `null` on the side
+/// where the row did not exist.
+#[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize)]
+pub struct FieldChange {
+    pub old: Value,
+    pub new: Value,
+}
+
+impl WriteKind {
+    fn parse(text: &str) -> Option<Self> {
+        match text {
+            "create" => Some(WriteKind::Create),
+            "update" => Some(WriteKind::Update),
+            "delete" => Some(WriteKind::Delete),
+            _ => None,
+        }
+    }
+}
+
+/// What [`Ctx::write`] logs for one write (ADR-041).
+struct Logged<'a> {
+    kind: WriteKind,
+    /// The row as written (on delete, as it was).
+    row: &'a Row,
+    changes: BTreeMap<String, FieldChange>,
+    actor: ActorId,
+    operation: &'a str,
+    outer: Option<&'a str>,
+}
+
+/// The fields whose value differs between `old` and `new`, either of which
+/// may be missing (create, delete). Both are rendered by
+/// `representation_sql`, so equal values compare equal.
+fn changed(
+    model: &ModelSpec,
+    old: Option<&Row>,
+    new: Option<&Row>,
+) -> BTreeMap<String, FieldChange> {
+    let value = |row: Option<&Row>, field: &str| {
+        row.and_then(|r| r.data.get(field))
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    model
+        .fields
+        .iter()
+        .filter_map(|f| {
+            let (old, new) = (value(old, &f.id), value(new, &f.id));
+            (old != new).then(|| (f.id.clone(), FieldChange { old, new }))
+        })
+        .collect()
 }
 
 /// Refuses a write by trusted code (a handler, a hook or a Rust operation)
@@ -954,6 +1081,10 @@ where
         }
         for model in intent.models.iter().filter(|m| m.app == self.id) {
             app.model(model_of(model, intent));
+            // The change log is schema like any model's (ADR-041).
+            if model.history {
+                app.model(history_model_of(model, intent));
+            }
         }
         for view in intent
             .views
@@ -1007,6 +1138,7 @@ where
                     read,
                     write,
                     forms,
+                    history,
                     ..
                 } => {
                     let spec = intent
@@ -1112,6 +1244,14 @@ where
                                 app.form(form_fields(presentation, spec, intent, &fields));
                             }
                         }
+                    }
+                    // The change log of one row, read like `get` (ADR-041).
+                    if *history {
+                        let path = format!("{}/{{id}}/history", spec.path());
+                        app.dyn_operation(
+                            history_operation::<S>(&self.resolved, spec, read, audiences),
+                            Some(Http::get(path)),
+                        );
                     }
                     // Every CRUD endpoint is a resource: the conventional
                     // bindings, and the admin profile when one is declared.
@@ -1564,6 +1704,8 @@ enum Kind {
     ),
     Handler(String),
     Action(Arc<Action>),
+    /// `GET <path>/{id}/history` (ADR-041).
+    History,
 }
 
 /// A declared state transition (ADR-025), with its guards (ADR-036).
@@ -1645,6 +1787,9 @@ where
     }
     let contract = contract.field(Field::digits("expected_version"));
     let mut effects = Effects::new().writes(model.as_str());
+    if spec.history {
+        effects = effects.writes(spec.history_model());
+    }
     for through in through_models(spec) {
         effects = effects.reads(through);
     }
@@ -1813,6 +1958,12 @@ where
         .any(|point| hooks.contains_key(*point));
     let effects = match (op.writes(), hooked) {
         (false, _) => Some(Effects::new().reads(model.id.as_str())),
+        // A write appends to the change log too (ADR-041).
+        (true, false) if model.history => Some(
+            Effects::new()
+                .writes(model.id.as_str())
+                .writes(model.history_model()),
+        ),
         (true, false) => Some(Effects::new().writes(model.id.as_str())),
         (true, true) => None,
     }
@@ -1847,6 +1998,107 @@ where
         _state: PhantomData,
     };
     Arc::new(built)
+}
+
+/// `GET <path>/{id}/history`: the change log of a row the caller can get
+/// (ADR-041), a page at a time, newest first. It reads with the endpoint's
+/// `read` permission, through the same row scopes as `get`.
+fn history_operation<S>(
+    resolved: &Arc<Resolved>,
+    model: &Arc<ModelSpec>,
+    permission: &str,
+    audiences: &[Audience],
+) -> Arc<dyn DynOperation<S>>
+where
+    S: Clone + Send + Sync + 'static,
+    PgPool: FromRef<S>,
+    Identity: FromRef<S>,
+{
+    let id = format!("{}.history", model.id);
+    let input = ContractDoc::input(&id, "1")
+        .field(Field::uuid("id"))
+        .field(Field::integer("limit").range(1, MAX_LIMIT).optional())
+        .field(Field::text("cursor").chars(1, 1024).optional());
+    let mut effects = Effects::new()
+        .reads(model.id.as_str())
+        .reads(model.history_model());
+    for through in through_models(model) {
+        effects = effects.reads(through);
+    }
+    let info = OperationDescriptor::new(id.as_str(), "1", Mode::Read)
+        .audiences(audiences)
+        .summary(format!("The change log of one {}.", model.id))
+        .effects(effects);
+    Arc::new(IntentOp::<S> {
+        info,
+        permission: Permission::declared(resolved, permission, Reach::Rows(model.clone())),
+        input,
+        output: Arc::new(history_contract(model)),
+        model: model.clone(),
+        resolved: resolved.clone(),
+        kind: Kind::History,
+        _state: PhantomData,
+    })
+}
+
+/// A page of change log entries (ADR-041). Each change is a union tagged
+/// by `field`, whose `old` and `new` have that field's type:
+/// `{"change": {"field": "stage", "old": "open", "new": "won"}}`.
+fn history_contract(model: &ModelSpec) -> ContractDoc {
+    let id = format!("{}.history", model.id);
+    let variants: Vec<(String, ContractDoc)> = model
+        .fields
+        .iter()
+        .map(|f| {
+            let side = |name: &str| {
+                let mut field = field_contract(f, true).nullable();
+                field.name = name.to_owned();
+                field
+            };
+            let doc = ContractDoc::output(&format!("{id}.{}", f.id), "1")
+                .field(side("old"))
+                .field(side("new"));
+            (f.id.clone(), doc)
+        })
+        .collect();
+    let variants: Vec<(&str, &ContractDoc)> =
+        variants.iter().map(|(n, d)| (n.as_str(), d)).collect();
+    let change = ContractDoc::output(&format!("{id}.change"), "1")
+        .field(Field::union("change", "field", &variants));
+    let max = u32::try_from(model.fields.len().max(1)).unwrap_or(u32::MAX);
+    let entry = ContractDoc::output(&format!("{id}.entry"), "1")
+        .field(Field::uuid("id"))
+        .field(Field::uuid("row"))
+        .field(Field::integer("version"))
+        .field(Field::enumeration("kind", &["create", "update", "delete"]))
+        .field(Field::uuid("actor"))
+        .field(Field::text("operation"))
+        .field(Field::text("outer_operation").nullable())
+        .field(Field::instant("at"))
+        .field(Field::items("changes", &change, max));
+    ContractDoc::output(&format!("{id}.page"), "1")
+        .field(Field::items("items", &entry, MAX_LIMIT as u32))
+        .field(Field::text("next_cursor").nullable())
+}
+
+/// An entry as [`history_contract`] shows it.
+fn history_json(entry: &HistoryEntry) -> Value {
+    let changes: Vec<Value> = entry
+        .changes
+        .iter()
+        .map(|(field, c)| json!({ "change": { "field": field, "old": c.old, "new": c.new } }))
+        .collect();
+    json!({
+        "id": entry.id,
+        "row": entry.row,
+        "version": entry.version,
+        "kind": entry.kind.as_str(),
+        "actor": entry.actor.0,
+        "operation": entry.operation,
+        "outer_operation": entry.outer_operation,
+        "at": entry.at,
+        "changes": changes,
+    })
 }
 
 /// The models a model's row scopes read (ADR-040), each once.
@@ -2276,7 +2528,8 @@ where
                 Ok(rows) => rows,
                 Err(problem) => return (conn, Err(problem)),
             };
-            Ctx::run(&resolved, conn, &ctx, async |handle| {
+            let operation = Some(self.info.id.to_string());
+            Ctx::start(&resolved, conn, &ctx, operation, async |handle| {
                 self.dispatch(&handle, input, rows.as_ref()).await
             })
             .await
@@ -2422,6 +2675,63 @@ impl<S> IntentOp<S> {
                     }
                 };
                 Ok(row.to_json())
+            }
+            Kind::History => {
+                let id = input
+                    .remove("id")
+                    .and_then(|v| v.as_str().and_then(|s| s.parse::<Uuid>().ok()))
+                    .ok_or_else(Problem::not_found)?;
+                let limit = input
+                    .remove("limit")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(50)
+                    .clamp(1, MAX_LIMIT);
+                // A cursor is valid only for this row, caller and page size.
+                let shape = json!({
+                    "op": &*self.info.id,
+                    "version": &*self.info.version,
+                    "tenant": ctx.tenant(),
+                    "actor": ctx.actor().0,
+                    "row": id,
+                    "limit": limit,
+                });
+                let after = match input.remove("cursor").as_ref().and_then(Value::as_str) {
+                    Some(c) => {
+                        let position = decode_cursor(&shape, c)?;
+                        let invalid =
+                            || Problem::malformed("invalid_cursor", "The cursor is not valid.");
+                        let version = position[0].as_i64().ok_or_else(invalid)?;
+                        let entry = position[1]
+                            .as_str()
+                            .and_then(|s| Uuid::parse_str(s).ok())
+                            .ok_or_else(invalid)?;
+                        Some((version, entry))
+                    }
+                    None => None,
+                };
+                // Only the log of a row the caller can get: another
+                // tenant's, or one outside the caller's scopes, is 404
+                // (ADR-040).
+                let mut entries = ctx
+                    .within(rows, async |conn, scope| {
+                        fetch(conn, model, scope, id, false)
+                            .await?
+                            .ok_or_else(Problem::not_found)?;
+                        history(conn, model, scope, id, limit + 1, after).await
+                    })
+                    .await?;
+                let next = if entries.len() as i64 > limit {
+                    entries.truncate(limit as usize);
+                    entries
+                        .last()
+                        .map(|last| encode_cursor(&shape, &json!([last.version, last.id])))
+                } else {
+                    None
+                };
+                Ok(json!({
+                    "items": entries.iter().map(history_json).collect::<Vec<_>>(),
+                    "next_cursor": next,
+                }))
             }
             Kind::Handler(name) => {
                 let handler = self
@@ -3264,4 +3574,141 @@ async fn delete(
             }
         })?;
     Ok(parse_rows(model, text.into_iter().collect())?.pop())
+}
+
+/// The change log's storage (ADR-041): `<table>_history`, one row per
+/// committed write, in the model's tenant. `row_id` has no foreign key, so
+/// a deleted row keeps its log; `changes` is the JSON text of
+/// [`HistoryEntry::changes`].
+fn history_model_of(spec: &ModelSpec, intent: &Intent) -> Model {
+    let table = spec.history_table();
+    let mut model = Model::new(&spec.history_model())
+        .table(&table)
+        .field(Column::uuid("id").primary_key());
+    let mut lookup = Vec::new();
+    if let Some(t) = &intent.tenancy {
+        model = model.field(Column::uuid(&t.column()).references(&t.model_id()));
+        lookup.push(t.column());
+    }
+    lookup.push("row_id".to_owned());
+    let lookup: Vec<&str> = lookup.iter().map(String::as_str).collect();
+    model
+        .field(Column::uuid("row_id"))
+        .field(Column::big_int("version").at_least(1))
+        .field(Column::text("kind").one_of(&["create", "update", "delete"]))
+        .field(Column::uuid("actor_id"))
+        .field(Column::text("operation").chars(1, 200))
+        .field(Column::text("outer_operation").chars(1, 200).nullable())
+        .field(Column::timestamptz("changed_at").default_now())
+        .field(Column::text("changes"))
+        .index(&format!("{table}_idx"), &lookup)
+}
+
+/// Appends one change log entry in the write's transaction; `changed_at`
+/// is the transaction's time (`now()`).
+async fn log(
+    conn: &mut PgConnection,
+    model: &ModelSpec,
+    scope: &Scope,
+    entry: Logged<'_>,
+) -> Result<(), Problem> {
+    let row = entry
+        .row
+        .id()
+        .ok_or_else(|| internal("a written row has no id"))?;
+    let version = entry
+        .row
+        .data
+        .get("version")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| internal("a written row has no version"))?;
+    let changes = serde_json::to_string(&entry.changes).map_err(|e| internal(&e.to_string()))?;
+    let (tenant_col, tenant_val) = match &scope.tenant {
+        Some((col, _)) => (format!(", {col}"), ", $9"),
+        None => (String::new(), ""),
+    };
+    let sql = format!(
+        "INSERT INTO {} (id, row_id, version, kind, actor_id, operation, outer_operation, \
+         changes{tenant_col}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8{tenant_val})",
+        model.history_table()
+    );
+    sqlx::query(&sql)
+        .bind(Uuid::now_v7())
+        .bind(row)
+        .bind(version)
+        .bind(entry.kind.as_str())
+        .bind(entry.actor.0)
+        .bind(entry.operation)
+        .bind(entry.outer)
+        .bind(changes)
+        .bind(scope.tenant.as_ref().map(|(_, t)| *t))
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// One row's change log, newest first: at most `limit` entries, after the
+/// `(version, id)` position `after` when given. Tenant-scoped in SQL.
+async fn history(
+    conn: &mut PgConnection,
+    model: &ModelSpec,
+    scope: &Scope,
+    id: Uuid,
+    limit: i64,
+    after: Option<(i64, Uuid)>,
+) -> Result<Vec<HistoryEntry>, Problem> {
+    let mut conditions = Vec::new();
+    if let Some((col, _)) = &scope.tenant {
+        conditions.push(format!("{col} = $1"));
+    }
+    conditions.push("row_id = $2".to_owned());
+    if after.is_some() {
+        conditions.push("(version, id) < ($3, $4)".to_owned());
+    }
+    let sql = format!(
+        "SELECT id, row_id, version, kind, actor_id, operation, outer_operation, {}, changes \
+         FROM {} WHERE {} ORDER BY version DESC, id DESC LIMIT {}",
+        trestle_historical::sql::iso_instant("changed_at"),
+        model.history_table(),
+        conditions.join(" AND "),
+        limit.clamp(1, MAX_LIMIT + 1)
+    );
+    type Raw = (
+        Uuid,
+        Uuid,
+        i64,
+        String,
+        Uuid,
+        String,
+        Option<String>,
+        String,
+        String,
+    );
+    let (version, after_id) = after.unwrap_or_default();
+    let rows: Vec<Raw> = sqlx::query_as(&sql)
+        .bind(scope.tenant.as_ref().map(|(_, t)| *t))
+        .bind(id)
+        .bind(version)
+        .bind(after_id)
+        .fetch_all(&mut *conn)
+        .await?;
+    rows.into_iter()
+        .map(
+            |(id, row, version, kind, actor, operation, outer_operation, at, changes)| {
+                Ok(HistoryEntry {
+                    id,
+                    row,
+                    version,
+                    kind: WriteKind::parse(&kind)
+                        .ok_or_else(|| internal("a history row has an unknown kind"))?,
+                    actor: ActorId(actor),
+                    operation,
+                    outer_operation,
+                    at,
+                    changes: serde_json::from_str(&changes)
+                        .map_err(|_| internal("a history row's changes are not JSON"))?,
+                })
+            },
+        )
+        .collect()
 }
