@@ -203,7 +203,10 @@ Scopes add two checks:
   scopes still gets the 422 `already_exists` when any row of the tenant,
   hidden or not, holds the value: that is what a tenant-wide unique set
   means. A model whose unique values must stay private to a scope needs
-  the scope field in the set.
+  the scope field in the set. Loading a file whose scoped model has a
+  unique set without any of its scope fields logs a warning saying so
+  (`Intent::warnings`); it isn't refused, since a tenant-wide set can be
+  what the project wants.
 - **`Ctx` keeps full tenant access.** Handlers, endpoint hooks, model
   write hooks (ADR-039) and `Ctx::run` are trusted code. Their `get`,
   `list` and writes are tenant-scoped, not row-scoped. A hook can apply

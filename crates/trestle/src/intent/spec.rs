@@ -298,6 +298,36 @@ pub struct Intent {
 }
 
 impl Intent {
+    /// What parses but is likely a mistake. The project logs each one when
+    /// it loads the file.
+    ///
+    /// Today that is a scoped model's unique set without a scope field. It
+    /// is unique across the tenant, so a write inside a scope learns
+    /// whether a hidden row holds its value (ADR-040).
+    pub fn warnings(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        for model in &self.models {
+            if model.scopes.is_empty() {
+                continue;
+            }
+            let fields: BTreeSet<&str> = model.scopes.values().map(|s| s.field.as_str()).collect();
+            for set in &model.unique {
+                if !set.fields.iter().any(|f| fields.contains(f.as_str())) {
+                    warnings.push(format!(
+                        "unique set {:?} of {} has no scope field ({}), so it is unique across \
+                         the tenant: a scoped write learns whether a hidden row holds its value \
+                         (ADR-040). Add the scope field to the set if the values are private to \
+                         a scope",
+                        set.fields,
+                        model.id,
+                        fields.iter().copied().collect::<Vec<_>>().join(", ")
+                    ));
+                }
+            }
+        }
+        warnings
+    }
+
     /// Whether some endpoint accepts an `Idempotency-Key`. The project then
     /// installs `trestle_core::idempotency::IdempotencyApp` (ADR-038).
     pub fn idempotent(&self) -> bool {

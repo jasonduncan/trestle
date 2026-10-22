@@ -457,6 +457,26 @@ odd = { field = "nothing" }"#,
 }
 
 #[test]
+fn a_scoped_models_tenant_wide_unique_set_is_a_warning() {
+    let intent = trestle::intent::parse("trestle.toml", CRM).unwrap();
+    assert!(intent.warnings().is_empty(), "{:#?}", intent.warnings());
+    let text = CRM.replace(
+        "table = \"opportunities\"\n",
+        "table = \"opportunities\"\nunique = [[\"title\"], [\"team\", \"title\"]]\n",
+    );
+    let warnings = trestle::intent::parse("trestle.toml", &text)
+        .unwrap()
+        .warnings();
+    assert_eq!(warnings.len(), 1, "{warnings:#?}");
+    assert!(
+        warnings[0].contains(
+            r#"unique set ["title"] of crm.opportunity has no scope field (owner, team)"#
+        ),
+        "{warnings:#?}"
+    );
+}
+
+#[test]
 fn scoped_operations_declare_the_models_their_scopes_read() {
     let registry = trestle::project()
         .intent_str("trestle.toml", CRM)
