@@ -190,7 +190,11 @@ Scopes add two checks:
   scopes.** A ref names a row the record depends on, and the referenced
   row may be one the caller can't read, such as a manager as owner. This
   is the same reasoning as ADR-024: an existence check on an ID the
-  caller already holds reveals nothing more. A ref error says only
+  caller already holds reveals nothing more. An `exists` guard on a
+  scoped model may therefore match only its `id` and ref fields, which
+  link IDs the caller holds; a match on any other field is refused when
+  the file is read, since it would reveal whether a hidden row holds the
+  value. A ref error says only
   whether that ID exists in the tenant (`not_found`, like a missing one),
   and never returns a hidden row's fields. Lists, gets and their counts
   never include hidden rows, so scoped reads give no way to enumerate

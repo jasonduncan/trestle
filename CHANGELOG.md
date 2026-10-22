@@ -14,6 +14,13 @@ promise.
 
 ## [Unreleased]
 
+### Security
+- An `exists` guard (ADR-036) on a model with row scopes may match only its
+  `id` and ref fields. The guard checks tenancy, not the caller's scopes, so a
+  match on another field, such as a name, told a scoped caller whether a row
+  it can't see held the value. Such a file is now refused when it is read
+  (ADR-040).
+
 ## [0.8.1] - 2026-10-22
 
 ### Security
