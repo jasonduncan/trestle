@@ -1,6 +1,6 @@
 # ADR-023: Columns and `trestle.toml` fields for the scalar types
 
-**Status:** Proposed (2026-10-17) · **Design doc:** §13–§14 · **Amends:**
+**Status:** Accepted (2026-10-22; proposed 2026-10-17) · **Design doc:** §13–§14 · **Amends:**
 ADR-006 · **Depends on:** ADR-022
 
 ## Context

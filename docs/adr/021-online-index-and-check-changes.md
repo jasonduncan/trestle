@@ -1,6 +1,6 @@
 # ADR-021: Online index and check changes from the planner
 
-**Status:** Proposed (2026-10-17) · **Design doc:** §14.3–§14.4 · **Amends:**
+**Status:** Accepted (2026-10-22; proposed 2026-10-17) · **Design doc:** §14.3–§14.4 · **Amends:**
 ADR-006 · **Depends on:** ADR-019
 
 ## Context

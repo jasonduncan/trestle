@@ -1,6 +1,6 @@
 # ADR-017: A schema fence for writes from older builds
 
-**Status:** Proposed (2026-10-17) · **Design doc:** §14.4, §16 · **Amends:**
+**Status:** Accepted (2026-10-22; proposed 2026-10-17) · **Design doc:** §14.4, §16 · **Amends:**
 ADR-006 · **Depends on:** ADR-015
 
 ## Context

@@ -1,6 +1,6 @@
 # ADR-025: Domain actions in `trestle.toml`
 
-**Status:** Proposed (2026-10-17) · **Design doc:** §9.4, §10 · **Amends:**
+**Status:** Accepted (2026-10-22; proposed 2026-10-17) · **Design doc:** §9.4, §10 · **Amends:**
 the intent format · **Depends on:** ADR-018, ADR-024
 
 **Extended by [ADR-037](037-managed-fields.md):** a field with

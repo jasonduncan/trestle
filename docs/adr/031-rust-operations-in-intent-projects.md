@@ -1,6 +1,6 @@
 # ADR-031: Rust operations in intent projects
 
-**Status:** Proposed (2026-10-18; design agreed by the project owner) ·
+**Status:** Accepted (2026-10-22; proposed 2026-10-18) ·
 **Design doc:** §3.4, §6.2 · **Amends:** the intent API, ADR-029 ·
 **Depends on:** ADR-013, ADR-014, ADR-030
 

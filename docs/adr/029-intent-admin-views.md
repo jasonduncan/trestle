@@ -1,6 +1,6 @@
 # ADR-029: Admin views for `trestle.toml` apps
 
-**Status:** Proposed (2026-10-17; design agreed by the project owner) ·
+**Status:** Accepted (2026-10-22; proposed 2026-10-17) ·
 **Design doc:** §7.1, §10 · **Amends:** the intent format, ADR-026 ·
 **Depends on:** ADR-014, ADR-025, ADR-026
 

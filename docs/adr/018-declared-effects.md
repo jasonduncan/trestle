@@ -1,6 +1,6 @@
 # ADR-018: Declared effects, and reads that cannot write
 
-**Status:** Proposed (2026-10-17) · **Design doc:** §6.1, §6.2 · **Amends:**
+**Status:** Accepted (2026-10-22; proposed 2026-10-17) · **Design doc:** §6.1, §6.2 · **Amends:**
 ADR-003 · **Depends on:** ADR-014, ADR-015
 
 ## Context
