@@ -25,6 +25,8 @@ id = "notes.note"          # stable ID: never change it
 # plus currencies = ["USD"]; sent as {"amount", "currency"}), date
 # ("2026-10-17"), instant (RFC 3339, stored and returned in UTC), duration
 # ("PT30M", "P1DT2H") and ref (to = "<model id>": a row in the same tenant).
+# writable = "actions" keeps a field out of create and update: only actions
+# (below) write it, so it needs a default or optional = true.
 fields = [
   { id = "title",  type = "text", max = 200 },
   { id = "body",   type = "text", optional = true },

@@ -8,6 +8,9 @@
 lower to collection/record views with the same policies and legacy audience
 behavior; the reusable admin package consumes the separate view protocol.
 
+**Extended by [ADR-037](037-managed-fields.md):** admin create and edit
+forms leave out fields only actions write; columns and filters keep them.
+
 ## Context
 
 The admin shell renders resources that Rust apps register with

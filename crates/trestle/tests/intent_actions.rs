@@ -1,7 +1,8 @@
 //! ADR-025: domain actions in `trestle.toml`. A declared transition locks
 //! one row in the caller's tenant, checks `If-Match` and the states it may
 //! start from, writes its `set` constants (`"now"` for instants) and the
-//! fields it `accept`s, and returns the row. Needs PostgreSQL.
+//! fields it `accept`s, and returns the row. ADR-037: a field with
+//! `writable = "actions"` is written by actions only. Needs PostgreSQL.
 
 use std::sync::Arc;
 
@@ -73,6 +74,54 @@ fn crm() -> trestle::Project {
     trestle::project().intent_str("trestle.toml", CRM)
 }
 
+/// `CRM` with `stage` managed (ADR-037), CRUD update, a handler and a hook
+/// that try to write it anyway, and an admin view.
+fn managed() -> trestle::Project {
+    let text = CRM
+        .replace(
+            r#"values = ["open", "won", "lost"], default = "open" }"#,
+            r#"values = ["open", "won", "lost"], default = "open", writable = "actions" }"#,
+        )
+        .replace(r#"crud = ["get", "create"]"#, r#"crud = ["list", "get", "create", "update"]"#)
+        .replace(
+            "write = \"crm.write\"\n",
+            "write = \"crm.write\"\nforms = true\nfilter = [\"stage\"]\nhooks = { before_update = \"crm::sneak\" }\n",
+        )
+        + r#"
+[[endpoints]]
+id = "crm.force"
+model = "crm.deal"
+path = "POST /api/v1/deals/{id}/force"
+permission = "crm.write"
+handler = "crm::force"
+
+[[admin]]
+model = "crm.deal"
+permission = "crm.read"
+actions = ["crm.win"]
+"#;
+    trestle::project()
+        .intent_str("trestle.toml", &text)
+        .handler("crm::force", force)
+        .hook("crm::sneak", sneak)
+}
+
+/// Writes the title, then tries the stage: the whole operation rolls back.
+async fn force(ctx: Ctx, input: Input) -> Result<Row> {
+    let id = input.id()?;
+    ctx.update("crm.deal", id, json!({ "title": "Forced" }))
+        .await?;
+    ctx.update("crm.deal", id, json!({ "stage": "won" })).await
+}
+
+/// Moves a deal titled "Sneak" to won behind the action's back.
+async fn sneak(_ctx: Ctx, mut row: Row) -> Result<Row> {
+    if row.get::<String>("title")? == "Sneak" {
+        row.set("stage", "won")?;
+    }
+    Ok(row)
+}
+
 struct Server {
     app: Router,
     db: TestDatabase,
@@ -84,7 +133,11 @@ struct Server {
 
 impl Server {
     async fn start() -> Self {
-        let registry = crm().assemble().unwrap();
+        Self::start_with(crm()).await
+    }
+
+    async fn start_with(project: trestle::Project) -> Self {
+        let registry = project.assemble().unwrap();
         let db = TestDatabase::create().await;
         let pool = db.pool().await;
         let plan = diff(
@@ -140,15 +193,26 @@ impl Server {
         body: Option<Value>,
         if_match: Option<&str>,
     ) -> (StatusCode, Value, Option<String>) {
-        let tenant = if token == OUTSIDER {
-            self.south
-        } else {
-            self.north
-        };
         let method = if body.is_some() || uri.ends_with("/win") || uri.ends_with("/reopen") {
             "POST"
         } else {
             "GET"
+        };
+        self.send(method, uri, token, body, if_match).await
+    }
+
+    async fn send(
+        &self,
+        method: &str,
+        uri: &str,
+        token: &str,
+        body: Option<Value>,
+        if_match: Option<&str>,
+    ) -> (StatusCode, Value, Option<String>) {
+        let tenant = if token == OUTSIDER {
+            self.south
+        } else {
+            self.north
         };
         let mut req = Request::builder()
             .method(method)
@@ -228,6 +292,27 @@ fn actions_are_checked_when_the_file_is_read() {
     assert!(has(
         problems(r#"accept = ["reason"]"#, r#"accept = ["stage"]"#),
         "both sets and accepts stage"
+    ));
+    // ADR-037: a managed field takes its default on create, and some action
+    // writes it.
+    assert!(has(
+        problems(
+            r#"default = "open" }"#,
+            r#"default = "open", writable = "sometimes" }"#
+        ),
+        r#"writable = "sometimes"; use "always" (the default) or "actions""#
+    ));
+    let title = problems(
+        r#"type = "text", max = 100 }"#,
+        r#"type = "text", max = 100, writable = "actions" }"#,
+    );
+    assert!(has(
+        title.clone(),
+        r#"field "title" is written only by actions, so create cannot set it"#
+    ));
+    assert!(has(
+        title,
+        r#"field "title" is written only by actions, but no action on crm.deal sets or accepts it"#
     ));
     assert!(has(
         problems(
@@ -346,5 +431,141 @@ async fn a_transition_runs_once_from_its_states_with_the_current_version() {
     assert_eq!(status, StatusCode::OK, "{reopened}");
     assert_eq!(reopened["stage"], "open");
     assert_eq!(reopened["closed_at"], closed, "reopen sets only stage");
+    server.db.drop().await;
+}
+
+#[tokio::test]
+async fn a_managed_field_is_written_only_by_actions() {
+    let server = Server::start_with(managed()).await;
+    // Offline surface: CRUD contracts and forms leave stage out; the
+    // representation, the list filter and the action keep it.
+    let registry = &server.registry;
+    let keys = |op: &str, side: &str| -> Vec<String> {
+        registry.inspect_operation(op).unwrap()[side]["schema"]["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect()
+    };
+    for op in ["crm.deal.create", "crm.deal.update"] {
+        assert!(!keys(op, "input").contains(&"stage".to_owned()), "{op}");
+        assert!(keys(op, "output").contains(&"stage".to_owned()), "{op}");
+    }
+    for form in [
+        "crm.deal.create.form",
+        "crm.deal.update.form",
+        "crm.deal.admin_create.form",
+        "crm.deal.admin_edit.form",
+    ] {
+        let descriptor = &registry.form(form).expect("published").descriptor;
+        let pointers: Vec<&str> = descriptor["presentation"]["layout"]["children"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["pointer"].as_str().unwrap())
+            .collect();
+        assert_eq!(pointers, ["/title", "/closed_at", "/reason"], "{form}");
+    }
+    let admin = &registry.admin_export()["resources"][0];
+    assert_eq!(
+        admin["columns"],
+        json!(["title", "stage", "closed_at", "reason"])
+    );
+    assert_eq!(admin["filters"][0]["name"], "stage");
+    // Managed is a contract change only: the schema is CRM's.
+    assert_eq!(
+        serde_json::to_value(registry.desired_schema()).unwrap(),
+        serde_json::to_value(crm().assemble().unwrap().desired_schema()).unwrap()
+    );
+
+    // Create takes the default; sending stage is the unknown-field 422.
+    let (status, refused, _) = server
+        .call(
+            "/api/v1/deals",
+            MEMBER,
+            Some(json!({ "title": "Big", "stage": "won" })),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    assert_eq!(refused["errors"][0]["pointer"], "/stage");
+    assert_eq!(refused["errors"][0]["code"], "unknown_field");
+    let (status, deal, etag) = server
+        .call(
+            "/api/v1/deals",
+            MEMBER,
+            Some(json!({ "title": "Big" })),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{deal}");
+    assert_eq!(deal["stage"], "open");
+    let id = deal["id"].as_str().unwrap();
+    let row = format!("/api/v1/deals/{id}");
+
+    // Update refuses stage the same way, with or without other changes.
+    let (status, refused, _) = server
+        .send(
+            "PATCH",
+            &row,
+            MEMBER,
+            Some(json!({ "title": "Bigger", "stage": "won" })),
+            etag.as_deref(),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    assert_eq!(refused["errors"][0]["pointer"], "/stage");
+    assert_eq!(refused["errors"][0]["code"], "unknown_field");
+
+    // A hook that sets it is a 500, and nothing is written.
+    let (status, refused, _) = server
+        .send(
+            "PATCH",
+            &row,
+            MEMBER,
+            Some(json!({ "title": "Sneak" })),
+            etag.as_deref(),
+        )
+        .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{refused}");
+    assert_eq!(refused["code"], "internal_error");
+
+    // So is a handler's Ctx::update, and its earlier write rolls back.
+    let (status, refused, _) = server
+        .call(&format!("{row}/force"), MEMBER, Some(json!({})), None)
+        .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{refused}");
+    let (_, unchanged, etag) = server.call(&row, MEMBER, None, None).await;
+    assert_eq!(unchanged["title"], "Big");
+    assert_eq!(unchanged["stage"], "open");
+    assert_eq!(unchanged["version"], 1);
+
+    // Ordinary updates still work and leave stage alone.
+    let (status, renamed, etag) = server
+        .send(
+            "PATCH",
+            &row,
+            MEMBER,
+            Some(json!({ "title": "Bigger" })),
+            etag.as_deref(),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{renamed}");
+    assert_eq!(renamed["stage"], "open");
+    assert_eq!(renamed["version"], 2);
+
+    // The action writes it, with its when rule and If-Match as before.
+    let (status, won, _) = server
+        .call(&format!("{row}/win"), MEMBER, None, etag.as_deref())
+        .await;
+    assert_eq!(status, StatusCode::OK, "{won}");
+    assert_eq!(won["stage"], "won");
+    assert_eq!(won["version"], 3);
+    let (status, listed, _) = server
+        .call("/api/v1/deals?stage=won", MEMBER, None, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(listed["items"][0]["id"], id, "filters on it still work");
     server.db.drop().await;
 }

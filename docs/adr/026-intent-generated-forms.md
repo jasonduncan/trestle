@@ -10,6 +10,9 @@ legacy descriptors and revisions stay unchanged.
 **Extended by [ADR-035](035-enum-labels.md):** a select shows an enum
 value's label and submits the value.
 
+**Extended by [ADR-037](037-managed-fields.md):** create and update forms
+leave out fields only actions write.
+
 ## Context
 
 Rust apps publish forms (`app.form(FormPresentation…)`) that the React
