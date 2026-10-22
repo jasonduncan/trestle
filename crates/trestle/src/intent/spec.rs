@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use toml::Spanned;
+use trestle_historical::schema::{reserved_word, type_name};
 
 /// Permission that any signed-in actor holds. Usable without `[tenancy]`.
 pub const AUTHENTICATED: &str = "authenticated";
@@ -166,7 +167,7 @@ struct TenancySection {
 struct ModelSection {
     id: Spanned<String>,
     #[serde(default)]
-    table: Option<String>,
+    table: Option<Spanned<String>>,
     #[serde(default)]
     fields: Vec<FieldSection>,
     /// Field sets that must be unique (per tenant when [tenancy] is set).
@@ -753,6 +754,30 @@ fn ident(s: &str) -> bool {
 
 const RESERVED: &[&str] = &["id", "version", "created_at", "expected_version", "limit"];
 
+/// Why `table` can't hold an intent model, if it can't (ADR-042): it is a
+/// reserved SQL word, or a name intent SQL would read as a type when it
+/// casts a record to the table (`NULL::<table>`). The lists live in
+/// `trestle_historical::schema`.
+fn unusable_table(table: &str, instead: &str) -> Option<String> {
+    let suggestion = if reserved_word(&format!("{table}s")) || type_name(&format!("{table}s")) {
+        instead.to_owned()
+    } else {
+        format!("{table}s")
+    };
+    if reserved_word(table) {
+        Some(format!(
+            "is a reserved SQL word; choose another table, e.g. table = {suggestion:?}"
+        ))
+    } else if type_name(table) {
+        Some(format!(
+            "is a PostgreSQL type name, which SQL would read as the type; choose another \
+             table, e.g. table = {suggestion:?}"
+        ))
+    } else {
+        None
+    }
+}
+
 /// Parses and validates `text` (named `file` in messages).
 pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
     let lines = Lines { file, text };
@@ -772,9 +797,19 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
                 t.model.get_ref()
             ));
         }
-        Tenancy {
+        let tenancy = Tenancy {
             name: t.model.get_ref().clone(),
+        };
+        let table = tenancy.table();
+        if unusable_table(&table, "").is_some() {
+            problems.push(format!(
+                "{}: tenancy model {:?} stores tenants in table {table:?}, which is a reserved \
+                 SQL word or type name; choose another tenancy model",
+                lines.at(&t.model),
+                t.model.get_ref()
+            ));
         }
+        tenancy
     });
 
     let mut roles: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
@@ -856,11 +891,17 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
                 "{at}: app {app:?} is the tenancy model's app; use another app name"
             ));
         }
-        let table = m.table.clone().unwrap_or_else(|| format!("{name}s"));
+        let table_at = m.table.as_ref().map_or_else(|| at.clone(), |t| lines.at(t));
+        let table = m
+            .table
+            .as_ref()
+            .map_or_else(|| format!("{name}s"), |t| t.get_ref().clone());
         if !ident(&table) {
             problems.push(format!(
-                "{at}: table {table:?} must be a lowercase identifier"
+                "{table_at}: table {table:?} must be a lowercase identifier"
             ));
+        } else if let Some(problem) = unusable_table(&table, &format!("{app}_{table}")) {
+            problems.push(format!("{table_at}: table {table:?} {problem}"));
         }
         if !tables.insert(table.clone()) {
             problems.push(format!("{at}: table {table:?} is used twice"));
@@ -874,6 +915,20 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
                 if fields.iter().any(|x: &FieldSpec| x.id == spec.id) {
                     problems.push(format!(
                         "{}: field {:?} is declared twice",
+                        lines.at(&f.id),
+                        spec.id
+                    ));
+                }
+                if reserved_word(&spec.id) {
+                    let suggestion = match spec.ty {
+                        FieldType::Bool => format!("is_{}", spec.id),
+                        FieldType::Ref | FieldType::Uuid => format!("{}_id", spec.id),
+                        FieldType::Instant => format!("{}_at", spec.id),
+                        FieldType::Date => format!("{}_on", spec.id),
+                        _ => format!("{name}_{}", spec.id),
+                    };
+                    problems.push(format!(
+                        "{}: field {:?} is a reserved SQL word; choose another ID, e.g. {suggestion:?}",
                         lines.at(&f.id),
                         spec.id
                     ));

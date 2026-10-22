@@ -114,6 +114,58 @@ handler = "x::go"
     assert!(p.contains("endpoint \"x.go\" needs a permission"), "{p}");
 }
 
+/// ADR-042: identifiers are emitted unquoted, so a field or table that is
+/// a reserved SQL word (or, for a table, a type name) is refused when the
+/// file is read, with its line and a suggestion.
+#[test]
+fn reserved_sql_words_are_refused_with_their_line() {
+    let text = r#"
+[project]
+name = "shop"
+
+[[models]]
+id = "shop.item"
+fields = [
+  { id = "status", type = "text" },
+  { id = "position", type = "int" },
+  { id = "primary", type = "bool" },
+  { id = "order", type = "int" },
+  { id = "user", type = "uuid", optional = true },
+]
+
+[[models]]
+id = "shop.group"
+table = "group"
+fields = [{ id = "end", type = "instant" }]
+
+[[models]]
+id = "shop.note"
+table = "text"
+fields = [{ id = "body", type = "text" }]
+"#;
+    assert_eq!(
+        problems(text),
+        [
+            r#"trestle.toml:10: field "primary" is a reserved SQL word; choose another ID, e.g. "is_primary""#,
+            r#"trestle.toml:11: field "order" is a reserved SQL word; choose another ID, e.g. "item_order""#,
+            r#"trestle.toml:12: field "user" is a reserved SQL word; choose another ID, e.g. "user_id""#,
+            r#"trestle.toml:17: table "group" is a reserved SQL word; choose another table, e.g. table = "groups""#,
+            r#"trestle.toml:18: field "end" is a reserved SQL word; choose another ID, e.g. "end_at""#,
+            r#"trestle.toml:22: table "text" is a PostgreSQL type name, which SQL would read as the type; choose another table, e.g. table = "texts""#,
+        ]
+    );
+    // Non-reserved key words (`status`, `position`) stay usable as fields,
+    // and the default plural tables are fine.
+    let fine = text
+        .replace("primary", "is_primary")
+        .replace(r#""order""#, r#""rank""#)
+        .replace(r#""user""#, r#""owner""#)
+        .replace(r#"table = "group""#, "")
+        .replace(r#""end""#, r#""ends_at""#)
+        .replace(r#"table = "text""#, "");
+    trestle::intent::parse("trestle.toml", &fine).unwrap_or_else(|e| panic!("{e}"));
+}
+
 #[test]
 fn permissions_other_than_authenticated_need_tenancy() {
     let text = r#"

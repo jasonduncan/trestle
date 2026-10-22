@@ -610,6 +610,9 @@ impl Model {
             Some(table) if !sql_identifier(table) => problems.push(format!(
                 "model {id}: table {table:?} is not a plain SQL identifier"
             )),
+            Some(table) if reserved_word(table) => problems.push(format!(
+                "model {id}: table {table:?} is a reserved SQL word; choose another name"
+            )),
             Some(_) => {}
         }
         for (i, c) in self.columns.iter().enumerate() {
@@ -618,6 +621,16 @@ impl Model {
                     "model {id}: field {:?} needs plain SQL identifiers",
                     c.key
                 ));
+            }
+            for name in [Some(c.key.as_str()), c.column.as_deref()]
+                .into_iter()
+                .flatten()
+            {
+                if reserved_word(name) {
+                    problems.push(format!(
+                        "model {id}: field {name:?} is a reserved SQL word; choose another name"
+                    ));
+                }
             }
             if self.columns[..i].iter().any(|o| o.key == c.key) {
                 problems.push(format!("model {id}: duplicate field {}", c.key));
@@ -636,6 +649,10 @@ impl Model {
             if !sql_identifier(name) {
                 problems.push(format!(
                     "model {id}: constraint/index name {name:?} is not a plain SQL identifier"
+                ));
+            } else if reserved_word(name) {
+                problems.push(format!(
+                    "model {id}: constraint/index name {name:?} is a reserved SQL word"
                 ));
             }
             for key in keys {
@@ -698,6 +715,289 @@ pub fn sql_identifier(name: &str) -> bool {
         && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
 }
 
+/// PostgreSQL key words that can never be an unquoted column, table,
+/// constraint or index name: the "reserved" and "reserved (can be function
+/// or type)" key words of PostgreSQL's "SQL Key Words" appendix (Appendix C,
+/// Table C.1; PostgreSQL 16, which reserves everything 13 does plus
+/// `system_user`). Identifiers are emitted unquoted (see `sql::ident`), so
+/// these are refused where a name is declared, never quoted. Sorted, for
+/// [`reserved_word`]. Refresh it when CI's newest PostgreSQL changes.
+pub const RESERVED_WORDS: &[&str] = &[
+    "all",
+    "analyse",
+    "analyze",
+    "and",
+    "any",
+    "array",
+    "as",
+    "asc",
+    "asymmetric",
+    "authorization",
+    "binary",
+    "both",
+    "case",
+    "cast",
+    "check",
+    "collate",
+    "collation",
+    "column",
+    "concurrently",
+    "constraint",
+    "create",
+    "cross",
+    "current_catalog",
+    "current_date",
+    "current_role",
+    "current_schema",
+    "current_time",
+    "current_timestamp",
+    "current_user",
+    "default",
+    "deferrable",
+    "desc",
+    "distinct",
+    "do",
+    "else",
+    "end",
+    "except",
+    "false",
+    "fetch",
+    "for",
+    "foreign",
+    "freeze",
+    "from",
+    "full",
+    "grant",
+    "group",
+    "having",
+    "ilike",
+    "in",
+    "initially",
+    "inner",
+    "intersect",
+    "into",
+    "is",
+    "isnull",
+    "join",
+    "lateral",
+    "leading",
+    "left",
+    "like",
+    "limit",
+    "localtime",
+    "localtimestamp",
+    "natural",
+    "not",
+    "notnull",
+    "null",
+    "offset",
+    "on",
+    "only",
+    "or",
+    "order",
+    "outer",
+    "overlaps",
+    "placing",
+    "primary",
+    "references",
+    "returning",
+    "right",
+    "select",
+    "session_user",
+    "similar",
+    "some",
+    "symmetric",
+    "system_user",
+    "table",
+    "tablesample",
+    "then",
+    "to",
+    "trailing",
+    "true",
+    "union",
+    "unique",
+    "user",
+    "using",
+    "variadic",
+    "verbose",
+    "when",
+    "where",
+    "window",
+    "with",
+];
+
+/// Names that work as unquoted columns but not as a table that SQL casts a
+/// record to (`jsonb_populate_record(NULL::<table>, ..)`, as intent writes
+/// do): the "non-reserved (cannot be function or type)" key words of the
+/// same table, which parse as type syntax (PostgreSQL 16, plus the JSON
+/// and `merge_action` ones PostgreSQL 17 adds), and the names of
+/// `pg_catalog`'s types, which `pg_catalog` resolves before the table's row
+/// type. Sorted, for [`type_name`].
+pub const TYPE_NAMES: &[&str] = &[
+    "aclitem",
+    "anyarray",
+    "anycompatible",
+    "anycompatiblearray",
+    "anycompatiblemultirange",
+    "anycompatiblenonarray",
+    "anycompatiblerange",
+    "anyelement",
+    "anyenum",
+    "anymultirange",
+    "anynonarray",
+    "anyrange",
+    "between",
+    "bigint",
+    "bit",
+    "bool",
+    "boolean",
+    "box",
+    "bpchar",
+    "bytea",
+    "char",
+    "character",
+    "cid",
+    "cidr",
+    "circle",
+    "coalesce",
+    "cstring",
+    "date",
+    "datemultirange",
+    "daterange",
+    "dec",
+    "decimal",
+    "event_trigger",
+    "exists",
+    "extract",
+    "fdw_handler",
+    "float",
+    "float4",
+    "float8",
+    "greatest",
+    "grouping",
+    "gtsvector",
+    "index_am_handler",
+    "inet",
+    "inout",
+    "int",
+    "int2",
+    "int2vector",
+    "int4",
+    "int4multirange",
+    "int4range",
+    "int8",
+    "int8multirange",
+    "int8range",
+    "integer",
+    "internal",
+    "interval",
+    "json",
+    "json_array",
+    "json_arrayagg",
+    "json_exists",
+    "json_object",
+    "json_objectagg",
+    "json_query",
+    "json_scalar",
+    "json_serialize",
+    "json_table",
+    "json_value",
+    "jsonb",
+    "jsonpath",
+    "language_handler",
+    "least",
+    "line",
+    "lseg",
+    "macaddr",
+    "macaddr8",
+    "merge_action",
+    "money",
+    "name",
+    "national",
+    "nchar",
+    "none",
+    "normalize",
+    "nullif",
+    "numeric",
+    "nummultirange",
+    "numrange",
+    "oid",
+    "oidvector",
+    "out",
+    "overlay",
+    "path",
+    "point",
+    "polygon",
+    "position",
+    "precision",
+    "real",
+    "record",
+    "refcursor",
+    "regclass",
+    "regcollation",
+    "regconfig",
+    "regdictionary",
+    "regnamespace",
+    "regoper",
+    "regoperator",
+    "regproc",
+    "regprocedure",
+    "regrole",
+    "regtype",
+    "row",
+    "setof",
+    "smallint",
+    "substring",
+    "table_am_handler",
+    "text",
+    "tid",
+    "time",
+    "timestamp",
+    "timestamptz",
+    "timetz",
+    "treat",
+    "trigger",
+    "trim",
+    "tsm_handler",
+    "tsmultirange",
+    "tsquery",
+    "tsrange",
+    "tstzmultirange",
+    "tstzrange",
+    "tsvector",
+    "txid_snapshot",
+    "unknown",
+    "uuid",
+    "values",
+    "varbit",
+    "varchar",
+    "void",
+    "xid",
+    "xid8",
+    "xml",
+    "xmlattributes",
+    "xmlconcat",
+    "xmlelement",
+    "xmlexists",
+    "xmlforest",
+    "xmlnamespaces",
+    "xmlparse",
+    "xmlpi",
+    "xmlroot",
+    "xmlserialize",
+    "xmltable",
+];
+
+/// Whether `name` is in [`RESERVED_WORDS`].
+pub fn reserved_word(name: &str) -> bool {
+    RESERVED_WORDS.binary_search(&name).is_ok()
+}
+
+/// Whether `name` is in [`TYPE_NAMES`].
+pub fn type_name(name: &str) -> bool {
+    TYPE_NAMES.binary_search(&name).is_ok()
+}
+
 /// Builds desired state from models, reporting definition problems and
 /// references to unknown models.
 pub fn desired(models: &[Model]) -> Result<SchemaState, Vec<String>> {
@@ -745,6 +1045,34 @@ mod tests {
             .field(Column::uuid("id").primary_key())
             .field(Column::text("title").chars(1, 200))
             .unique("books_title_key", &["title"])
+    }
+
+    #[test]
+    fn reserved_words_are_refused_as_names() {
+        for list in [RESERVED_WORDS, TYPE_NAMES] {
+            assert!(list.windows(2).all(|w| w[0] < w[1]), "sorted and unique");
+            assert!(list.iter().all(|w| sql_identifier(w)));
+        }
+        assert!(reserved_word("order") && reserved_word("user") && !reserved_word("status"));
+        assert!(type_name("text") && type_name("values") && !type_name("status"));
+        let problems = Model::new("shop.order")
+            .table("user")
+            .field(Column::uuid("id").primary_key())
+            .field(Column::text("status"))
+            .field(Column::text("primary"))
+            .field(Column::text("rank").column("order"))
+            .index("select", &["status"])
+            .problems();
+        assert_eq!(
+            problems,
+            [
+                r#"model shop.order: table "user" is a reserved SQL word; choose another name"#,
+                r#"model shop.order: field "primary" is a reserved SQL word; choose another name"#,
+                r#"model shop.order: field "order" is a reserved SQL word; choose another name"#,
+                r#"model shop.order: constraint/index name "select" is a reserved SQL word"#,
+            ]
+        );
+        assert!(book().problems().is_empty());
     }
 
     #[test]
