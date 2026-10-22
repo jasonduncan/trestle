@@ -14,7 +14,7 @@ model = "workspace"
 
 [roles]
 admin = ["crm.read", "crm.write", "crm.admin"]
-member = ["crm.read", "crm.write"]
+member = ["crm.read", "crm.write@own", "crm.write@mine"]
 
 [[models]]
 id = "crm.account"
@@ -27,10 +27,12 @@ fields = [
   { id = "external", type = "uuid", optional = true },
 ]
 unique = [["name"]]
+scopes = { mine = { field = "external" } }
 
 [[models]]
 id = "crm.deal"
 hooks = { before_write = "crm::deal_rules", after_write = "crm::deal_effects" }
+scopes = { own = { field = "account", through = "crm.account", key = "id", actor = "external" } }
 fields = [
   { id = "title", type = "text", max = 100 },
   { id = "amount", type = "money", precision = 10, scale = 2, currencies = ["EUR", "USD"], optional = true },

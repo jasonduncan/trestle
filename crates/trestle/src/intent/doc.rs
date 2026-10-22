@@ -24,7 +24,8 @@ pub struct IntentDoc {
     pub auth: AuthSection,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tenancy: Option<TenancyDoc>,
-    /// Role → permissions.
+    /// Role → grants: a permission, or `"<permission>@<scope>"` for the
+    /// rows of a model's scope only (ADR-040).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub roles: BTreeMap<String, Vec<String>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -129,6 +130,27 @@ pub struct ModelDoc {
     /// runs, on every write to the model (ADR-039).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub hooks: BTreeMap<String, String>,
+    /// Row scopes (ADR-040): name → how a row is tied to the acting actor.
+    /// A role granted `"<permission>@<scope>"` holds the permission only
+    /// on the rows its scopes admit.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub scopes: BTreeMap<String, ScopeDoc>,
+}
+
+/// One row scope of a model (ADR-040). Without `through`, `field` is a
+/// `uuid` field holding the actor itself. With it, some row of the
+/// `through` model whose `key` (default `id`) equals the row's `field`
+/// has the actor in its `actor` field.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScopeDoc {
+    pub field: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub through: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<String>,
 }
 
 /// A model field, or an input field of a handler endpoint.

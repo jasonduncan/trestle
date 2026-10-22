@@ -74,6 +74,27 @@ promise.
   sign-in work without Rust code. With `passwords = false` and no `oidc`,
   nothing is installed. A project that installs `IdentityApp` itself keeps
   its own. `AuthSection::sign_in` says which applies.
+- Row-scoped authority (ADR-040): a model declares row scopes that tie a
+  row to the acting actor, either directly (`{ field = "<uuid field>" }`)
+  or through another model (`{ field = "owner", through = "crm.member",
+  key = "id", actor = "actor" }`; `ModelDoc.scopes`, `ScopeDoc`). In
+  `[roles]`, `"crm.sell@own"` grants a permission for those rows only.
+  Generated lists, filters, searches and cursors select only them, in SQL.
+  A get, update, delete or action on another row is 404, like another
+  tenant's. A create, update or action whose row as written is outside
+  the scopes is 403 `out_of_scope`, so a manager with `@team` can reassign
+  within the team but not out of it. The scope's `through` row is locked
+  `FOR SHARE` in the write, and a role that changed to a narrower grant
+  is refused at recheck. Scoped grants show admin and application views,
+  but don't admit handler endpoints or `Permission::new`, whose `Ctx`
+  sees the whole tenant. Refs and `exists` guards still check tenancy
+  only. Scoped operations declare `reads` of their `through` models.
+  An `Idempotency-Key` replay under a scoped grant rechecks the row's scope
+  in the transaction (the row as it is now, or a delete's stored row, with
+  the `through` row `FOR SHARE`). A row the caller can no longer reach is
+  the 404 of a fresh request, not the stored body. The hook is
+  `DynOperation::recheck_replay`, which runs before any `Idempotency-Key`
+  replay and admits by default.
 
 ### Changed
 - `FieldType::Enum` has a `labels` member, so a pattern
@@ -90,6 +111,10 @@ promise.
   (ADR-039). `Ctx::update` and `Ctx::delete` of a model with write hooks
   lock the row `FOR UPDATE` first; actions and CRUD writes on such a model
   no longer declare effects.
+- `Intent.roles` holds each role's unscoped permissions only, and the new
+  `Intent.scoped` holds role → permission → scopes (ADR-040). `ModelSpec`
+  has a `scopes` member and `ModelDoc` a `scopes` field. A grant string
+  containing `@` is now a scoped grant.
 - The browser packages decode `x-trestle-enum-labels`. Renderers from
   0.7.x refuse a schema that uses it.
 - Existing intent projects with the default `[auth]` must run

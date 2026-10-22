@@ -31,7 +31,7 @@ use uuid::Uuid;
 
 use super::spec::{
     AUTHENTICATED, CheckSpec, Compare, Crud, EndpointSpec, FieldSpec, FieldType, Intent, ModelSpec,
-    Repeat, SetValue,
+    Repeat, ScopeSpec, SetValue,
 };
 
 /// Header that selects the tenant to act in. Grants nothing by itself.
@@ -135,6 +135,10 @@ impl Input {
 
 /// What a handler or hook gets: who is acting, in which tenant, and data
 /// access that runs in the operation's own transaction.
+///
+/// A `Ctx` sees every row of its tenant. Row scopes (ADR-040) narrow the
+/// generated operations, not this trusted code; a hook can apply richer
+/// rules of its own with `Ctx` queries.
 #[derive(Clone)]
 pub struct Ctx {
     inner: Arc<CtxInner>,
@@ -216,15 +220,30 @@ impl Ctx {
             .ok_or_else(|| internal(&format!("model {id:?} is not declared in trestle.toml")))
     }
 
+    /// Runs `f` on the operation's connection with the tenant's scope:
+    /// every row of the tenant. Handlers, hooks and Rust operations are
+    /// trusted code, so their data access is not narrowed by row scopes
+    /// (ADR-040).
     async fn with<T>(
         &self,
+        f: impl AsyncFnOnce(&mut PgConnection, &Scope) -> Result<T, Problem>,
+    ) -> Result<T, Problem> {
+        self.within(None, f).await
+    }
+
+    /// [`Ctx::with`], narrowed to the rows a scoped grant admits when
+    /// `rows` is set (ADR-040): `fetch` and `list` then see only those.
+    async fn within<T>(
+        &self,
+        rows: Option<&RowFilter>,
         f: impl AsyncFnOnce(&mut PgConnection, &Scope) -> Result<T, Problem>,
     ) -> Result<T, Problem> {
         let mut guard = self.inner.conn.lock().await;
         let conn = guard
             .as_mut()
             .ok_or_else(|| internal("a handler used its context after the operation ended"))?;
-        let scope = self.inner.intent.scope(self.inner.tenant);
+        let mut scope = self.inner.intent.scope(self.inner.tenant);
+        scope.rows = rows.cloned();
         f(conn.conn(), &scope).await
     }
 
@@ -692,9 +711,48 @@ pub struct Resolved {
     handlers: Handlers,
 }
 
-/// Tenant scope of one request.
+/// Tenant scope of one request, and the rows a scoped grant narrows it to.
 struct Scope {
     tenant: Option<(String, Uuid)>,
+    /// Applied by `fetch` and `list` only. The writes that follow a scoped
+    /// `fetch` act on the row it found and locked.
+    rows: Option<RowFilter>,
+}
+
+/// The rows a scoped grant admits (ADR-040): those that satisfy one of
+/// `scopes` for `actor`. Applied in SQL after the tenant.
+#[derive(Clone)]
+struct RowFilter {
+    actor: Uuid,
+    scopes: Vec<ScopeSpec>,
+}
+
+impl RowFilter {
+    /// `(<scope> OR ...)` on the row `t`, with the actor bound as `$n`.
+    /// `lock` (writes only) locks the `through` row found `FOR SHARE`
+    /// until commit, as the membership recheck does, so removing it waits
+    /// for the write, and a write waiting on its removal sees it gone.
+    fn sql(&self, tenant: Option<&str>, n: usize, lock: bool) -> String {
+        let parts: Vec<String> = self
+            .scopes
+            .iter()
+            .map(|scope| match &scope.through {
+                None => format!("t.{} = ${n}", scope.field),
+                Some(x) => format!(
+                    "EXISTS (SELECT 1 FROM {} x WHERE {}x.{} = t.{} AND x.{} = ${n}{})",
+                    x.table,
+                    tenant
+                        .map(|c| format!("x.{c} = t.{c} AND "))
+                        .unwrap_or_default(),
+                    x.key,
+                    scope.field,
+                    x.actor,
+                    if lock { " FOR SHARE" } else { "" }
+                ),
+            })
+            .collect();
+        format!("({})", parts.join(" OR "))
+    }
 }
 
 impl Resolved {
@@ -704,6 +762,7 @@ impl Resolved {
                 (Some(t), Some(id)) => Some((t.column(), id)),
                 _ => None,
             },
+            rows: None,
         }
     }
 
@@ -933,7 +992,11 @@ where
                 .collect();
             app.view_dyn(
                 definition,
-                Arc::new(Permission::declared(&self.resolved, &view.permission)),
+                Arc::new(Permission::declared(
+                    &self.resolved,
+                    &view.permission,
+                    Reach::Show,
+                )),
             );
         }
         for endpoint in &intent.endpoints {
@@ -1113,7 +1176,11 @@ where
                     }
                     resource.admin_dyn(
                         view,
-                        Arc::new(Permission::declared(&self.resolved, &admin.permission)),
+                        Arc::new(Permission::declared(
+                            &self.resolved,
+                            &admin.permission,
+                            Reach::Show,
+                        )),
                     );
                 }
                 EndpointSpec::Custom {
@@ -1150,7 +1217,9 @@ where
                         info: OperationDescriptor::new(id.as_str(), "1", mode)
                             .audiences(&[Audience::Product])
                             .summary(format!("{id} (handler {})", handler.name)),
-                        permission: Permission::declared(&self.resolved, permission),
+                        // A handler's `Ctx` sees the whole tenant, so only
+                        // an unscoped grant admits it (ADR-040).
+                        permission: Permission::declared(&self.resolved, permission, Reach::Tenant),
                         input: contract,
                         output: representation(spec),
                         model: spec.clone(),
@@ -1576,6 +1645,9 @@ where
     }
     let contract = contract.field(Field::digits("expected_version"));
     let mut effects = Effects::new().writes(model.as_str());
+    for through in through_models(spec) {
+        effects = effects.reads(through);
+    }
     let mut guards = Vec::new();
     for x in exists {
         let related = resolved
@@ -1635,7 +1707,7 @@ where
     }
     let op = IntentOp::<S> {
         info,
-        permission: Permission::declared(resolved, permission),
+        permission: Permission::declared(resolved, permission, Reach::Rows(spec.clone())),
         input: contract,
         output: representation(spec),
         model: spec.clone(),
@@ -1743,7 +1815,13 @@ where
         (false, _) => Some(Effects::new().reads(model.id.as_str())),
         (true, false) => Some(Effects::new().writes(model.id.as_str())),
         (true, true) => None,
-    };
+    }
+    // A scoped grant reads the scopes' `through` models (ADR-040).
+    .map(|effects| {
+        through_models(model)
+            .into_iter()
+            .fold(effects, |effects, through| effects.reads(through))
+    });
     let hooks = hooks
         .iter()
         .map(|(k, v)| (k.clone(), v.name.clone()))
@@ -1760,7 +1838,7 @@ where
     }
     let built = IntentOp::<S> {
         info,
-        permission: Permission::declared(resolved, permission),
+        permission: Permission::declared(resolved, permission, Reach::Rows(model.clone())),
         input,
         output,
         model: model.clone(),
@@ -1769,6 +1847,16 @@ where
         _state: PhantomData,
     };
     Arc::new(built)
+}
+
+/// The models a model's row scopes read (ADR-040), each once.
+fn through_models(model: &ModelSpec) -> BTreeSet<&str> {
+    model
+        .scopes
+        .values()
+        .filter_map(|s| s.through.as_ref().map(|x| x.model.as_str()))
+        .filter(|m| *m != model.id)
+        .collect()
 }
 
 /// The admitted request context of an intent operation.
@@ -1805,16 +1893,50 @@ async fn membership_role(
     Ok(role)
 }
 
-/// Whether `role` (in the caller's tenant) grants `permission`.
-fn permits(resolved: &Resolved, permission: &str, role: Option<&str>) -> bool {
-    permission == AUTHENTICATED
-        || role.is_some_and(|r| {
-            resolved
-                .intent
-                .roles
-                .get(r)
-                .is_some_and(|perms| perms.contains(permission))
-        })
+/// What `role` (in the caller's tenant) holds of `permission` (ADR-040).
+enum Grant<'a> {
+    None,
+    /// Every row of the tenant.
+    All,
+    /// The rows of these scopes, on the models that declare them.
+    Scopes(&'a BTreeSet<String>),
+}
+
+fn grant<'a>(resolved: &'a Resolved, permission: &str, role: Option<&str>) -> Grant<'a> {
+    let intent = &resolved.intent;
+    if permission == AUTHENTICATED {
+        return Grant::All;
+    }
+    let Some(role) = role else {
+        return Grant::None;
+    };
+    if intent
+        .roles
+        .get(role)
+        .is_some_and(|p| p.contains(permission))
+    {
+        Grant::All
+    } else if let Some(scopes) = intent.scoped.get(role).and_then(|g| g.get(permission)) {
+        Grant::Scopes(scopes)
+    } else {
+        Grant::None
+    }
+}
+
+/// What a [`Permission`] guards, which decides what a scoped grant of it
+/// admits (ADR-040).
+#[derive(Clone)]
+enum Reach {
+    /// A generated operation on rows of this model (CRUD, actions): a
+    /// scoped grant admits it when the model declares one of the scopes,
+    /// and the operation sees only the rows they admit.
+    Rows(Arc<ModelSpec>),
+    /// Showing an admin or application view, which grants nothing: any
+    /// grant admits it.
+    Show,
+    /// Code that sees the whole tenant (handlers, Rust operations): only
+    /// an unscoped grant admits it.
+    Tenant,
 }
 
 /// What every intent operation reads from a request: the actor, and the
@@ -1875,25 +1997,31 @@ where
 /// role's permissions. Rust operations in an intent project use it as their
 /// policy, and it is the `DynPolicy` behind `[[admin]]` (ADR-029), where it
 /// shows a view and grants nothing.
+///
+/// A grant limited to row scopes (`"crm.sell@own"`, ADR-040) does not admit
+/// a Rust operation: its [`Ctx`] sees every row of the tenant. Only an
+/// unscoped grant of the permission does.
 #[derive(Clone)]
 pub struct Permission {
     id: String,
     permission: String,
     resolved: Arc<Resolved>,
+    reach: Reach,
 }
 
 impl Permission {
     /// `permission` as the intent grants it: [`AUTHENTICATED`], or a
     /// permission some role in `[roles]` holds.
     pub fn new(resolved: &Arc<Resolved>, permission: &str) -> Result<Self, String> {
+        let intent = &resolved.intent;
         let granted = permission == AUTHENTICATED
-            || resolved
-                .intent
+            || intent
                 .roles
                 .values()
-                .any(|perms| perms.contains(permission));
+                .any(|perms| perms.contains(permission))
+            || intent.scoped.values().any(|g| g.contains_key(permission));
         if granted {
-            Ok(Self::declared(resolved, permission))
+            Ok(Self::declared(resolved, permission, Reach::Tenant))
         } else {
             Err(format!(
                 "permission {permission:?} is not granted by any role in {}",
@@ -1903,11 +2031,73 @@ impl Permission {
     }
 
     /// A permission the intent file names, already checked when it was read.
-    fn declared(resolved: &Arc<Resolved>, permission: &str) -> Self {
+    fn declared(resolved: &Arc<Resolved>, permission: &str, reach: Reach) -> Self {
         Self {
             id: policy_id(permission),
             permission: permission.to_owned(),
             resolved: resolved.clone(),
+            reach,
+        }
+    }
+
+    /// Whether `role` holds the permission for what it guards.
+    fn admits(&self, role: Option<&str>) -> bool {
+        match (grant(&self.resolved, &self.permission, role), &self.reach) {
+            (Grant::None, _) => false,
+            (Grant::All, _) | (Grant::Scopes(_), Reach::Show) => true,
+            (Grant::Scopes(_), Reach::Tenant) => false,
+            (Grant::Scopes(scopes), Reach::Rows(model)) => {
+                scopes.iter().any(|s| model.scopes.contains_key(s))
+            }
+        }
+    }
+
+    /// Whether the grant of role `now` admits every row the grant of role
+    /// `then` admitted: a write decided under `then` must not run with
+    /// more than the membership now gives (ADR-040).
+    fn covers(&self, now: Option<&str>, then: Option<&str>) -> bool {
+        if now == then {
+            return true;
+        }
+        let declared = |s: &&String| match &self.reach {
+            Reach::Rows(model) => model.scopes.contains_key(*s),
+            Reach::Show | Reach::Tenant => true,
+        };
+        match (
+            grant(&self.resolved, &self.permission, now),
+            grant(&self.resolved, &self.permission, then),
+        ) {
+            (_, Grant::None) | (Grant::All, _) => true,
+            (Grant::None, _) | (Grant::Scopes(_), Grant::All) => false,
+            (Grant::Scopes(now), Grant::Scopes(then)) => {
+                then.iter().filter(declared).all(|s| now.contains(s))
+            }
+        }
+    }
+
+    /// The rows the resolved caller's grant admits on the model this
+    /// permission guards: `None` for every row (ADR-040).
+    fn rows(&self, ctx: &DynContext) -> Result<Option<RowFilter>, Problem> {
+        let ctx = ctx_of(ctx)?;
+        let Reach::Rows(model) = &self.reach else {
+            return Ok(None);
+        };
+        match grant(&self.resolved, &self.permission, ctx.role.as_deref()) {
+            Grant::All => Ok(None),
+            Grant::None => Err(Problem::forbidden("permission_denied")),
+            Grant::Scopes(names) => {
+                let scopes: Vec<ScopeSpec> = names
+                    .iter()
+                    .filter_map(|n| model.scopes.get(n).cloned())
+                    .collect();
+                if scopes.is_empty() {
+                    return Err(Problem::forbidden("permission_denied"));
+                }
+                Ok(Some(RowFilter {
+                    actor: ctx.actor.0,
+                    scopes,
+                }))
+            }
         }
     }
 
@@ -1938,7 +2128,7 @@ impl Permission {
     /// Whether the resolved caller holds the permission.
     pub fn admit(&self, ctx: &DynContext) -> Result<(), Problem> {
         let ctx = ctx_of(ctx)?;
-        if permits(&self.resolved, &self.permission, ctx.role.as_deref()) {
+        if self.admits(ctx.role.as_deref()) {
             Ok(())
         } else {
             Err(Problem::forbidden("permission_denied"))
@@ -1946,7 +2136,8 @@ impl Permission {
     }
 
     /// The same check inside a write's transaction, on the membership as it
-    /// is now (locked `FOR SHARE` until commit).
+    /// is now (locked `FOR SHARE` until commit). A role changed since the
+    /// caller was resolved must still grant every row the old one did.
     pub async fn recheck(&self, conn: &mut PgConnection, ctx: &DynContext) -> Result<(), Problem> {
         let ctx = ctx_of(ctx)?;
         let Some(tenant) = ctx.tenant else {
@@ -1955,7 +2146,7 @@ impl Permission {
         let role = membership_role(conn, &self.resolved, tenant, ctx.actor, true)
             .await?
             .ok_or_else(|| Problem::forbidden("tenant_not_permitted"))?;
-        if permits(&self.resolved, &self.permission, Some(&role)) {
+        if self.admits(Some(&role)) && self.covers(Some(&role), ctx.role.as_deref()) {
             Ok(())
         } else {
             Err(Problem::forbidden("permission_denied"))
@@ -2035,6 +2226,44 @@ where
         Box::pin(self.permission.recheck(conn, ctx))
     }
 
+    /// A replay of a scoped write returns its stored row only if the
+    /// caller could still reach it (ADR-040): the row as it is now, found
+    /// through the scopes with the `through` row locked `FOR SHARE`, or for
+    /// a delete the stored row's scope fields. Otherwise it is the 404 a
+    /// fresh request gets.
+    fn recheck_replay<'a>(
+        &'a self,
+        conn: &'a mut PgConnection,
+        ctx: &'a DynContext,
+        output: &'a Value,
+    ) -> BoxFuture<'a, Result<(), Problem>> {
+        Box::pin(async move {
+            let Some(rows) = self.permission.rows(ctx)? else {
+                return Ok(());
+            };
+            let mut scope = self.resolved.scope(ctx_of(ctx)?.tenant);
+            scope.rows = Some(rows);
+            let visible = match &self.kind {
+                Kind::Crud(Crud::Delete, ..) => {
+                    stored_inside(conn, &self.model, &scope, output).await?
+                }
+                _ => {
+                    let id = output
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .and_then(|s| s.parse::<Uuid>().ok())
+                        .ok_or_else(|| internal("a replayed row has no id"))?;
+                    fetch(conn, &self.model, &scope, id, true).await?.is_some()
+                }
+            };
+            if visible {
+                Ok(())
+            } else {
+                Err(Problem::not_found())
+            }
+        })
+    }
+
     fn run(
         self: Arc<Self>,
         conn: DynConn,
@@ -2043,8 +2272,12 @@ where
     ) -> BoxFuture<'static, (DynConn, Result<Value, Problem>)> {
         Box::pin(async move {
             let resolved = self.resolved.clone();
+            let rows = match self.permission.rows(&ctx) {
+                Ok(rows) => rows,
+                Err(problem) => return (conn, Err(problem)),
+            };
             Ctx::run(&resolved, conn, &ctx, async |handle| {
-                self.dispatch(&handle, input).await
+                self.dispatch(&handle, input, rows.as_ref()).await
             })
             .await
         })
@@ -2080,7 +2313,16 @@ impl<S> IntentOp<S> {
         }
     }
 
-    async fn dispatch(&self, ctx: &Ctx, input: Value) -> Result<Value, Problem> {
+    /// Runs the operation. `rows` is the scoped grant's narrowing
+    /// (ADR-040): the rows it reads and changes are found through it, so
+    /// one outside it is a 404, and a row it writes must still be inside
+    /// it afterwards ([`inside`]).
+    async fn dispatch(
+        &self,
+        ctx: &Ctx,
+        input: Value,
+        rows: Option<&RowFilter>,
+    ) -> Result<Value, Problem> {
         let model = &self.model;
         let Value::Object(mut input) = input else {
             return Err(Problem::malformed(
@@ -2115,7 +2357,7 @@ impl<S> IntentOp<S> {
                     Write(Row, Map<String, Value>),
                 }
                 let planned = ctx
-                    .with(async |conn, scope| {
+                    .within(rows, async |conn, scope| {
                         let row = fetch(conn, model, scope, id, true)
                             .await?
                             .ok_or_else(Problem::not_found)?;
@@ -2172,8 +2414,11 @@ impl<S> IntentOp<S> {
                             id,
                             version: Some(version),
                         };
-                        ctx.write(model, &self.info.id, change, Some(current), values)
-                            .await?
+                        let row = ctx
+                            .write(model, &self.info.id, change, Some(current), values)
+                            .await?;
+                        inside(ctx, model, rows, &row).await?;
+                        row
                     }
                 };
                 Ok(row.to_json())
@@ -2240,8 +2485,8 @@ impl<S> IntentOp<S> {
                             Some(c) => Some(position(&decode_cursor(&shape, c)?)?),
                             None => None,
                         };
-                        let mut rows = ctx
-                            .with(async |conn, scope| {
+                        let mut items = ctx
+                            .within(rows, async |conn, scope| {
                                 list(
                                     conn,
                                     model,
@@ -2255,9 +2500,9 @@ impl<S> IntentOp<S> {
                                 .await
                             })
                             .await?;
-                        let next = if rows.len() as i64 > limit {
-                            rows.truncate(limit as usize);
-                            rows.last().map(|last| {
+                        let next = if items.len() as i64 > limit {
+                            items.truncate(limit as usize);
+                            items.last().map(|last| {
                                 let row = last.to_json();
                                 encode_cursor(&shape, &json!([row[order.0.as_str()], row["id"]]))
                             })
@@ -2265,14 +2510,16 @@ impl<S> IntentOp<S> {
                             None
                         };
                         Ok(json!({
-                            "items": rows.iter().map(Row::to_json).collect::<Vec<_>>(),
+                            "items": items.iter().map(Row::to_json).collect::<Vec<_>>(),
                             "next_cursor": next,
                         }))
                     }
                     Crud::Get => {
                         let id = id.ok_or_else(Problem::not_found)?;
                         let row = ctx
-                            .with(async |conn, scope| fetch(conn, model, scope, id, false).await)
+                            .within(rows, async |conn, scope| {
+                                fetch(conn, model, scope, id, false).await
+                            })
                             .await?
                             .ok_or_else(Problem::not_found)?;
                         Ok(row.to_json())
@@ -2285,13 +2532,16 @@ impl<S> IntentOp<S> {
                         let created = ctx
                             .write(model, &self.info.id, Change::Create, None, values)
                             .await?;
+                        inside(ctx, model, rows, &created).await?;
                         let created = self.hook(ctx, hooks, "after_create", created).await?;
                         Ok(created.to_json())
                     }
                     Crud::Update => {
                         let id = id.ok_or_else(Problem::not_found)?;
                         let current = ctx
-                            .with(async |conn, scope| fetch(conn, model, scope, id, true).await)
+                            .within(rows, async |conn, scope| {
+                                fetch(conn, model, scope, id, true).await
+                            })
                             .await?
                             .ok_or_else(Problem::not_found)?;
                         if version.is_some_and(|v| {
@@ -2315,13 +2565,16 @@ impl<S> IntentOp<S> {
                                 changes,
                             )
                             .await?;
+                        inside(ctx, model, rows, &updated).await?;
                         let updated = self.hook(ctx, hooks, "after_update", updated).await?;
                         Ok(updated.to_json())
                     }
                     Crud::Delete => {
                         let id = id.ok_or_else(Problem::not_found)?;
                         let current = ctx
-                            .with(async |conn, scope| fetch(conn, model, scope, id, true).await)
+                            .within(rows, async |conn, scope| {
+                                fetch(conn, model, scope, id, true).await
+                            })
                             .await?
                             .ok_or_else(Problem::not_found)?;
                         if version.is_some_and(|v| {
@@ -2346,6 +2599,71 @@ impl<S> IntentOp<S> {
             }
         }
     }
+}
+
+/// A row a scoped grant just wrote (created, updated or acted on) must be
+/// inside one of its scopes as written, with its `through` row locked
+/// `FOR SHARE` (ADR-040). Otherwise the write is refused with a 403
+/// `out_of_scope` and rolls back: a salesperson can't create a record
+/// owned by someone else, or hand one over.
+async fn inside(
+    ctx: &Ctx,
+    model: &Arc<ModelSpec>,
+    rows: Option<&RowFilter>,
+    row: &Row,
+) -> Result<(), Problem> {
+    let Some(rows) = rows else {
+        return Ok(());
+    };
+    let id = row
+        .id()
+        .ok_or_else(|| internal("a written row has no id"))?;
+    let found = ctx
+        .within(Some(rows), async |conn, scope| {
+            fetch(conn, model, scope, id, true).await
+        })
+        .await?;
+    match found {
+        Some(_) => Ok(()),
+        None => Err(Problem::forbidden("out_of_scope")
+            .with_detail("This change would put the record outside the records you may change.")),
+    }
+}
+
+/// Whether a row that is gone (a replayed delete's stored answer) would be
+/// inside the scopes now: the predicate on its stored scope fields, with
+/// the `through` row locked `FOR SHARE` (ADR-040).
+async fn stored_inside(
+    conn: &mut PgConnection,
+    model: &ModelSpec,
+    scope: &Scope,
+    stored: &Value,
+) -> Result<bool, Problem> {
+    let Some(rows) = &scope.rows else {
+        return Ok(true);
+    };
+    let mut values = Map::new();
+    for s in &rows.scopes {
+        values.insert(
+            s.field.clone(),
+            stored.get(&s.field).cloned().unwrap_or(Value::Null),
+        );
+    }
+    let tenant = scope.tenant.as_ref().map(|(c, _)| c.as_str());
+    if let Some((col, t)) = &scope.tenant {
+        values.insert(col.clone(), json!(t));
+    }
+    let sql = format!(
+        "SELECT 1 FROM jsonb_populate_record(NULL::{}, $1::jsonb) t WHERE {}",
+        model.table,
+        rows.sql(tenant, 2, true)
+    );
+    let found = sqlx::query_scalar::<_, i32>(&sql)
+        .bind(Value::Object(values).to_string())
+        .bind(rows.actor)
+        .fetch_optional(&mut *conn)
+        .await?;
+    Ok(found.is_some())
 }
 
 /// An action's `require`, `check` and `exists` (ADR-036), on the row as it
@@ -2629,15 +2947,29 @@ async fn fetch(
         Some((col, t)) => (format!("{col} = $2 AND "), Some(*t)),
         None => (String::new(), None),
     };
+    // A row outside the caller's scopes is missing, exactly like another
+    // tenant's (ADR-040).
+    let rows_sql = scope
+        .rows
+        .as_ref()
+        .map(|r| {
+            let n = if tenant.is_some() { 3 } else { 2 };
+            let tenant = scope.tenant.as_ref().map(|(c, _)| c.as_str());
+            format!(" AND {}", r.sql(tenant, n, lock))
+        })
+        .unwrap_or_default();
     let sql = format!(
-        "SELECT {} FROM {} t WHERE {tenant_sql}t.id = $1{}",
+        "SELECT {} FROM {} t WHERE {tenant_sql}t.id = $1{rows_sql}{}",
         representation_sql(model),
         model.table,
-        if lock { " FOR UPDATE" } else { "" }
+        if lock { " FOR UPDATE OF t" } else { "" }
     );
     let mut q = sqlx::query_scalar::<_, String>(&sql).bind(id);
     if let Some(t) = tenant {
         q = q.bind(t);
+    }
+    if let Some(r) = &scope.rows {
+        q = q.bind(r.actor);
     }
     let text = q.fetch_optional(conn).await?;
     Ok(parse_rows(model, text.into_iter().collect())?.pop())
@@ -2671,6 +3003,13 @@ async fn list(
     let mut next = 2;
     if let Some((col, _)) = &scope.tenant {
         conditions.push(format!("t.{col} = ${next}"));
+        next += 1;
+    }
+    // Only the rows the caller's scopes admit, so pages, cursors and
+    // filters never reveal another (ADR-040).
+    if let Some(rows) = &scope.rows {
+        let tenant = scope.tenant.as_ref().map(|(c, _)| c.as_str());
+        conditions.push(rows.sql(tenant, next, false));
         next += 1;
     }
     if after.is_some() {
@@ -2717,6 +3056,9 @@ async fn list(
     let mut q = sqlx::query_scalar::<_, String>(&sql).bind(Value::Object(values).to_string());
     if let Some((_, t)) = &scope.tenant {
         q = q.bind(*t);
+    }
+    if let Some(rows) = &scope.rows {
+        q = q.bind(rows.actor);
     }
     if let Some((key, id)) = after {
         let key = match key {

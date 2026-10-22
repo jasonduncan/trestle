@@ -32,7 +32,7 @@ The 2026-10-20 review's findings (`docs/security-review.md`) are fixed in 0.7.x 
 mitigated); on 2026-10-21 the owner accepted that review as the §12.4 external review, closing
 the gate (the owner's decision alone), and plans a more comprehensive review later. Still open:
 the edge on a real host (ACME, DNS, firewall); publishing the npm packages (`@trestle-framework/*`). Do not claim general
-maturity or benchmark leadership. ADRs: 001–039 (015 reopens 009: jobs and outbox).
+maturity or benchmark leadership. ADRs: 001–040 (015 reopens 009: jobs and outbox).
 
 ## Non-negotiables
 - Installing a model publishes nothing (I01). Endpoints, forms and writable fields are explicit.
@@ -82,6 +82,10 @@ maturity or benchmark leadership. ADRs: 001–039 (015 reopens 009: jobs and out
   through `Ctx::write`, which runs the model's write hooks (ADR-039); never add a write
   path around it.
 - Reads use `trestle_core::query::select(scope, ..)`; there is no unscoped variant on purpose.
+- Row scopes (ADR-040): a scoped grant (`"crm.sell@own"`) narrows generated CRUD and actions
+  in SQL after the tenant. A hidden row is 404, a write that leaves the scopes is 403
+  `out_of_scope`, and the scope's `through` row is locked `FOR SHARE` in the write. A scoped
+  grant never admits code holding a tenant-wide `Ctx` (handlers, `Permission::new`); keep it so.
 - Intent `ref` writes check the target row is in the caller's tenant (`check_references`, ADR-024)
   and report another tenant's row exactly like a missing one; never add a write path around it.
   A ref to another app's model makes the generated app require that app (ADR-032); refs between

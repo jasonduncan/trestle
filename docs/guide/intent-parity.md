@@ -50,6 +50,8 @@ waiting for:
   `Idempotency-Key` (ADR-038);
 - rules on every write: a model's `before_write` and `after_write` hooks
   run on CRUD, actions and `Ctx` writes alike (ADR-039);
+- row-level permissions: `scopes` on a model and `"<permission>@<scope>"`
+  grants in `[roles]` (ADR-040);
 - generated forms: `forms = true` (ADR-026);
 - admin views: `[[admin]]` (ADR-029).
 
