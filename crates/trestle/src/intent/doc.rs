@@ -144,7 +144,8 @@ pub struct ModelDoc {
 /// One row scope of a model (ADR-040). Without `through`, `field` is a
 /// `uuid` field holding the actor itself. With it, some row of the
 /// `through` model whose `key` (default `id`) equals the row's `field`
-/// has the actor in its `actor` field.
+/// has the actor in its `actor` field, and every `where` condition holds
+/// on that row (ADR-044).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScopeDoc {
@@ -155,6 +156,12 @@ pub struct ScopeDoc {
     pub key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<String>,
+    /// `where`: a bool, int, text or enum field of the `through` row → the
+    /// constant it must equal, or a list of constants it must be one of
+    /// (`{ active = true, role = ["manager", "lead"] }`, ADR-044). Only
+    /// with `through`.
+    #[serde(rename = "where", default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub conditions: BTreeMap<String, Value>,
 }
 
 /// A model field, or an input field of a handler endpoint.

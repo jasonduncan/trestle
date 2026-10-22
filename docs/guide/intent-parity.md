@@ -51,7 +51,8 @@ waiting for:
 - rules on every write: a model's `before_write` and `after_write` hooks
   run on CRUD, actions and `Ctx` writes alike (ADR-039);
 - row-level permissions: `scopes` on a model and `"<permission>@<scope>"`
-  grants in `[roles]` (ADR-040);
+  grants in `[roles]` (ADR-040), with `where` conditions on a scope's
+  `through` row, such as active managers only (ADR-044);
 - change logs: `history = true` on a model logs every write, and on its CRUD
   endpoint publishes the log (ADR-041);
 - generated forms: `forms = true` (ADR-026);

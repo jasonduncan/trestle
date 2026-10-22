@@ -126,6 +126,17 @@ promise.
   date, int, bool, decimal, duration or uuid field, or of a handler
   input, is a parse problem; for text it is still just text.
   `FieldSpec::defaults_to_now`, `intent::spec::NOW`.
+- Conditions on a scope's `through` row (ADR-044): `where = { active =
+  true, role = ["manager", "lead"] }` on a `through` scope admits only
+  `through` rows whose fields equal the constants (a list is "one of").
+  It applies wherever the scope does: list filtering, the 404 fetch, the
+  after-write `out_of_scope` check, the `FOR SHARE` recheck and
+  idempotent replays. An uncommitted update that breaks a condition (an
+  `active = false`) blocks the write, which then sees it and is a 404,
+  like a removed membership. Fields must be bool, int, text or enum of the
+  `through` model, constants must fit them, and `where` on a direct scope
+  is a parse problem. `ScopeDoc.conditions` (key `where`),
+  `Through.conditions`.
 
 ### Changed
 - `FieldType::Enum` has a `labels` member, so a pattern
@@ -153,6 +164,8 @@ promise.
   `Intent.scoped` holds role → permission → scopes (ADR-040). `ModelSpec`
   has a `scopes` member and `ModelDoc` a `scopes` field. A grant string
   containing `@` is now a scoped grant.
+- `ScopeDoc` has a `conditions` field (`..Default::default()` covers it)
+  and `intent::spec::Through` a `conditions` member (ADR-044).
 - The browser packages decode `x-trestle-enum-labels`. Renderers from
   0.7.x refuse a schema that uses it.
 - Existing intent projects with the default `[auth]` must run

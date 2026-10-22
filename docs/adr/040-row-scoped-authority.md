@@ -5,6 +5,11 @@
 ADR-016, ADR-031, ADR-038 · **Depends on:** ADR-024, ADR-025, ADR-029,
 ADR-030, ADR-033, ADR-039
 
+**Extended by [ADR-044](044-scope-conditions.md):** a `through` scope's
+`where = { active = true, role = ["manager", "lead"] }` admits only
+`through` rows whose fields equal those constants, on every path below,
+and an update that breaks a condition is rechecked like a deletion.
+
 ## Context
 
 `[roles]` gives each tenant membership one role, and a role holds a set of
