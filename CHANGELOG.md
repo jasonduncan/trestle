@@ -24,6 +24,14 @@ promise.
   still answers 422 for a hidden row's value; include the scope field in
   the set to keep values private to a scope.
 
+### Fixed
+- `GET …/{id}/history` no longer fails with a 500 when the log holds entries
+  written under an earlier version of the model (ADR-041). A change to a
+  field that is gone is left out, and a value its field no longer admits
+  (an enum value removed, a range tightened) is shown as `null`. Either
+  way the entry says `incomplete: true`, a new field of the page's entries.
+  The stored log is unchanged.
+
 ## [0.8.0] - 2026-10-22
 
 ### Added
