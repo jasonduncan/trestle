@@ -146,7 +146,8 @@ run on every write to it, whichever endpoint, action or handler makes it
 table, and on its CRUD endpoint publishes `GET …/{id}/history` (ADR-041);
 `trestle new` writes a fuller example, and
 `crates/trestle/examples/notes_intent/` shows both. `trestle check` validates
-the file and reports problems with line numbers.
+the file and reports problems with line numbers, including names PostgreSQL
+reserves (`order`, `user`; ADR-042).
 
 ## Core concepts
 

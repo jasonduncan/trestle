@@ -6,14 +6,20 @@
 use serde_json::Value;
 
 use crate::schema::{
-    Check, ColumnType, DbDefault, FieldState, ModelState, SchemaState, StateOp, sql_identifier,
+    Check, ColumnType, DbDefault, FieldState, ModelState, SchemaState, StateOp, reserved_word,
+    sql_identifier,
 };
 
+/// An identifier as emitted: unquoted, so it must be a plain identifier
+/// and not a reserved word (ADR-042). Quoting would change the SQL of every
+/// migration already written.
 pub(crate) fn ident(name: &str) -> Result<&str, String> {
-    if sql_identifier(name) {
-        Ok(name)
-    } else {
+    if !sql_identifier(name) {
         Err(format!("{name:?} is not a plain SQL identifier"))
+    } else if reserved_word(name) {
+        Err(format!("{name:?} is a reserved SQL word"))
+    } else {
+        Ok(name)
     }
 }
 

@@ -108,6 +108,16 @@ promise.
   (`EndpointDoc.history`) publishes `GET <path>/{id}/history`, read like
   `get`: tenant first, through the caller's row scopes, newest first with
   `limit` and `cursor`.
+- Reserved SQL words are refused as names (ADR-042). Identifiers are
+  emitted unquoted, so `trestle check` now refuses a model field that is a
+  PostgreSQL reserved key word (`primary`, `order`, `user`, `group`, ...)
+  and a table that is one or a type name (`text`, `date`, ...), with the
+  line and a suggestion (`field "primary" is a reserved SQL word; choose
+  another ID, e.g. "is_primary"`). `Model::problems` refuses a reserved
+  word as a table, field, column, constraint or index name in Rust models
+  too, and migration rendering never emits one. The lists are
+  `trestle_historical::schema::{RESERVED_WORDS, TYPE_NAMES}`. Non-reserved
+  key words such as `status`, `position` and `time` stay valid.
 
 ### Changed
 - `FieldType::Enum` has a `labels` member, so a pattern
@@ -128,6 +138,9 @@ promise.
   `ModelDoc` and `EndpointDoc` a `history` field (ADR-041). Writes to a
   model with `history = true` declare `writes` of its log model, and an
   unversioned `Ctx::update` or `Ctx::delete` of one locks the row first.
+- An intent table that is a PostgreSQL type name or a "cannot be function
+  or type" key word (`table = "date"`, `table = "values"`) is now a parse
+  problem; it used to fail at its first write (ADR-042).
 - `Intent.roles` holds each role's unscoped permissions only, and the new
   `Intent.scoped` holds role → permission → scopes (ADR-040). `ModelSpec`
   has a `scopes` member and `ModelDoc` a `scopes` field. A grant string
