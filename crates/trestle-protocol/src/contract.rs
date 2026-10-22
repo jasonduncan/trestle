@@ -16,6 +16,8 @@
 //! Business rules that need the database (uniqueness, membership, workflow
 //! state) are never part of a contract (§5.2).
 
+use std::collections::BTreeMap;
+
 use serde_json::{Map, Number, Value, json};
 
 use crate::{
@@ -61,8 +63,12 @@ pub enum FieldType {
     /// Decimal digits as a string: version tokens and 64-bit IDs that must
     /// not pass through JavaScript numbers (§5.4).
     Digits,
+    /// One of `values`, sent and stored as written. `labels` maps some of
+    /// them to what people see; it is presentation only and changes no
+    /// validation (ADR-035).
     Enum {
         values: Vec<String>,
+        labels: BTreeMap<String, String>,
     },
     /// A bounded list of objects of another contract, embedded inline (no
     /// references). Output contracts only in this profile.
@@ -271,8 +277,23 @@ impl Field {
             name,
             FieldType::Enum {
                 values: values.iter().map(|v| (*v).to_owned()).collect(),
+                labels: BTreeMap::new(),
             },
         )
+    }
+
+    /// Display labels for some of an enum's values, as `(value, label)`
+    /// pairs. Values without one display as themselves (ADR-035).
+    pub fn labels(mut self, pairs: &[(&str, &str)]) -> Self {
+        match &mut self.ty {
+            FieldType::Enum { labels, .. } => {
+                for (value, label) in pairs {
+                    labels.insert((*value).to_owned(), (*label).to_owned());
+                }
+            }
+            _ => self.misuse.push("labels() applies only to enum fields"),
+        }
+        self
     }
 
     /// Text length bounds in code points.
@@ -488,7 +509,7 @@ impl ContractDoc {
                         "contract {id}: field {name}: reference to {model:?}, which is not a model ID"
                     ));
                 }
-                FieldType::Enum { values } => {
+                FieldType::Enum { values, labels } => {
                     if values.is_empty() {
                         problems.push(format!("contract {id}: field {name}: enum has no values"));
                     }
@@ -496,6 +517,19 @@ impl ContractDoc {
                         if value.is_empty() || values[..i].contains(value) {
                             problems.push(format!(
                                 "contract {id}: field {name}: enum values must be non-empty and unique"
+                            ));
+                        }
+                    }
+                    for (value, label) in labels {
+                        if !values.contains(value) {
+                            problems.push(format!(
+                                "contract {id}: field {name}: label for {value:?}, which is not a value"
+                            ));
+                        }
+                        let chars = label.chars().count();
+                        if !(1..=MAX_LABEL_CHARS).contains(&chars) {
+                            problems.push(format!(
+                                "contract {id}: field {name}: the label for {value:?} must be 1 to {MAX_LABEL_CHARS} characters"
                             ));
                         }
                     }
@@ -650,8 +684,11 @@ impl ContractDoc {
                         insert_some(&mut ir, "minimum", minimum.map(Value::from));
                         insert_some(&mut ir, "maximum", maximum.map(Value::from));
                     }
-                    FieldType::Enum { values } => {
+                    FieldType::Enum { values, labels } => {
                         ir["values"] = json!(values);
+                        if !labels.is_empty() {
+                            ir["labels"] = json!(labels);
+                        }
                     }
                     FieldType::Items { item, max_items } => {
                         ir["maxItems"] = json!(max_items);
@@ -826,6 +863,17 @@ impl ContractDoc {
                         .map(|v| v.as_str().map(str::to_owned))
                         .collect::<Option<_>>()
                         .ok_or_else(|| format!("enum field {name} has a non-string value"))?,
+                    labels: match f.get("labels") {
+                        None => BTreeMap::new(),
+                        Some(labels) => labels
+                            .as_object()
+                            .and_then(|m| {
+                                m.iter()
+                                    .map(|(k, v)| Some((k.clone(), v.as_str()?.to_owned())))
+                                    .collect()
+                            })
+                            .ok_or_else(|| format!("enum field {name}: bad labels"))?,
+                    },
                 },
                 other => return Err(format!("field {name} has unknown type {other:?}")),
             };
@@ -904,7 +952,8 @@ impl ContractDoc {
                         reasons.push(format!("field {name} has a narrower numeric range"));
                     }
                 }
-                (FieldType::Enum { values: ov }, FieldType::Enum { values: nv }) => {
+                // Labels are presentation: they never change what is accepted.
+                (FieldType::Enum { values: ov, .. }, FieldType::Enum { values: nv, .. }) => {
                     if ov.iter().any(|v| !nv.contains(v)) {
                         reasons.push(format!("field {name} dropped enum values"));
                     }
@@ -1006,7 +1055,7 @@ impl ContractDoc {
                     FieldType::Boolean => json!(false),
                     FieldType::Uuid => json!("00000000-0000-4000-8000-000000000000"),
                     FieldType::Digits => json!("1"),
-                    FieldType::Enum { values } => json!(values.first()),
+                    FieldType::Enum { values, .. } => json!(values.first()),
                     FieldType::Items { item, .. } => json!([item.example()]),
                     FieldType::Decimal { .. } => json!("0"),
                     FieldType::Date => json!("2026-01-01"),
@@ -1032,6 +1081,14 @@ impl ContractDoc {
         Value::Object(object)
     }
 }
+
+/// The JSON Schema annotation that carries an enum's display labels, an
+/// object from value to label (ADR-035). Validators ignore it; `enum` stays
+/// the only rule.
+pub const ENUM_LABELS_KEYWORD: &str = "x-trestle-enum-labels";
+
+/// The longest display label an enum value may have, in code points.
+pub const MAX_LABEL_CHARS: usize = 200;
 
 fn insert_some(target: &mut Value, key: &str, value: Option<Value>) {
     if let Some(value) = value {
@@ -1059,7 +1116,13 @@ fn field_schema(field: &Field) -> Value {
         FieldType::Boolean => json!({ "type": "boolean" }),
         FieldType::Uuid => json!({ "type": "string", "format": "uuid" }),
         FieldType::Digits => json!({ "type": "string", "pattern": "^[0-9]+$" }),
-        FieldType::Enum { values } => json!({ "type": "string", "enum": values }),
+        FieldType::Enum { values, labels } => {
+            let mut s = json!({ "type": "string", "enum": values });
+            if !labels.is_empty() {
+                s[ENUM_LABELS_KEYWORD] = json!(labels);
+            }
+            s
+        }
         FieldType::Items { item, max_items } => {
             json!({ "type": "array", "maxItems": max_items, "items": item.schema_body() })
         }
@@ -1282,7 +1345,7 @@ fn check(ty: &FieldType, at: &str, value: &Value) -> Check {
             ),
             _ => Check::Shape(type_error(at, "string")),
         },
-        FieldType::Enum { values } => match value {
+        FieldType::Enum { values, .. } => match value {
             Value::String(text) if values.contains(text) => Check::Ok(value.clone()),
             Value::String(_) => Check::Invalid(
                 FieldError::new(
@@ -1428,6 +1491,7 @@ fn check_money(
             "currency",
             &FieldType::Enum {
                 values: currencies.to_vec(),
+                labels: BTreeMap::new(),
             },
         );
     }

@@ -1,4 +1,4 @@
-import { checkBindingPath, decodeObjectSchema, type Descriptor, type ObjectSchema } from "./protocol";
+import { checkBindingPath, choiceLabel, decodeObjectSchema, type Descriptor, type FieldSchema, type ObjectSchema } from "./protocol";
 
 export interface ViewSource { invocation: Descriptor; item: ObjectSchema; identityPointer: string; itemsPointer: string | null; nextCursorPointer: string | null }
 export interface ViewAction {
@@ -214,8 +214,15 @@ export function decodeViewManifest(value: unknown, options: { bytes?: number; me
   return entries;
 }
 
-export function formatValue(value: unknown): string {
+/** The top-level field a `/name` pointer names in `schema`, if any. */
+export function fieldAt(schema: ObjectSchema, pointer: string): FieldSchema | undefined {
+  return schema.fields.find((f) => f.name === pointer.slice(1));
+}
+
+/** Display text for a value; with its field, an enum value shows its label (ADR-035). */
+export function formatValue(value: unknown, field?: FieldSchema): string {
   if (value === null || value === undefined) return "—";
+  if (typeof value === "string") return choiceLabel(field, value);
   if (typeof value !== "object") return String(value);
   const money = value as Json;
   if (typeof money.amount === "string" && typeof money.currency === "string") return money.amount + " " + money.currency;

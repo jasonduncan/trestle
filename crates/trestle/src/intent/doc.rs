@@ -146,6 +146,10 @@ pub struct FieldDoc {
     pub default: Option<Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub values: Vec<String>,
+    /// Enum fields: value → what people see; values without one display as
+    /// themselves. Presentation only (ADR-035).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub labels: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub precision: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

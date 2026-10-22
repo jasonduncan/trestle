@@ -32,7 +32,10 @@
             "open",
             "won"
           ],
-          "type": "string"
+          "type": "string",
+          "x-trestle-enum-labels": {
+            "won": "Closed won"
+          }
         },
         "title": {
           "maxLength": 100,
@@ -123,7 +126,10 @@
             "open",
             "won"
           ],
-          "type": "string"
+          "type": "string",
+          "x-trestle-enum-labels": {
+            "won": "Closed won"
+          }
         },
         "title": {
           "maxLength": 100,
@@ -212,5 +218,5 @@
     "forms.relation@1",
     "forms.temporal@1"
   ],
-  "revision": "r-1c9fb2b23ccae9fa"
+  "revision": "r-07f2e613b504ed18"
 }

@@ -1035,7 +1035,12 @@ fn field_contract(f: &FieldSpec, required: bool) -> Field {
         FieldType::Uuid => Field::uuid(&f.id),
         FieldType::Enum => {
             let values: Vec<&str> = f.values.iter().map(String::as_str).collect();
-            Field::enumeration(&f.id, &values)
+            let labels: Vec<(&str, &str)> = f
+                .labels
+                .iter()
+                .map(|(v, l)| (v.as_str(), l.as_str()))
+                .collect();
+            Field::enumeration(&f.id, &values).labels(&labels)
         }
         FieldType::Decimal => Field::decimal(&f.id, f.precision, f.scale),
         FieldType::Money => {

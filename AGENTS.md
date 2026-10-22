@@ -32,7 +32,7 @@ The 2026-10-20 review's findings (`docs/security-review.md`) are fixed in 0.7.x 
 mitigated); on 2026-10-21 the owner accepted that review as the §12.4 external review, closing
 the gate (the owner's decision alone), and plans a more comprehensive review later. Still open:
 the edge on a real host (ACME, DNS, firewall); publishing the npm packages (`@trestle-framework/*`). Do not claim general
-maturity or benchmark leadership. ADRs: 001–033 (015 reopens 009: jobs and outbox).
+maturity or benchmark leadership. ADRs: 001–035 (015 reopens 009: jobs and outbox).
 
 ## Non-negotiables
 - Installing a model publishes nothing (I01). Endpoints, forms and writable fields are explicit.

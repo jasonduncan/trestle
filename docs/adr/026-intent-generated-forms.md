@@ -7,6 +7,9 @@ intent format · **Depends on:** ADR-022, ADR-024, ADR-025
 editors and bounded layouts opt into required interaction features. Untouched
 legacy descriptors and revisions stay unchanged.
 
+**Extended by [ADR-035](035-enum-labels.md):** a select shows an enum
+value's label and submits the value.
+
 ## Context
 
 Rust apps publish forms (`app.form(FormPresentation…)`) that the React

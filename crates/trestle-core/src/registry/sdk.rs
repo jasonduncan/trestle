@@ -54,7 +54,7 @@ fn ts_type(ty: &FieldType, contracts: &mut BTreeMap<String, ContractDoc>) -> Str
         FieldType::Money { .. } => "{ amount: string; currency: string }".into(),
         FieldType::Integer { .. } => "number".into(),
         FieldType::Boolean => "boolean".into(),
-        FieldType::Enum { values } => values
+        FieldType::Enum { values, .. } => values
             .iter()
             .map(|v| format!("{v:?}"))
             .collect::<Vec<_>>()

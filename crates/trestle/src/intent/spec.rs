@@ -184,6 +184,9 @@ struct FieldSection {
     default: Option<toml::Value>,
     #[serde(default)]
     values: Vec<String>,
+    /// Enum fields: value → what people see (ADR-035).
+    #[serde(default)]
+    labels: BTreeMap<String, Spanned<String>>,
     #[serde(default)]
     precision: Option<u8>,
     #[serde(default)]
@@ -333,6 +336,9 @@ pub struct FieldSpec {
     pub optional: bool,
     pub default: Option<serde_json::Value>,
     pub values: Vec<String>,
+    /// Enum fields: display labels for some values (ADR-035). Presentation
+    /// only: the stored and API value stays the value.
+    pub labels: BTreeMap<String, String>,
     /// Decimal fields: total digits, and digits after the point.
     pub precision: u8,
     pub scale: u8,
@@ -1558,6 +1564,24 @@ fn field(lines: &Lines<'_>, f: &FieldSection, problems: &mut Vec<String>) -> Opt
     if ty != FieldType::Enum && !f.values.is_empty() {
         problems.push(format!("{at}: values = [...] is for enum fields"));
     }
+    if ty != FieldType::Enum && !f.labels.is_empty() {
+        problems.push(format!("{at}: labels = {{...}} is for enum fields"));
+    } else {
+        use trestle_core::protocol::contract::MAX_LABEL_CHARS;
+        for (value, label) in &f.labels {
+            let at = lines.at(label);
+            if !f.values.contains(value) {
+                problems.push(format!(
+                    "{at}: labels.{value}: {value:?} is not one of the field's values"
+                ));
+            }
+            if !(1..=MAX_LABEL_CHARS).contains(&label.get_ref().chars().count()) {
+                problems.push(format!(
+                    "{at}: labels.{value} must be 1 to {MAX_LABEL_CHARS} characters"
+                ));
+            }
+        }
+    }
     let default = match &f.default {
         None => None,
         Some(v) => {
@@ -1579,6 +1603,11 @@ fn field(lines: &Lines<'_>, f: &FieldSection, problems: &mut Vec<String>) -> Opt
         optional: f.optional,
         default,
         values: f.values.clone(),
+        labels: f
+            .labels
+            .iter()
+            .map(|(k, v)| (k.clone(), v.get_ref().clone()))
+            .collect(),
         precision,
         scale,
         to: f.to.as_ref().map(|t| t.get_ref().clone()),

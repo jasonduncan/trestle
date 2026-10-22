@@ -1,5 +1,6 @@
 export { OperationForm, type OperationFormProps } from "./OperationForm";
 export {
+  choiceLabel,
   decodeDescriptor,
   LIMITS,
   PROTOCOL,

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { currentAvailability, decodeView, decodeViewManifest } from "../src/views";
+import { currentAvailability, decodeView, decodeViewManifest, formatValue } from "../src/views";
 import { decodeDescriptor } from "../src/protocol";
 
 const fixture = (name: string) => JSON.parse(readFileSync(fileURLToPath(new URL("../../../fixtures/views/" + name + ".json", import.meta.url)), "utf8"));
@@ -16,6 +16,10 @@ describe("views from Rust registry assembly", () => {
       }
       for (const forms of [f.adminForms, f.productForms]) for (const form of forms.interactions) expect(decodeDescriptor(form).ok).toBe(true);
     }
+  });
+  it("shows enum values by their labels (ADR-035)", () => {
+    const state = { name: "state", kind: "string" as const, required: true, nullable: false, choices: ["open", "closed"], labels: { closed: "Done" } };
+    expect([formatValue("closed", state), formatValue("open", state), formatValue("closed")]).toEqual(["Done", "open", "closed"]);
   });
   it("rejects invalid pointers, actions, paths, references and oversized metadata before invocation", () => {
     const original = fixture("support").admin.views[0];

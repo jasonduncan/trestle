@@ -18,7 +18,9 @@ viewer = ["notes.read"]
 
 [[models]]
 id = "notes.note"          # stable ID: never change it
-# Field types: text, int, bool, uuid, enum (values = [...]), decimal
+# Field types: text, int, bool, uuid, enum (values = ["new", "won"], and
+# optionally labels = { won = "Closed won" }: shown in forms and views, while
+# the API and the column keep "won"; labels never need a migration), decimal
 # (precision = 10, scale = 2; sent as a string like "12.50"), money (the same,
 # plus currencies = ["USD"]; sent as {"amount", "currency"}), date
 # ("2026-10-17"), instant (RFC 3339, stored and returned in UTC), duration
