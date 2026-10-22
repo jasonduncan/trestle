@@ -857,8 +857,9 @@ struct RowFilter {
 impl RowFilter {
     /// `(<scope> OR ...)` on the row `t`, with the actor bound as `$n`.
     /// `lock` (writes only) locks the `through` row found `FOR SHARE`
-    /// until commit, as the membership recheck does, so removing it waits
-    /// for the write, and a write waiting on its removal sees it gone.
+    /// until commit, as the membership recheck does, so removing it, or
+    /// an update that breaks its `where` conditions (ADR-044), waits for
+    /// the write, and a write waiting on either sees the row as committed.
     fn sql(&self, tenant: Option<&str>, n: usize, lock: bool) -> String {
         let parts: Vec<String> = self
             .scopes
@@ -866,7 +867,7 @@ impl RowFilter {
             .map(|scope| match &scope.through {
                 None => format!("t.{} = ${n}", scope.field),
                 Some(x) => format!(
-                    "EXISTS (SELECT 1 FROM {} x WHERE {}x.{} = t.{} AND x.{} = ${n}{})",
+                    "EXISTS (SELECT 1 FROM {} x WHERE {}x.{} = t.{} AND x.{} = ${n}{}{})",
                     x.table,
                     tenant
                         .map(|c| format!("x.{c} = t.{c} AND "))
@@ -874,12 +875,38 @@ impl RowFilter {
                     x.key,
                     scope.field,
                     x.actor,
+                    conditions_sql(&x.conditions),
                     if lock { " FOR SHARE" } else { "" }
                 ),
             })
             .collect();
         format!("({})", parts.join(" OR "))
     }
+}
+
+/// A `through` scope's `where` conditions (ADR-044) on its row `x`:
+/// ` AND x.<field> = <constant>`, or `IN (...)` for a list. The constants
+/// are the file's, checked when it was read, and escaped as SQL literals;
+/// one that can't be rendered is `NULL`, which no row matches.
+fn conditions_sql(conditions: &[(String, Vec<Value>)]) -> String {
+    use trestle_historical::schema::ColumnType;
+    let constant = |v: &Value| match v {
+        Value::Bool(b) => b.to_string(),
+        Value::Number(n) if n.is_i64() => n.to_string(),
+        Value::String(_) => trestle_historical::sql::literal(v, ColumnType::Text)
+            .unwrap_or_else(|_| "NULL".to_owned()),
+        _ => "NULL".to_owned(),
+    };
+    conditions
+        .iter()
+        .map(|(field, values)| match values.as_slice() {
+            [one] => format!(" AND x.{field} = {}", constant(one)),
+            many => format!(
+                " AND x.{field} IN ({})",
+                many.iter().map(constant).collect::<Vec<_>>().join(", ")
+            ),
+        })
+        .collect()
 }
 
 impl Resolved {

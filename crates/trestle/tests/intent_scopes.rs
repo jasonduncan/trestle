@@ -5,7 +5,8 @@
 //! and change only those rows: other rows are 404 like another tenant's,
 //! a write that would leave the scopes is a 403, and the scope is rechecked
 //! inside the write's transaction. ADR-041: a row's published change log
-//! is as hidden as the row. Needs PostgreSQL.
+//! is as hidden as the row. ADR-044: a `through` scope's `where` admits
+//! only matching `through` rows. Needs PostgreSQL.
 
 use std::sync::Arc;
 
@@ -137,6 +138,52 @@ async fn insert(pool: &sqlx::PgPool, sql: &str, binds: &[Uuid]) -> String {
 
 fn uuid(text: &str) -> Uuid {
     Uuid::parse_str(text).unwrap()
+}
+
+const TEAM_SCOPE: &str =
+    r#"team = { field = "team", through = "crm.team_member", key = "team", actor = "actor" }"#;
+
+/// [`CRM`] with an `active` flag and a `role` on team memberships, and a
+/// `team` scope that admits only active managers and leads (ADR-044).
+fn conditioned() -> String {
+    let fields = "to = \"crm.team\" },\n  { id = \"actor\", type = \"uuid\" },\n";
+    assert_eq!(CRM.matches(fields).count(), 1);
+    assert_eq!(CRM.matches(TEAM_SCOPE).count(), 1);
+    CRM.replace(
+        fields,
+        &format!(
+            "{fields}  {{ id = \"active\", type = \"bool\", default = true }},\n  \
+             {{ id = \"role\", type = \"enum\", values = [\"member\", \"manager\", \"lead\"], \
+             default = \"member\" }},\n"
+        ),
+    )
+    .replace(
+        TEAM_SCOPE,
+        &TEAM_SCOPE.replace(
+            " }",
+            r#", where = { active = true, role = ["manager", "lead"] } }"#,
+        ),
+    )
+}
+
+/// Waits until a query of the database is blocked on a lock, failing if
+/// `task` finishes first.
+async fn wait_for_lock<T>(pool: &sqlx::PgPool, task: &tokio::task::JoinHandle<T>, what: &str) {
+    for _ in 0..200 {
+        assert!(!task.is_finished(), "the action did not wait for {what}");
+        let blocked: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity \
+             WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        if blocked > 0 {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    panic!("the action never waited on {what}");
 }
 
 impl Crm {
@@ -372,7 +419,7 @@ fn scopes_and_scoped_grants_are_checked_when_the_file_is_read() {
             r#""crm.sell@team", "crm.sell@region", "authenticated@own", "crm.sell@"]"#,
         )
         .replace(
-            r#"team = { field = "team", through = "crm.team_member", key = "team", actor = "actor" }"#,
+            TEAM_SCOPE,
             r#"team = { field = "team", through = "crm.team_member", key = "actor", actor = "team" }
 mine = { field = "title" }
 lead = { field = "owner", through = "crm.lead", actor = "actor" }
@@ -635,26 +682,7 @@ async fn a_scoped_write_rechecks_its_scope_in_the_transaction() {
     );
     let app = crm.app.clone();
     let action = tokio::spawn(async move { app.oneshot(request).await.unwrap() });
-    let mut waited = false;
-    for _ in 0..200 {
-        assert!(
-            !action.is_finished(),
-            "the action did not wait for the team membership"
-        );
-        let blocked: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM pg_stat_activity \
-             WHERE datname = current_database() AND wait_event_type = 'Lock'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        if blocked > 0 {
-            waited = true;
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-    }
-    assert!(waited, "the action never waited on the team membership");
+    wait_for_lock(&pool, &action, "the team membership").await;
     removing.commit().await.unwrap();
     let res = action.await.unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
@@ -736,6 +764,164 @@ async fn a_replay_rechecks_the_rows_scope() {
             "{method}: {body}"
         );
     }
+    crm.db.drop().await;
+}
+
+#[test]
+fn scope_conditions_are_checked_when_the_file_is_read() {
+    let text = conditioned();
+    let intent = trestle::intent::parse("trestle.toml", &text).unwrap_or_else(|e| panic!("{e}"));
+    let model = intent
+        .models
+        .iter()
+        .find(|m| m.id == "crm.opportunity")
+        .unwrap();
+    let through = model.scopes["team"].through.as_ref().unwrap();
+    assert_eq!(
+        through.conditions,
+        [
+            ("active".to_owned(), vec![json!(true)]),
+            ("role".to_owned(), vec![json!("manager"), json!("lead")]),
+        ]
+    );
+    let bad = text
+        .replace(
+            r#"where = { active = true, role = ["manager", "lead"] }"#,
+            r#"where = { active = "yes", role = ["manager", "boss"], rank = 1, actor = "x" }"#,
+        )
+        .replace(
+            "  { id = \"actor\", type = \"uuid\" },\n]\n\n[[models]]\nid = \"crm.team\"",
+            "  { id = \"actor\", type = \"uuid\" },\n]\nscopes = { me = { field = \"actor\", \
+             where = { name = \"M\" } } }\n\n[[models]]\nid = \"crm.team\"",
+        );
+    let problems = trestle::intent::parse("trestle.toml", &bad)
+        .unwrap_err()
+        .problems;
+    for needle in [
+        r#"scope team of crm.opportunity: where.active = "yes" does not fit crm.team_member.active"#,
+        r#"scope team of crm.opportunity: where.role = ["manager", "boss"] does not fit"#,
+        "scope team of crm.opportunity: where.rank is not a field of crm.team_member",
+        "scope team of crm.opportunity: where.actor must be a bool, int, text or enum field",
+        "scope me of crm.member: where is for a scope with through",
+    ] {
+        assert!(
+            problems.iter().any(|p| p.contains(needle)),
+            "no problem says {needle:?}: {problems:#?}"
+        );
+    }
+    assert_eq!(problems.len(), 5, "{problems:#?}");
+}
+
+#[tokio::test]
+async fn a_scope_condition_admits_only_matching_through_rows() {
+    let crm = Crm::start_with(&conditioned()).await;
+    let pool = crm.db.pool().await;
+    let bravo = crm.opportunities[1].clone();
+    let bravo_url = format!("/api/v1/opportunities/{bravo}");
+    let membership = |set: &'static str| {
+        let pool = pool.clone();
+        async move {
+            let sql = format!("UPDATE team_members SET {set} WHERE actor = $1");
+            let updated = sqlx::query(&sql)
+                .bind(uuid(MANAGER))
+                .execute(&pool)
+                .await
+                .unwrap();
+            assert_eq!(updated.rows_affected(), 1);
+        }
+    };
+    // A plain member of team A: the membership exists but doesn't match.
+    assert!(crm.titles(MANAGER, "").await.is_empty());
+    let (status, _, _) = crm.send("GET", &bravo_url, MANAGER, None, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // A manager, or a lead (one of the listed values), reaches the team.
+    membership("role = 'manager'").await;
+    assert_eq!(crm.titles(MANAGER, "").await, ["Alpha", "Bravo"]);
+    membership("role = 'lead'").await;
+    assert_eq!(crm.titles(MANAGER, "").await, ["Alpha", "Bravo"]);
+    let create = json!({ "title": "Echo", "owner": crm.members[0], "team": crm.team_a });
+    let (status, created, _) = crm
+        .keyed(
+            "POST",
+            "/api/v1/opportunities",
+            MANAGER,
+            create.clone(),
+            None,
+            "create-1",
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+
+    // Inactive, the same membership grants nothing on any path.
+    membership("active = false").await;
+    assert!(crm.titles(MANAGER, "").await.is_empty());
+    let (status, _, _) = crm.send("GET", &bravo_url, MANAGER, None, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, body, replayed) = crm
+        .keyed(
+            "POST",
+            "/api/v1/opportunities",
+            MANAGER,
+            create,
+            None,
+            "create-1",
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert!(!replayed && body.get("id").is_none(), "{body}");
+    let (status, refused, _) = crm
+        .send(
+            "POST",
+            "/api/v1/opportunities",
+            MANAGER,
+            Some(json!({ "title": "Foxtrot", "owner": crm.members[0], "team": crm.team_a })),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    assert_eq!(refused["code"], "out_of_scope");
+    // Salespeople's `own` scope has no conditions and is unaffected.
+    assert_eq!(crm.titles(S1, "").await, ["Alpha", "Echo"]);
+    crm.db.drop().await;
+}
+
+#[tokio::test]
+async fn a_scope_condition_is_rechecked_in_the_transaction() {
+    let crm = Crm::start_with(&conditioned()).await;
+    let pool = crm.db.pool().await;
+    sqlx::query("UPDATE team_members SET role = 'manager' WHERE actor = $1")
+        .bind(uuid(MANAGER))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let bravo = crm.opportunities[1].clone();
+    let (_, etag) = crm.row(&bravo).await;
+
+    // Another transaction deactivates the manager's team membership and
+    // hasn't committed. The row still exists, but the update holds it, so
+    // the action's FOR SHARE lock waits, then reads the committed row,
+    // which no longer meets `active = true`: Bravo is missing.
+    let mut deactivating = pool.begin().await.unwrap();
+    let updated = sqlx::query("UPDATE team_members SET active = false WHERE actor = $1")
+        .bind(uuid(MANAGER))
+        .execute(&mut *deactivating)
+        .await
+        .unwrap();
+    assert_eq!(updated.rows_affected(), 1);
+    let request = crm.request(
+        "POST",
+        &format!("/api/v1/opportunities/{bravo}/win"),
+        MANAGER,
+        None,
+        Some(&etag),
+    );
+    let app = crm.app.clone();
+    let action = tokio::spawn(async move { app.oneshot(request).await.unwrap() });
+    wait_for_lock(&pool, &action, "the team membership update").await;
+    deactivating.commit().await.unwrap();
+    let res = action.await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    assert_eq!(crm.row(&bravo).await.0["stage"], "open");
     crm.db.drop().await;
 }
 

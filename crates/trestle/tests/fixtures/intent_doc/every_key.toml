@@ -33,7 +33,7 @@ scopes = { mine = { field = "external" } }
 id = "crm.deal"
 history = true
 hooks = { before_write = "crm::deal_rules", after_write = "crm::deal_effects" }
-scopes = { own = { field = "account", through = "crm.account", key = "id", actor = "external" } }
+scopes = { own = { field = "account", through = "crm.account", key = "id", actor = "external", where = { active = true, seats = [1, 2] } } }
 fields = [
   { id = "title", type = "text", max = 100 },
   { id = "amount", type = "money", precision = 10, scale = 2, currencies = ["EUR", "USD"], optional = true },

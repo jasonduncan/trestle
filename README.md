@@ -138,7 +138,9 @@ scopes (ADR-040): with `[models.scopes] own = { field = "owner", through =
 "crm.member", actor = "actor" }`, a role granted `"crm.sell@own"` lists,
 reads and changes only the rows whose owner is the caller's member row.
 Other rows are 404, and a write that would move a row out of the scopes is
-403. Endpoints and hooks can name Rust
+403. A `through` scope can require the linking row to match constants,
+`where = { active = true, role = ["manager", "lead"] }` (ADR-044), so an
+inactive or plain membership grants nothing. Endpoints and hooks can name Rust
 handlers, and a model's `hooks = { before_write = .., after_write = .. }`
 run on every write to it, whichever endpoint, action or handler makes it
 (ADR-039). `history = true` on a model logs every committed write to it

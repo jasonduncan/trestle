@@ -112,6 +112,16 @@ fn a_document_reads_every_key_and_assembles_like_its_file() {
         doc.models[1].scopes["own"].actor.as_deref(),
         Some("external")
     );
+    assert_eq!(
+        doc.models[1].scopes["own"].conditions["active"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        doc.models[1].scopes["own"].conditions["seats"]
+            .as_array()
+            .map(Vec::len),
+        Some(2)
+    );
     assert_eq!(doc.roles["member"][1], "crm.write@own");
     assert_eq!(doc.endpoints[3].accept, ["reason"]);
     assert_eq!(

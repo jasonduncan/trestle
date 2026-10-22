@@ -478,6 +478,9 @@ pub struct Through {
     pub key: String,
     /// Its `uuid` field holding the actor.
     pub actor: String,
+    /// `where` (ADR-044): its field → the constants (JSON) one of which
+    /// the field must equal, in field order. Empty admits any such row.
+    pub conditions: Vec<(String, Vec<serde_json::Value>)>,
 }
 
 /// `unique = [["name"]]` on a model.
@@ -2121,6 +2124,12 @@ fn scope_spec(
                 "{at}: scope {name} of {id}: key and actor are for a scope with through = \"<model>\""
             ));
         }
+        if !doc.conditions.is_empty() {
+            problems.push(format!(
+                "{at}: scope {name} of {id}: where is for a scope with through = \"<model>\"; \
+                 a direct scope reads the actor from the row itself"
+            ));
+        }
         if field.ty != FieldType::Uuid {
             problems.push(format!(
                 "{at}: scope {name} of {id}: without through, field {:?} must be a uuid field \
@@ -2174,6 +2183,13 @@ fn scope_spec(
             field.id
         )),
     }
+    let mut conditions = Vec::new();
+    for (condition, value) in &doc.conditions {
+        let scope = (at.as_str(), name, id.as_str(), through.as_ref());
+        if let Some(values) = scope_condition(scope, condition, value, problems) {
+            conditions.push((condition.clone(), values));
+        }
+    }
     (problems.len() == before).then(|| ScopeSpec {
         field: field.id.clone(),
         through: Some(Through {
@@ -2181,8 +2197,57 @@ fn scope_spec(
             table: through.table.clone(),
             key,
             actor,
+            conditions,
         }),
     })
+}
+
+/// One `where` entry of a `through` scope (ADR-044): a bool, int, text or
+/// enum field of the `through` model, and a constant that fits it or a
+/// non-empty list of them. The constants become SQL literals, so a NUL
+/// character, which no column holds, doesn't fit.
+fn scope_condition(
+    (at, scope, id, through): (&str, &str, &str, &ModelSpec),
+    name: &str,
+    value: &toml::Value,
+    problems: &mut Vec<String>,
+) -> Option<Vec<serde_json::Value>> {
+    let model = &through.id;
+    let Some(f) = through.field(name) else {
+        problems.push(format!(
+            "{at}: scope {scope} of {id}: where.{name} is not a field of {model}"
+        ));
+        return None;
+    };
+    if !matches!(
+        f.ty,
+        FieldType::Bool | FieldType::Int | FieldType::Text | FieldType::Enum
+    ) {
+        problems.push(format!(
+            "{at}: scope {scope} of {id}: where.{name} must be a bool, int, text or enum field \
+             of {model}"
+        ));
+        return None;
+    }
+    let values = match value {
+        toml::Value::Array(values) => values.as_slice(),
+        one => std::slice::from_ref(one),
+    };
+    let fit = |v: &toml::Value| {
+        fits(f.ty, &f.values, f.precision, f.scale, v)
+            && v.as_str().is_none_or(|s| !s.contains('\0'))
+    };
+    if values.is_empty() || !values.iter().all(fit) {
+        problems.push(format!(
+            "{at}: scope {scope} of {id}: where.{name} = {value} does not fit {model}.{name}; \
+             give a constant of the field or a list of them"
+        ));
+        return None;
+    }
+    values
+        .iter()
+        .map(|v| serde_json::to_value(v).ok())
+        .collect()
 }
 
 /// The type a `match` side compares as: `id` is a ref to its own model.
