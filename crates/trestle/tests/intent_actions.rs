@@ -2,7 +2,9 @@
 //! one row in the caller's tenant, checks `If-Match` and the states it may
 //! start from, writes its `set` constants (`"now"` for instants) and the
 //! fields it `accept`s, and returns the row. ADR-037: a field with
-//! `writable = "actions"` is written by actions only. Needs PostgreSQL.
+//! `writable = "actions"` is written by actions only. ADR-036: `require`,
+//! `check` and `exists` guard an action, and `repeat = "unchanged"` makes
+//! a repeated request a no-op. Needs PostgreSQL.
 
 use std::sync::Arc;
 
@@ -567,5 +569,599 @@ async fn a_managed_field_is_written_only_by_actions() {
         .await;
     assert_eq!(status, StatusCode::OK, "{listed}");
     assert_eq!(listed["items"][0]["id"], id, "filters on it still work");
+    server.db.drop().await;
+}
+
+// ADR-036: guarded actions. `require`, `check` and `exists` hold on the
+// row as it would be after the write; `repeat = "unchanged"` makes asking
+// again for the current state a no-op.
+const PIPELINE: &str = r#"
+[project]
+name = "pipeline"
+
+[tenancy]
+model = "workspace"
+
+[roles]
+member = ["crm.read", "crm.write"]
+viewer = ["crm.read"]
+
+[[models]]
+id = "crm.organization"
+fields = [{ id = "name", type = "text", max = 100 }]
+
+[[models]]
+id = "crm.contact"
+fields = [{ id = "name", type = "text", max = 100 }]
+
+[[models]]
+id = "crm.affiliation"
+fields = [
+  { id = "contact",      type = "ref", to = "crm.contact" },
+  { id = "organization", type = "ref", to = "crm.organization" },
+  { id = "ended_at",     type = "instant", optional = true },
+]
+
+[[models]]
+id = "crm.deal"
+fields = [
+  { id = "title",             type = "text", max = 100 },
+  { id = "stage",             type = "enum", values = ["lead", "proposal", "contract"], default = "lead", writable = "actions" },
+  { id = "value",             type = "money", precision = 12, scale = 2, optional = true },
+  { id = "expected_close",    type = "date", optional = true },
+  { id = "organization",      type = "ref", to = "crm.organization" },
+  { id = "principal_contact", type = "ref", to = "crm.contact", optional = true },
+  { id = "approved",          type = "bool", default = false },
+  { id = "proposed_at",       type = "instant", optional = true },
+]
+
+[[endpoints]]
+model = "crm.organization"
+crud = ["create"]
+write = "crm.write"
+
+[[endpoints]]
+model = "crm.contact"
+crud = ["create"]
+write = "crm.write"
+
+[[endpoints]]
+model = "crm.affiliation"
+crud = ["create"]
+write = "crm.write"
+
+[[endpoints]]
+model = "crm.deal"
+crud = ["get", "create", "update"]
+read = "crm.read"
+write = "crm.write"
+
+[[endpoints]]
+id = "crm.propose"
+model = "crm.deal"
+path = "POST /api/v1/deals/{id}/propose"
+permission = "crm.write"
+set = { stage = "proposal", proposed_at = "now" }
+accept = ["expected_close"]
+require = ["value", "expected_close"]
+check = [{ field = "value", ge = "0" }]
+repeat = "unchanged"
+
+[[endpoints]]
+id = "crm.contract"
+model = "crm.deal"
+path = "POST /api/v1/deals/{id}/contract"
+permission = "crm.write"
+set = { stage = "contract" }
+when = { stage = ["proposal"] }
+require = ["principal_contact"]
+exists = [{ model = "crm.affiliation", match = { contact = "principal_contact", organization = "organization" }, null = ["ended_at"] }]
+
+[[endpoints]]
+id = "crm.approve"
+model = "crm.deal"
+path = "POST /api/v1/deals/{id}/approve"
+permission = "crm.write"
+set = { approved = true }
+check = [{ field = "value", gt = { amount = "50000.00", currency = "USD" } }]
+"#;
+
+fn pipeline() -> trestle::Project {
+    trestle::project().intent_str("trestle.toml", PIPELINE)
+}
+
+impl Server {
+    async fn post(
+        &self,
+        uri: &str,
+        body: Value,
+        if_match: Option<&str>,
+    ) -> (StatusCode, Value, Option<String>) {
+        self.send("POST", uri, MEMBER, Some(body), if_match).await
+    }
+
+    /// Creates a row and returns its ID.
+    async fn create(&self, table: &str, body: Value) -> String {
+        let (status, row, _) = self.post(&format!("/api/v1/{table}"), body, None).await;
+        assert_eq!(status, StatusCode::CREATED, "{row}");
+        row["id"].as_str().unwrap().to_owned()
+    }
+
+    /// A deal, of a new organization unless the body names one, with its
+    /// ETag and organization.
+    async fn deal(&self, mut body: Value) -> (String, String, String) {
+        let org = match body["organization"].as_str() {
+            Some(org) => org.to_owned(),
+            None => {
+                self.create("organizations", json!({ "name": "Acme" }))
+                    .await
+            }
+        };
+        body["title"] = json!("Deal");
+        body["organization"] = json!(org);
+        let (status, deal, etag) = self.post("/api/v1/deals", body, None).await;
+        assert_eq!(status, StatusCode::CREATED, "{deal}");
+        (deal["id"].as_str().unwrap().to_owned(), etag.unwrap(), org)
+    }
+
+    async fn patch(&self, id: &str, body: Value, etag: &str) -> String {
+        let (status, deal, etag) = self
+            .send(
+                "PATCH",
+                &format!("/api/v1/deals/{id}"),
+                MEMBER,
+                Some(body),
+                Some(etag),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{deal}");
+        etag.unwrap()
+    }
+
+    async fn version(&self, id: &str) -> (Value, String) {
+        let (status, deal, etag) = self
+            .send("GET", &format!("/api/v1/deals/{id}"), MEMBER, None, None)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{deal}");
+        (deal, etag.unwrap())
+    }
+}
+
+/// `(pointer, code)` of each field error.
+fn unmet(problem: &Value) -> Vec<(String, String)> {
+    problem["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            (
+                e["pointer"].as_str().unwrap().to_owned(),
+                e["code"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect()
+}
+
+fn pairs(list: &[(&str, &str)]) -> Vec<(String, String)> {
+    list.iter()
+        .map(|(p, c)| (p.to_string(), c.to_string()))
+        .collect()
+}
+
+#[test]
+fn guards_are_checked_when_the_file_is_read() {
+    let problems = |from: &str, to: &str| {
+        let text = PIPELINE.replace(from, to);
+        assert_ne!(text, PIPELINE, "the replacement applies: {from}");
+        trestle::intent::parse("trestle.toml", &text)
+            .err()
+            .map(|e| e.problems.join("\n"))
+            .unwrap_or_default()
+    };
+    let check = r#"check = [{ field = "value", ge = "0" }]"#;
+    let exists = r#"exists = [{ model = "crm.affiliation", match = { contact = "principal_contact", organization = "organization" }, null = ["ended_at"] }]"#;
+    for (from, to, expected) in [
+        (
+            r#"require = ["value", "expected_close"]"#,
+            r#"require = ["value", "closing"]"#,
+            r#""closing" is not a field of crm.deal"#,
+        ),
+        (
+            check,
+            r#"check = [{ field = "worth", ge = "0" }]"#,
+            r#""worth" is not a field of crm.deal"#,
+        ),
+        (
+            check,
+            r#"check = [{ field = "value", gte = "0" }]"#,
+            "unknown field `gte`",
+        ),
+        (
+            check,
+            r#"check = [{ field = "value", ge = "0", lt = "9" }]"#,
+            "a check on value takes exactly one of eq, ne, lt, le, gt, ge",
+        ),
+        (
+            check,
+            r#"check = [{ field = "value" }]"#,
+            "a check on value takes exactly one of",
+        ),
+        (
+            check,
+            r#"check = [{ field = "expected_close", ge = "soon" }]"#,
+            r#"check ge "soon" does not fit expected_close"#,
+        ),
+        (
+            check,
+            r#"check = [{ field = "value", ge = { amount = "1.005", currency = "USD" } }]"#,
+            "does not fit value",
+        ),
+        (
+            check,
+            r#"check = [{ field = "value", ge = { amount = "1", currency = "usd" } }]"#,
+            "does not fit value",
+        ),
+        (
+            check,
+            r#"check = [{ field = "stage", gt = "lead" }]"#,
+            "check gt on stage: bool, text and enum fields take eq or ne",
+        ),
+        (
+            check,
+            r#"check = [{ field = "principal_contact", eq = "x" }]"#,
+            "check cannot compare principal_contact, an ID",
+        ),
+        (
+            exists,
+            r#"exists = [{ model = "crm.membership", match = { contact = "principal_contact" } }]"#,
+            r#"exists names "crm.membership", which is not a model in this file"#,
+        ),
+        (
+            exists,
+            r#"exists = [{ model = "crm.affiliation", match = { contact = "organization" } }]"#,
+            "matches contact = organization, which are not the same type",
+        ),
+        (
+            exists,
+            r#"exists = [{ model = "crm.affiliation", match = { contact = "manager" } }]"#,
+            "manager id or a field of crm.deal",
+        ),
+        (
+            exists,
+            r#"exists = [{ model = "crm.affiliation", match = { contact = "principal_contact" }, null = ["contact"] }]"#,
+            "crm.affiliation.contact is required, so never null",
+        ),
+        (
+            exists,
+            r#"exists = [{ model = "crm.affiliation" }]"#,
+            "exists crm.affiliation needs match",
+        ),
+        (
+            r#"repeat = "unchanged""#,
+            r#"repeat = "again""#,
+            r#"repeat = "again"; use "refuse" (the default) or "unchanged""#,
+        ),
+        (
+            r#"set = { stage = "proposal", proposed_at = "now" }"#,
+            r#"set = { proposed_at = "now" }"#,
+            r#"repeat = "unchanged" compares the set constants, and it has none"#,
+        ),
+        // An app that `exists` reads is one the action's app requires, so
+        // it joins the one-way rule for refs between apps (ADR-032).
+        (
+            "crm.affiliation",
+            "people.affiliation",
+            "apps refer to each other's models in a circle (crm → people → crm)",
+        ),
+    ] {
+        let found = problems(from, to);
+        assert!(
+            found.contains(expected),
+            "{to}: expected {expected:?} in\n{found}"
+        );
+    }
+    // Guards make an endpoint an action, so they can't go on a handler.
+    assert!(
+        problems(
+            r#"repeat = "unchanged""#,
+            "repeat = \"unchanged\"\nhandler = \"crm::propose\""
+        )
+        .contains("either a handler or an action")
+    );
+}
+
+#[tokio::test]
+async fn require_and_check_see_the_row_as_written_and_repeats_are_no_ops() {
+    let server = Server::start_with(pipeline()).await;
+    let (id, etag, _) = server.deal(json!({})).await;
+    let propose = format!("/api/v1/deals/{id}/propose");
+
+    // Neither value nor date: every unmet condition, nothing written.
+    let (status, refused, _) = server.post(&propose, json!({}), Some(&etag)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert_eq!(refused["code"], "requirement_unmet");
+    assert_eq!(
+        unmet(&refused),
+        pairs(&[
+            ("/value", "required"),
+            ("/expected_close", "required"),
+            ("/value", "check"),
+        ])
+    );
+    assert_eq!(
+        refused["errors"][2]["params"],
+        json!({ "op": "ge", "value": "0" })
+    );
+    assert!(
+        refused["detail"]
+            .as_str()
+            .unwrap()
+            .contains("value must be at least 0."),
+        "{refused}"
+    );
+    let (deal, _) = server.version(&id).await;
+    assert_eq!(
+        (deal["stage"].clone(), deal["version"].clone()),
+        (json!("lead"), json!(1))
+    );
+
+    // A negative value fails the check; the accepted date counts as written.
+    let etag = server
+        .patch(
+            &id,
+            json!({ "value": { "amount": "-1.00", "currency": "USD" } }),
+            &etag,
+        )
+        .await;
+    let close = json!({ "expected_close": "2026-12-31" });
+    let (status, refused, _) = server.post(&propose, close.clone(), Some(&etag)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert_eq!(unmet(&refused), pairs(&[("/value", "check")]));
+    let (deal, _) = server.version(&id).await;
+    assert_eq!(deal["expected_close"], Value::Null, "nothing written");
+
+    // Complete: the stage moves.
+    let etag = server
+        .patch(
+            &id,
+            json!({ "value": { "amount": "0", "currency": "USD" } }),
+            &etag,
+        )
+        .await;
+    let (status, proposed, etag) = server.post(&propose, close, Some(&etag)).await;
+    assert_eq!(status, StatusCode::OK, "{proposed}");
+    assert_eq!(proposed["stage"], "proposal");
+    assert_eq!(proposed["expected_close"], "2026-12-31");
+    assert_eq!(proposed["version"], 4);
+
+    // Again: a no-op with the same row and ETag, even with other inputs.
+    let (status, again, again_etag) = server
+        .post(
+            &propose,
+            json!({ "expected_close": "2027-01-31" }),
+            etag.as_deref(),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again, proposed, "nothing written, \"now\" included");
+    assert_eq!(again_etag, etag);
+    // If-Match still comes first.
+    let (status, _, _) = server.post(&propose, json!({}), Some("\"3\"")).await;
+    assert_eq!(status, StatusCode::PRECONDITION_FAILED);
+
+    // The same rules through Registry::invoke.
+    let member = trestle::core::invocation::Invocation::for_actor(
+        trestle::core::identity::ActorId(uuid::Uuid::parse_str(MEMBER_ID).unwrap()),
+    )
+    .with_tenant(server.north);
+    let (other, _, _) = server.deal(json!({})).await;
+    let refused = server
+        .registry
+        .invoke(
+            &server.state,
+            "crm.propose",
+            &member,
+            &json!({ "id": other, "expected_version": "1" }),
+        )
+        .await
+        .expect_err("unmet");
+    assert_eq!(
+        refused.code(),
+        "requirement_unmet",
+        "{:?}",
+        refused.errors()
+    );
+    assert_eq!(refused.errors().len(), 3);
+    server.db.drop().await;
+}
+
+#[tokio::test]
+async fn money_checks_compare_the_amount_in_the_same_currency() {
+    let server = Server::start_with(pipeline()).await;
+    let (id, mut etag, _) = server.deal(json!({})).await;
+    let approve = format!("/api/v1/deals/{id}/approve");
+    for (amount, currency, code) in [
+        ("50000.00", "USD", "check"),
+        ("90000.00", "EUR", "currency_mismatch"),
+    ] {
+        etag = server
+            .patch(
+                &id,
+                json!({ "value": { "amount": amount, "currency": currency } }),
+                &etag,
+            )
+            .await;
+        let (status, refused, _) = server.post(&approve, json!({}), Some(&etag)).await;
+        assert_eq!(
+            status,
+            StatusCode::CONFLICT,
+            "{amount} {currency}: {refused}"
+        );
+        assert_eq!(unmet(&refused), pairs(&[("/value", code)]), "{refused}");
+    }
+    etag = server
+        .patch(
+            &id,
+            json!({ "value": { "amount": "50000.01", "currency": "USD" } }),
+            &etag,
+        )
+        .await;
+    let (status, approved, _) = server.post(&approve, json!({}), Some(&etag)).await;
+    assert_eq!(status, StatusCode::OK, "{approved}");
+    assert_eq!(approved["approved"], true);
+    server.db.drop().await;
+}
+
+/// A deal in `proposal` whose principal contact is `contact`, of `org` or
+/// a new organization.
+async fn proposed(
+    server: &Server,
+    contact: Option<&str>,
+    org: Option<&str>,
+) -> (String, String, String) {
+    let (id, etag, org) = server
+        .deal(json!({
+            "value": { "amount": "10.00", "currency": "USD" },
+            "expected_close": "2026-12-31",
+            "principal_contact": contact,
+            "organization": org,
+        }))
+        .await;
+    let (status, deal, etag) = server
+        .post(
+            &format!("/api/v1/deals/{id}/propose"),
+            json!({}),
+            Some(&etag),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{deal}");
+    (id, etag.unwrap(), org)
+}
+
+#[tokio::test]
+async fn exists_needs_a_current_related_row_in_the_callers_tenant() {
+    let server = Server::start_with(pipeline()).await;
+    let contract = server.registry.inspect_operation("crm.contract").unwrap();
+    assert_eq!(contract["effects"]["reads"], json!(["crm.affiliation"]));
+    assert_eq!(contract["effects"]["writes"], json!(["crm.deal"]));
+
+    // No principal contact: required, and nothing to match.
+    let (id, etag, _) = proposed(&server, None, None).await;
+    let (status, refused, _) = server
+        .post(
+            &format!("/api/v1/deals/{id}/contract"),
+            json!({}),
+            Some(&etag),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert_eq!(
+        unmet(&refused),
+        pairs(&[
+            ("/principal_contact", "required"),
+            ("/principal_contact", "exists")
+        ])
+    );
+    assert_eq!(
+        refused["errors"][1]["params"],
+        json!({ "model": "crm.affiliation" })
+    );
+
+    let pool = server.db.pool().await;
+    let contact = server.create("contacts", json!({ "name": "Ada" })).await;
+    let (id, etag, org) = proposed(&server, Some(&contact), None).await;
+    let contract = format!("/api/v1/deals/{id}/contract");
+    let refused_with = async |why: &str| {
+        let (status, refused, _) = server.post(&contract, json!({}), Some(&etag)).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{why}: {refused}");
+        assert_eq!(
+            unmet(&refused),
+            pairs(&[("/principal_contact", "exists")]),
+            "{why}"
+        );
+    };
+    refused_with("no affiliation").await;
+
+    // Another tenant's affiliation with the same IDs never counts.
+    sqlx::query(
+        "INSERT INTO affiliations (id, workspace_id, contact, organization) VALUES ($1, $2, $3::uuid, $4::uuid)",
+    )
+    .bind(uuid::Uuid::now_v7())
+    .bind(server.south)
+    .bind(&contact)
+    .bind(&org)
+    .execute(&pool)
+    .await
+    .unwrap();
+    refused_with("another tenant's affiliation").await;
+
+    // An ended affiliation doesn't either.
+    let ended = server
+        .create(
+            "affiliations",
+            json!({ "contact": contact, "organization": org, "ended_at": "2026-01-01T00:00:00Z" }),
+        )
+        .await;
+    assert!(!ended.is_empty());
+    refused_with("an ended affiliation").await;
+
+    let current = server
+        .create(
+            "affiliations",
+            json!({ "contact": contact, "organization": org }),
+        )
+        .await;
+    let (status, signed, _) = server.post(&contract, json!({}), Some(&etag)).await;
+    assert_eq!(status, StatusCode::OK, "{signed}");
+    assert_eq!(signed["stage"], "contract");
+
+    // The matched row is locked FOR SHARE: an action that finds it while
+    // another transaction is ending it waits, then sees it ended.
+    let (id, etag, _) = proposed(&server, Some(&contact), Some(&org)).await;
+    let mut ending = pool.begin().await.unwrap();
+    sqlx::query("UPDATE affiliations SET ended_at = now() WHERE id = $1::uuid")
+        .bind(&current)
+        .execute(&mut *ending)
+        .await
+        .unwrap();
+    let app = server.app.clone();
+    let request = Request::builder()
+        .method("POST")
+        .uri(format!("/api/v1/deals/{id}/contract"))
+        .header(header::AUTHORIZATION, format!("Bearer {MEMBER}"))
+        .header("Trestle-Tenant", server.north.to_string())
+        .header(header::IF_MATCH, &etag)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from("{}"))
+        .unwrap();
+    let action = tokio::spawn(async move { app.oneshot(request).await.unwrap() });
+    let mut waited = false;
+    for _ in 0..200 {
+        if action.is_finished() {
+            let res = action.await.unwrap();
+            let status = res.status();
+            let body = res.into_body().collect().await.unwrap().to_bytes();
+            panic!("the action did not wait for the lock: {status} {body:?}");
+        }
+        let blocked: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity \
+             WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        if blocked > 0 {
+            waited = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert!(waited, "the action never waited on the affiliation");
+    ending.commit().await.unwrap();
+    let res = action.await.unwrap();
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    let body: Value =
+        serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(unmet(&body), pairs(&[("/principal_contact", "exists")]));
     server.db.drop().await;
 }

@@ -96,6 +96,12 @@ fn a_document_reads_every_key_and_assembles_like_its_file() {
     assert_eq!(doc.models[1].fields[4].writable.as_deref(), Some("actions"));
     assert_eq!(doc.endpoints[3].accept, ["reason"]);
     assert_eq!(
+        doc.endpoints[3].check[0].gt.as_ref().unwrap()["currency"].as_str(),
+        Some("USD")
+    );
+    assert_eq!(doc.endpoints[3].exists[0].matches["id"], "account");
+    assert_eq!(doc.endpoints[3].repeat.as_deref(), Some("unchanged"));
+    assert_eq!(
         doc.admin[0].filters.as_deref(),
         Some(&["stage".to_owned()][..])
     );

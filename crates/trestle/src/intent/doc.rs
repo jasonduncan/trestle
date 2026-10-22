@@ -212,9 +212,59 @@ pub struct EndpointDoc {
     /// Actions: fields the caller may supply.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub accept: Vec<String>,
+    /// Actions: fields that must be non-null in the row as written
+    /// (ADR-036).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub require: Vec<String>,
+    /// Actions: comparisons the row as written must pass (ADR-036).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub check: Vec<CheckDoc>,
+    /// Actions: related rows that must exist in the tenant (ADR-036).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exists: Vec<ExistsDoc>,
+    /// Actions: `"refuse"` (the default, also when absent) or
+    /// `"unchanged"`, where asking again for a state the row already has
+    /// is a no-op (ADR-036).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat: Option<String>,
     /// Publish generated forms for this endpoint's writes (ADR-026).
     #[serde(default, skip_serializing_if = "is_default")]
     pub forms: bool,
+}
+
+/// One `check = [...]` entry of an action: a field compared with a
+/// constant, with exactly one operator (ADR-036).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckDoc {
+    pub field: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eq: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ne: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lt: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub le: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gt: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ge: Option<Value>,
+}
+
+/// One `exists = [...]` entry of an action: a row of `model` in the
+/// caller's tenant must match this row (ADR-036).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExistsDoc {
+    pub model: String,
+    /// `match`: the related model's field → this model's field. Either
+    /// side may be `id`.
+    #[serde(rename = "match", default)]
+    pub matches: BTreeMap<String, String>,
+    /// Fields of the related row that must be null.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub null: Vec<String>,
 }
 
 /// `[[admin]]`: a model in the admin shell (ADR-029).

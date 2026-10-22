@@ -7,6 +7,11 @@ the intent format · **Depends on:** ADR-018, ADR-024
 `writable = "actions"` is written only by actions; CRUD, handlers and hooks
 are refused it.
 
+**Extended by [ADR-036](036-guarded-actions.md):** `require`, `check` and
+`exists` guard an action on the row as written (409
+`requirement_unmet`), and `repeat = "unchanged"` makes a repeated request a
+no-op.
+
 ## Context
 
 Rust resources expose transitions as explicit actions (`lessons.publish`),
