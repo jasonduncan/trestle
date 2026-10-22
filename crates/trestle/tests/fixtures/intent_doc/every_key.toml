@@ -42,6 +42,7 @@ fields = [
   { id = "stage", type = "enum", values = ["open", "won"], labels = { won = "Closed won" }, default = "open", writable = "actions" },
   { id = "due", type = "date", optional = true },
   { id = "closed_at", type = "instant", optional = true },
+  { id = "opened_at", type = "instant", default = "now" },
   { id = "effort", type = "duration", default = "PT1H" },
   { id = "reason", type = "text", optional = true },
 ]

@@ -1,7 +1,8 @@
 //! ADR-023: `trestle.toml` fields of type decimal, date, instant and
 //! duration, end to end: columns, contracts, and a CRUD server whose JSON
 //! keeps every value in its contract form. ADR-035: enum labels are
-//! presentation only. Needs PostgreSQL.
+//! presentation only. ADR-043: `default = "now"` on an instant is the
+//! create's transaction time. Needs PostgreSQL.
 
 use std::sync::Arc;
 
@@ -39,6 +40,8 @@ fields = [
   { id = "length",    type = "duration", default = "PT30M" },
   { id = "total",     type = "money", precision = 12, scale = 2, currencies = ["EUR", "USD"], optional = true },
   { id = "status",    type = "enum", values = ["new", "contract"], labels = { contract = "Agreement" }, default = "new" },
+  { id = "opened_at", type = "instant", default = "now" },
+  { id = "stamped_at", type = "instant", default = "now", writable = "actions" },
 ]
 
 [[endpoints]]
@@ -47,7 +50,39 @@ crud = ["list", "get", "create", "update"]
 read = "orders.read"
 write = "orders.write"
 filter = ["due", "status"]
+
+[[endpoints]]
+id = "orders.stamp"
+model = "orders.order"
+path = "POST /api/v1/orders/{id}/stamp"
+permission = "orders.write"
+set = { stamped_at = "now" }
+
+[[endpoints]]
+id = "orders.copy"
+model = "orders.order"
+path = "POST /api/v1/orders/{id}/copy"
+permission = "orders.write"
+handler = "orders::copy"
 "#;
+
+/// The intent with its one handler.
+fn orders(text: &str) -> trestle::Project {
+    trestle::project()
+        .intent_str("trestle.toml", text)
+        .handler("orders::copy", copy)
+}
+
+/// A new order through `Ctx::create`, titled like the given one.
+async fn copy(ctx: Ctx, input: Input) -> Result<Row> {
+    let original = ctx.get("orders.order", input.id()?).await?;
+    let title: String = original.get("title")?;
+    ctx.create(
+        "orders.order",
+        json!({ "title": format!("{title} (copy)"), "amount": "1" }),
+    )
+    .await
+}
 
 const TOKEN: &str = "member-token";
 const ACTOR: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -61,10 +96,7 @@ struct Server {
 
 impl Server {
     async fn start() -> Self {
-        let registry = trestle::project()
-            .intent_str("trestle.toml", ORDERS)
-            .assemble()
-            .unwrap();
+        let registry = orders(ORDERS).assemble().unwrap();
         let db = TestDatabase::create().await;
         // A session zone half an hour off UTC (sqlx would start in UTC):
         // instants must still read back in UTC.
@@ -156,10 +188,7 @@ impl Server {
 
 #[test]
 fn the_intent_declares_columns_and_contracts_of_each_type() {
-    let registry = trestle::project()
-        .intent_str("trestle.toml", ORDERS)
-        .assemble()
-        .unwrap();
+    let registry = orders(ORDERS).assemble().unwrap();
     let model = registry.desired_schema().model("orders.order").unwrap();
     let ty = |id: &str| {
         model
@@ -170,6 +199,17 @@ fn the_intent_declares_columns_and_contracts_of_each_type() {
     assert_eq!(ty("due").as_deref(), Some("date"));
     assert_eq!(ty("placed_at").as_deref(), Some("timestamptz"));
     assert_eq!(ty("length").as_deref(), Some("interval"));
+    // `default = "now"` is the column's database default (ADR-043).
+    let default = |id: &str| {
+        model
+            .field(&format!("orders.order.{id}"))
+            .unwrap()
+            .default
+            .clone()
+    };
+    use trestle::historical::schema::DbDefault;
+    assert_eq!(default("opened_at"), Some(DbDefault::Now));
+    assert_eq!(default("stamped_at"), Some(DbDefault::Now));
     // Money is two columns (ADR-027).
     assert_eq!(ty("total_amount").as_deref(), Some("numeric(12,2)"));
     assert_eq!(ty("total_currency").as_deref(), Some("text"));
@@ -224,6 +264,26 @@ fn decimal_settings_and_defaults_are_checked() {
     assert!(
         problems(r#"{ id = "x", type = "decimal", precision = 5, default = "123" }"#).is_empty()
     );
+    // "now" is an instant's default only; for text it is just text.
+    for ty in ["date", "int", "duration"] {
+        let p = problems(&format!(
+            r#"{{ id = "x", type = "{ty}", default = "now" }}"#
+        ));
+        assert!(
+            has(
+                p.clone(),
+                &format!(
+                    r#"default = "now" is the time of the create, for instant fields; "x" is a {ty} field"#
+                )
+            ),
+            "{p:?}"
+        );
+    }
+    assert!(has(
+        problems(r#"{ id = "x", type = "instant", default = "2026-01-01T00:00:00Z" }"#),
+        r#"an instant's default is "now""#
+    ));
+    assert!(problems(r#"{ id = "x", type = "text", default = "now" }"#).is_empty());
 }
 
 #[tokio::test]
@@ -252,6 +312,73 @@ async fn crud_keeps_every_value_in_its_contract_form() {
         created["length"], "PT30M",
         "the column default, as ISO 8601"
     );
+    // `default = "now"`: an omitted instant, managed or not, is the
+    // create's transaction time; the create's own `created_at` is the
+    // same `now()` (ADR-043).
+    let same: bool = sqlx::query_scalar(
+        "SELECT $1::timestamptz = created_at AND $2::timestamptz = created_at FROM orders WHERE id = $3::uuid",
+    )
+    .bind(created["opened_at"].as_str().unwrap())
+    .bind(created["stamped_at"].as_str().unwrap())
+    .bind(created["id"].as_str().unwrap())
+    .fetch_one(&server.pool)
+    .await
+    .unwrap();
+    assert!(same, "{created}");
+    let recent: bool =
+        sqlx::query_scalar("SELECT $1::timestamptz BETWEEN now() - interval '1 minute' AND now()")
+            .bind(created["opened_at"].as_str().unwrap())
+            .fetch_one(&server.pool)
+            .await
+            .unwrap();
+    assert!(recent, "{created}");
+    // A writable field still takes a value; a managed one is refused on
+    // create like any managed field (ADR-037).
+    let (status, given, _) = server
+        .call(
+            "POST",
+            "/api/v1/orders",
+            Some(json!({ "title": "Given", "amount": "1", "opened_at": "2026-01-02T03:04:05+01:00" })),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{given}");
+    assert_eq!(given["opened_at"], "2026-01-02T02:04:05Z");
+    let (status, refused, _) = server
+        .call(
+            "POST",
+            "/api/v1/orders",
+            Some(json!({ "title": "x", "amount": "1", "stamped_at": "2026-01-02T03:04:05Z" })),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    assert_eq!(refused["errors"][0]["code"], "unknown_field");
+    // Ctx::create from a handler takes the same default.
+    let (status, copied, _) = server
+        .call(
+            "POST",
+            &format!("/api/v1/orders/{}/copy", created["id"].as_str().unwrap()),
+            Some(json!({})),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{copied}");
+    let (created_at, opened_at, stamped_at) = (
+        copied["created_at"].as_str().unwrap(),
+        copied["opened_at"].as_str().unwrap(),
+        copied["stamped_at"].as_str().unwrap(),
+    );
+    let same: bool = sqlx::query_scalar(
+        "SELECT $1::timestamptz = $2::timestamptz AND $1::timestamptz = $3::timestamptz",
+    )
+    .bind(created_at)
+    .bind(opened_at)
+    .bind(stamped_at)
+    .fetch_one(&server.pool)
+    .await
+    .unwrap();
+    assert!(same, "{copied}");
 
     let id = created["id"].as_str().unwrap();
     let (status, updated, _) = server
@@ -373,12 +500,7 @@ async fn crud_keeps_every_value_in_its_contract_form() {
 /// values still does (ADR-035).
 #[test]
 fn enum_labels_are_presentation_only() {
-    let registry = |text: &str| {
-        trestle::project()
-            .intent_str("trestle.toml", text)
-            .assemble()
-            .unwrap()
-    };
+    let registry = |text: &str| orders(text).assemble().unwrap();
     let labelled = registry(ORDERS);
     for (op, contract) in [
         ("orders.order.create", "input"),

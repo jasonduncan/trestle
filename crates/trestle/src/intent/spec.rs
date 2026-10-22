@@ -387,6 +387,8 @@ pub struct FieldSpec {
     pub min: Option<i64>,
     pub max: Option<i64>,
     pub optional: bool,
+    /// A database default; `"now"` on an instant is `DEFAULT now()`
+    /// ([`FieldSpec::defaults_to_now`], ADR-043).
     pub default: Option<serde_json::Value>,
     pub values: Vec<String>,
     /// Enum fields: display labels for some values (ADR-035). Presentation
@@ -426,6 +428,13 @@ impl FieldSpec {
     /// Written only by domain actions (`writable = "actions"`).
     pub fn managed(&self) -> bool {
         self.writable == Writable::Actions
+    }
+
+    /// `default = "now"` on an instant: a create that leaves it out stores
+    /// the transaction's time, through the column's `DEFAULT now()`
+    /// (ADR-043).
+    pub fn defaults_to_now(&self) -> bool {
+        self.ty == FieldType::Instant && self.default.as_ref().and_then(|v| v.as_str()) == Some(NOW)
     }
 }
 
@@ -753,6 +762,10 @@ fn ident(s: &str) -> bool {
 }
 
 const RESERVED: &[&str] = &["id", "version", "created_at", "expected_version", "limit"];
+
+/// `"now"`: the transaction's time, in an action's `set` (ADR-025) and as an
+/// instant field's `default` (ADR-043).
+pub const NOW: &str = "now";
 
 /// Why `table` can't hold an intent model, if it can't (ADR-042): it is a
 /// reserved SQL word, or a name intent SQL would read as a type when it
@@ -1308,6 +1321,13 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
                     ));
                 }
                 if let Some(spec) = field(&lines, f, &mut problems) {
+                    if spec.defaults_to_now() {
+                        problems.push(format!(
+                            "{}: default = \"now\" is for model fields, which the database \
+                             fills on create; a handler input has no row",
+                            lines.at(&f.id)
+                        ));
+                    }
                     input.push(spec);
                 }
             }
@@ -1890,7 +1910,7 @@ fn action_spec(
         let Some(f) = field(name, problems) else {
             continue;
         };
-        if f.ty == FieldType::Instant && value.as_str() == Some("now") {
+        if f.ty == FieldType::Instant && value.as_str() == Some(NOW) {
             set.push((name.clone(), SetValue::Now));
         } else if f.ty != FieldType::Ref && fits(f.ty, &f.values, f.precision, f.scale, value) {
             set.push((
@@ -2409,13 +2429,25 @@ fn field(lines: &Lines<'_>, f: &FieldSection, problems: &mut Vec<String>) -> Opt
     };
     let default = match &f.default {
         None => None,
+        // The time of the create's transaction, as a database default
+        // (ADR-043).
+        Some(v) if ty == FieldType::Instant && v.as_str() == Some(NOW) => Some(NOW.into()),
         Some(v) => {
-            let ok = fits(ty, &f.values, precision, scale, v);
-            if !ok {
-                problems.push(format!(
-                    "{at}: default {v} does not fit type {:?}",
-                    f.ty.get_ref()
-                ));
+            if !fits(ty, &f.values, precision, scale, v) {
+                problems.push(if v.as_str() == Some(NOW) {
+                    format!(
+                        "{at}: default = \"now\" is the time of the create, for instant fields; \
+                         {id:?} is a {} field",
+                        f.ty.get_ref()
+                    )
+                } else if ty == FieldType::Instant {
+                    format!(
+                        "{at}: default {v} does not fit type \"instant\"; an instant's default \
+                         is \"now\", the time of the create"
+                    )
+                } else {
+                    format!("{at}: default {v} does not fit type {:?}", f.ty.get_ref())
+                });
             }
             serde_json::to_value(v).ok()
         }

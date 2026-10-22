@@ -118,6 +118,14 @@ promise.
   too, and migration rendering never emits one. The lists are
   `trestle_historical::schema::{RESERVED_WORDS, TYPE_NAMES}`. Non-reserved
   key words such as `status`, `position` and `time` stay valid.
+- `default = "now"` on an instant field (ADR-043): the column's default is
+  `now()`, so a CRUD create or `Ctx::create` that leaves the field out
+  stores the transaction's time, the same instant as the row's
+  `created_at`. A writable field still takes a value, and a managed one
+  (`writable = "actions"`) starts there. `"now"` as the default of a
+  date, int, bool, decimal, duration or uuid field, or of a handler
+  input, is a parse problem; for text it is still just text.
+  `FieldSpec::defaults_to_now`, `intent::spec::NOW`.
 
 ### Changed
 - `FieldType::Enum` has a `labels` member, so a pattern
