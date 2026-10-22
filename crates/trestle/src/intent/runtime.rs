@@ -763,8 +763,9 @@ struct Logged<'a> {
 }
 
 /// The fields whose value differs between `old` and `new`, either of which
-/// may be missing (create, delete). Both are rendered by
-/// `representation_sql`, so equal values compare equal.
+/// may be missing (create, delete), leaving out `history = false` fields.
+/// Both are rendered by `representation_sql`, so equal values compare
+/// equal.
 fn changed(
     model: &ModelSpec,
     old: Option<&Row>,
@@ -778,6 +779,7 @@ fn changed(
     model
         .fields
         .iter()
+        .filter(|f| f.history)
         .filter_map(|f| {
             let (old, new) = (value(old, &f.id), value(new, &f.id));
             (old != new).then(|| (f.id.clone(), FieldChange { old, new }))
@@ -2111,12 +2113,14 @@ where
 
 /// A page of change log entries (ADR-041). Each change is a union tagged
 /// by `field`, whose `old` and `new` have that field's type:
-/// `{"change": {"field": "stage", "old": "open", "new": "won"}}`.
+/// `{"change": {"field": "stage", "old": "open", "new": "won"}}`. Fields
+/// the log leaves out (`history = false`) have no variant.
 fn history_contract(model: &ModelSpec) -> ContractDoc {
     let id = format!("{}.history", model.id);
     let variants: Vec<(String, ContractDoc)> = model
         .fields
         .iter()
+        .filter(|f| f.history)
         .map(|f| {
             let side = |name: &str| {
                 let mut field = field_contract(f, true).nullable();
@@ -2151,11 +2155,13 @@ fn history_contract(model: &ModelSpec) -> ContractDoc {
 }
 
 /// Each field's value as the published log types it now (ADR-041): a
-/// one-field contract, `value`, per model field.
+/// one-field contract, `value`, per model field the log records. An entry
+/// written before a field was left out is shown without it.
 fn history_values(model: &ModelSpec) -> BTreeMap<&str, ContractDoc> {
     model
         .fields
         .iter()
+        .filter(|f| f.history)
         .map(|f| {
             let mut value = field_contract(f, true).nullable();
             value.name = "value".to_owned();
