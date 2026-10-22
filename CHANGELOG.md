@@ -14,6 +14,8 @@ promise.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-22
+
 ### Added
 - Enum fields can label their values for people (ADR-035):
   `labels = { contract = "Agreement" }` in `trestle.toml`,
@@ -715,7 +717,8 @@ The first release.
   `auto`. Anything else needs `--approve <digest>`.
 - `serve` refuses to start on schema drift or a partly applied migration.
 
-[Unreleased]: https://github.com/jasonduncan/trestle/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/jasonduncan/trestle/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/jasonduncan/trestle/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/jasonduncan/trestle/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/jasonduncan/trestle/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/jasonduncan/trestle/compare/v0.5.1...v0.6.0
