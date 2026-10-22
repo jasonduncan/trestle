@@ -4,6 +4,11 @@
 **Design doc:** §6.4 · **Amends:** the intent format, ADR-016 ·
 **Depends on:** ADR-016, ADR-025, ADR-029, ADR-031
 
+**Extended by [ADR-040](040-row-scoped-authority.md):** under a row-scoped
+grant, a replay first rechecks the row's scope in the transaction
+(`DynOperation::recheck_replay`). A row the caller can no longer reach is
+the 404 of a fresh request, never the stored body.
+
 ## Context
 
 ADR-016 built `Idempotency-Key` receipts: claimed in the write

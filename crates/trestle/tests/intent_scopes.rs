@@ -80,6 +80,7 @@ write = "crm.sell"
 filter = ["stage"]
 search = "title"
 order = "title"
+idempotent = true
 
 [[endpoints]]
 id = "crm.win"
@@ -294,6 +295,31 @@ impl Crm {
         }
         req.body(Body::from(body.unwrap_or(json!({})).to_string()))
             .unwrap()
+    }
+
+    /// [`Crm::send`] with an `Idempotency-Key`: the status, the body, and
+    /// whether it was a replay.
+    async fn keyed(
+        &self,
+        method: &str,
+        uri: &str,
+        actor: &str,
+        body: Value,
+        if_match: Option<&str>,
+        key: &str,
+    ) -> (StatusCode, Value, bool) {
+        let mut req = self.request(method, uri, actor, Some(body), if_match);
+        req.headers_mut()
+            .insert("Idempotency-Key", key.parse().unwrap());
+        let res = self.app.clone().oneshot(req).await.unwrap();
+        let status = res.status();
+        let replayed = res.headers().contains_key("idempotency-replayed");
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+            replayed,
+        )
     }
 
     /// Titles `actor` lists, in order.
@@ -629,5 +655,81 @@ async fn a_scoped_write_rechecks_its_scope_in_the_transaction() {
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
     assert_eq!(crm.row(&bravo).await.0["stage"], "open");
 
+    crm.db.drop().await;
+}
+
+#[tokio::test]
+async fn a_replay_rechecks_the_rows_scope() {
+    let crm = Crm::start().await;
+    let pool = crm.db.pool().await;
+    let [m1, ..] = crm.members.clone();
+    let bravo = crm.opportunities[1].clone();
+    let create = json!({ "title": "Echo", "owner": m1, "team": crm.team_a });
+    let (status, created, replayed) = crm
+        .keyed(
+            "POST",
+            "/api/v1/opportunities",
+            MANAGER,
+            create.clone(),
+            None,
+            "create-1",
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    assert!(!replayed);
+    let (_, etag) = crm.row(&bravo).await;
+    let patch = json!({ "title": "Bravo 2" });
+    let bravo_url = format!("/api/v1/opportunities/{bravo}");
+    let (status, updated, _) = crm
+        .keyed(
+            "PATCH",
+            &bravo_url,
+            MANAGER,
+            patch.clone(),
+            Some(&etag),
+            "update-1",
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{updated}");
+    // While the manager is in team A, a replay returns the stored answer.
+    let (status, again, replayed) = crm
+        .keyed(
+            "POST",
+            "/api/v1/opportunities",
+            MANAGER,
+            create.clone(),
+            None,
+            "create-1",
+        )
+        .await;
+    assert_eq!((status, replayed), (StatusCode::CREATED, true));
+    assert_eq!(again, created);
+
+    // Out of team A, a replay is the 404 of a fresh request, without the
+    // stored row.
+    sqlx::query("DELETE FROM team_members WHERE actor = $1")
+        .bind(uuid(MANAGER))
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (method, uri, body, if_match, key) in [
+        ("POST", "/api/v1/opportunities", create, None, "create-1"),
+        (
+            "PATCH",
+            bravo_url.as_str(),
+            patch,
+            Some(etag.as_str()),
+            "update-1",
+        ),
+    ] {
+        let (status, body, replayed) = crm.keyed(method, uri, MANAGER, body, if_match, key).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{method}: {body}");
+        assert!(!replayed, "{method}");
+        assert_eq!(body["code"], "not_found");
+        assert!(
+            body.get("id").is_none() && body.get("owner").is_none(),
+            "{method}: {body}"
+        );
+    }
     crm.db.drop().await;
 }

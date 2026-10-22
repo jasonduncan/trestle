@@ -582,6 +582,8 @@ pub async fn execute_dyn_keyed<S: 'static>(
             crate::idempotency::claim(&mut tx, &receipt).await?
         {
             check_replayed_output(&info.id, op.output(), &body)?;
+            let output: Value = serde_json::from_str(&body).map_err(|_| Problem::internal())?;
+            op.recheck_replay(&mut tx, &ctx, &output).await?;
             count_replay(&info.id);
             return Ok(Keyed {
                 body,
@@ -719,6 +721,22 @@ pub trait DynOperation<S>: Send + Sync + 'static {
         ctx: DynContext,
         input: Value,
     ) -> BoxFuture<'static, (DynConn, Result<Value, Problem>)>;
+
+    /// Re-authorizes a stored answer before an `Idempotency-Key` replay
+    /// returns it (ADR-016), inside the write transaction and after
+    /// [`DynOperation::recheck`]. An operation whose authority depends on
+    /// the record, not only on the caller (row scopes, ADR-040), refuses
+    /// here what a fresh request would refuse, so a replay never returns a
+    /// record the caller can no longer reach. The default admits.
+    fn recheck_replay<'a>(
+        &'a self,
+        conn: &'a mut PgConnection,
+        ctx: &'a DynContext,
+        output: &'a Value,
+    ) -> BoxFuture<'a, Result<(), Problem>> {
+        let _ = (conn, ctx, output);
+        Box::pin(async { Ok(()) })
+    }
 }
 
 /// A policy assembled at runtime: a [`DynOperation`]'s context lookup and

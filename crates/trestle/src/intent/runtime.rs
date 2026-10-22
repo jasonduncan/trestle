@@ -2226,6 +2226,44 @@ where
         Box::pin(self.permission.recheck(conn, ctx))
     }
 
+    /// A replay of a scoped write returns its stored row only if the
+    /// caller could still reach it (ADR-040): the row as it is now, found
+    /// through the scopes with the `through` row locked `FOR SHARE`, or for
+    /// a delete the stored row's scope fields. Otherwise it is the 404 a
+    /// fresh request gets.
+    fn recheck_replay<'a>(
+        &'a self,
+        conn: &'a mut PgConnection,
+        ctx: &'a DynContext,
+        output: &'a Value,
+    ) -> BoxFuture<'a, Result<(), Problem>> {
+        Box::pin(async move {
+            let Some(rows) = self.permission.rows(ctx)? else {
+                return Ok(());
+            };
+            let mut scope = self.resolved.scope(ctx_of(ctx)?.tenant);
+            scope.rows = Some(rows);
+            let visible = match &self.kind {
+                Kind::Crud(Crud::Delete, ..) => {
+                    stored_inside(conn, &self.model, &scope, output).await?
+                }
+                _ => {
+                    let id = output
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .and_then(|s| s.parse::<Uuid>().ok())
+                        .ok_or_else(|| internal("a replayed row has no id"))?;
+                    fetch(conn, &self.model, &scope, id, true).await?.is_some()
+                }
+            };
+            if visible {
+                Ok(())
+            } else {
+                Err(Problem::not_found())
+            }
+        })
+    }
+
     fn run(
         self: Arc<Self>,
         conn: DynConn,
@@ -2590,6 +2628,42 @@ async fn inside(
         None => Err(Problem::forbidden("out_of_scope")
             .with_detail("This change would put the record outside the records you may change.")),
     }
+}
+
+/// Whether a row that is gone (a replayed delete's stored answer) would be
+/// inside the scopes now: the predicate on its stored scope fields, with
+/// the `through` row locked `FOR SHARE` (ADR-040).
+async fn stored_inside(
+    conn: &mut PgConnection,
+    model: &ModelSpec,
+    scope: &Scope,
+    stored: &Value,
+) -> Result<bool, Problem> {
+    let Some(rows) = &scope.rows else {
+        return Ok(true);
+    };
+    let mut values = Map::new();
+    for s in &rows.scopes {
+        values.insert(
+            s.field.clone(),
+            stored.get(&s.field).cloned().unwrap_or(Value::Null),
+        );
+    }
+    let tenant = scope.tenant.as_ref().map(|(c, _)| c.as_str());
+    if let Some((col, t)) = &scope.tenant {
+        values.insert(col.clone(), json!(t));
+    }
+    let sql = format!(
+        "SELECT 1 FROM jsonb_populate_record(NULL::{}, $1::jsonb) t WHERE {}",
+        model.table,
+        rows.sql(tenant, 2, true)
+    );
+    let found = sqlx::query_scalar::<_, i32>(&sql)
+        .bind(Value::Object(values).to_string())
+        .bind(rows.actor)
+        .fetch_optional(&mut *conn)
+        .await?;
+    Ok(found.is_some())
 }
 
 /// An action's `require`, `check` and `exists` (ADR-036), on the row as it

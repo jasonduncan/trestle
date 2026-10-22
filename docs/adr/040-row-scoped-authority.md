@@ -2,8 +2,8 @@
 
 **Status:** Proposed (2026-10-21; design agreed by the project owner) ·
 **Design doc:** §3.4, §6.2 · **Amends:** the intent format, the intent API,
-ADR-031 · **Depends on:** ADR-024, ADR-025, ADR-029, ADR-030, ADR-033,
-ADR-039
+ADR-016, ADR-031, ADR-038 · **Depends on:** ADR-024, ADR-025, ADR-029,
+ADR-030, ADR-033, ADR-039
 
 ## Context
 
@@ -198,6 +198,30 @@ Scopes add two checks:
 - **Admin and application views grant nothing.** Their data reads are the
   scoped operations themselves.
 
+### Idempotent replays
+
+ADR-016 replays a stored answer only after the policy admits and
+rechecks. With row scopes, the recheck includes the row, so a replay never
+returns a record the caller can no longer reach:
+
+- **`DynOperation::recheck_replay(conn, ctx, output)`** is new in
+  `trestle-core`. It runs inside the write transaction, after `recheck`
+  and the receipt claim, before a replay returns its stored body. It
+  defaults to admitting, so existing operations are unchanged. A refusal
+  is the operation's response, the stored body is never sent, and the
+  transaction rolls back.
+- **Generated operations under a scoped grant** implement it:
+  - a create, update or action finds the row as it is now, through the
+    scopes, with the `through` row locked `FOR SHARE`, as a fresh write
+    would;
+  - a delete, whose row is gone, evaluates the scope predicate on the
+    stored row's scope fields, with the same lock.
+
+  If the row is missing or outside the scopes, the replay is the 404
+  `not_found` of a fresh request. A manager removed from the team who
+  replays a key gets that 404, not the stored row. Unscoped grants replay
+  exactly as before.
+
 ### Declared effects
 
 Operations on a model with `through` scopes declare `reads` of those
@@ -249,12 +273,23 @@ The tests:
   `pg_stat_activity` as a lock wait. After the commit, it is 404 and
   Bravo stays open. This is deterministic: the action can't finish before
   the commit, and the test fails if it does.
+- `a_replay_rechecks_the_rows_scope`: the manager creates an
+  opportunity in team A and renames Bravo, each with an
+  `Idempotency-Key`. A replay then returns the stored 201 with
+  `Idempotency-Replayed`. After the manager's team membership is
+  removed, replaying either key is 404 `not_found`, not marked as a
+  replay, and without the row's fields. The test is deterministic: the
+  removal commits before the replays.
 - `intent_doc.rs`: `every_key.toml` declares a direct scope, a `through`
   scope with `key`, and scoped grants. The document round-trips and
   assembles like its file.
 
-Mutation check: with `FOR SHARE` dropped from the scope predicate, the
-recheck test fails ("the action did not wait for the team membership").
+Mutation checks, both caught:
+
+- **`FOR SHARE` dropped from the scope predicate:** the recheck test fails
+  ("the action did not wait for the team membership").
+- **`recheck_replay` not called:** the removed manager's replay returns
+  the stored 201.
 
 ## Consequences
 
@@ -266,9 +301,8 @@ recheck test fails ("the action did not wait for the team membership").
 - **A list with scopes runs an `EXISTS` per row candidate.** Index the
   `through` model's `key` and `actor` fields for large tables. Refs are
   already indexed (ADR-024); a plain `uuid` actor field is not.
-- **An idempotent replay (ADR-038)** returns the answer the caller already
-  received for that key, after the policy admits and rechecks. It does
-  not re-evaluate the row's scope.
+- **A scoped replay costs one more locked lookup,** the same one a fresh
+  write makes.
 - **Breaking for struct literals and readers:**
   - `Intent` has a `scoped` member, and `Intent.roles` no longer lists
     scoped grants;

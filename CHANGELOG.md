@@ -89,6 +89,12 @@ promise.
   but don't admit handler endpoints or `Permission::new`, whose `Ctx`
   sees the whole tenant. Refs and `exists` guards still check tenancy
   only. Scoped operations declare `reads` of their `through` models.
+  An `Idempotency-Key` replay under a scoped grant rechecks the row's scope
+  in the transaction (the row as it is now, or a delete's stored row, with
+  the `through` row `FOR SHARE`). A row the caller can no longer reach is
+  the 404 of a fresh request, not the stored body. The hook is
+  `DynOperation::recheck_replay`, which runs before any `Idempotency-Key`
+  replay and admits by default.
 
 ### Changed
 - `FieldType::Enum` has a `labels` member, so a pattern
