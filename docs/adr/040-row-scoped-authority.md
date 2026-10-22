@@ -194,7 +194,8 @@ Scopes add two checks:
   whether that ID exists in the tenant (`not_found`, like a missing one),
   and never returns a hidden row's fields. Lists, gets and their counts
   never include hidden rows, so scoped reads give no way to enumerate
-  IDs.
+  IDs. The one exception is a tenant-wide unique set, below: a write
+  inside the scopes learns whether any row holds its value.
 - **Unique sets are tenant-wide.** A write that would leave the scopes is
   refused before it reaches a unique index, so a hidden row's values never
   change its answer (fixed in 0.8.1: the check used to come after the
