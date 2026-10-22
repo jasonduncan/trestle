@@ -1,6 +1,6 @@
 # ADR-016: Idempotency-Key receipts in the write transaction
 
-**Status:** Proposed (2026-10-17) · **Design doc:** §6.4 · **Amends:** ADR-003
+**Status:** Accepted (2026-10-22; proposed 2026-10-17) · **Design doc:** §6.4 · **Amends:** ADR-003
 (which recorded idempotency keys as not implemented) · **Depends on:**
 ADR-013, ADR-015
 

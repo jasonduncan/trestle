@@ -1,6 +1,6 @@
 # ADR-019: Plans assert their source state and report their impact
 
-**Status:** Proposed (2026-10-17) · **Design doc:** §14.3–§14.4 · **Amends:**
+**Status:** Accepted (2026-10-22; proposed 2026-10-17) · **Design doc:** §14.3–§14.4 · **Amends:**
 ADR-006 · **Depends on:** ADR-017
 
 ## Context

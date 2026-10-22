@@ -1,6 +1,6 @@
 # ADR-020: Batched data steps that resume from a checkpoint
 
-**Status:** Proposed (2026-10-17) · **Design doc:** §14.2, §14.4 · **Amends:**
+**Status:** Accepted (2026-10-22; proposed 2026-10-17) · **Design doc:** §14.2, §14.4 · **Amends:**
 ADR-006 · **Depends on:** ADR-019
 
 ## Context

@@ -1,6 +1,6 @@
 # ADR-024: Relations and cursor paging in `trestle.toml`
 
-**Status:** Proposed (2026-10-17) · **Design doc:** §3.4, §12.3 · **Amends:**
+**Status:** Accepted (2026-10-22; proposed 2026-10-17) · **Design doc:** §3.4, §12.3 · **Amends:**
 the intent format · **Depends on:** ADR-022, ADR-023
 
 ## Context

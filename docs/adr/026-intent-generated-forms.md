@@ -1,6 +1,6 @@
 # ADR-026: Generated forms for `trestle.toml` writes
 
-**Status:** Proposed (2026-10-17) · **Design doc:** §9 · **Amends:** the
+**Status:** Accepted (2026-10-22; proposed 2026-10-17) · **Design doc:** §9 · **Amends:** the
 intent format · **Depends on:** ADR-022, ADR-024, ADR-025
 
 **Extended by [ADR-033](033-admin-and-application-views.md):** searchable relation

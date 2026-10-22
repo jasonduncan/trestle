@@ -1,6 +1,6 @@
 # ADR-022: Decimal, date, instant and duration in contracts
 
-**Status:** Proposed (2026-10-17) · **Design doc:** §5.2, §5.4, §11.3 ·
+**Status:** Accepted (2026-10-22; proposed 2026-10-17) · **Design doc:** §5.2, §5.4, §11.3 ·
 **Amends:** ADR-002, ADR-004
 
 ## Context

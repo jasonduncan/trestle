@@ -1,6 +1,6 @@
 # ADR-032: A `trestle.toml` ref may name another app's model
 
-**Status:** Proposed (2026-10-18) · **Amends:** ADR-024 ·
+**Status:** Accepted (2026-10-22; proposed 2026-10-18) · **Amends:** ADR-024 ·
 **Depends on:** ADR-014, ADR-024, ADR-026
 
 ## Context

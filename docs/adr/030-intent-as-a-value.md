@@ -1,6 +1,6 @@
 # ADR-030: The intent as a value
 
-**Status:** Proposed (2026-10-18; design agreed by the project owner) ·
+**Status:** Accepted (2026-10-22; proposed 2026-10-18) ·
 **Design doc:** §3.4, §11 · **Amends:** the intent API ·
 **Depends on:** ADR-014
 

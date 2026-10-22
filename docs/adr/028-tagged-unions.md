@@ -1,6 +1,6 @@
 # ADR-028: Tagged unions in contracts
 
-**Status:** Proposed (2026-10-17; design agreed by the project owner) ·
+**Status:** Accepted (2026-10-22; proposed 2026-10-17) ·
 **Design doc:** §5.2, §5.4, §9.2 · **Amends:** ADR-022, ADR-027
 
 ## Context
