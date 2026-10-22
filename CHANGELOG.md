@@ -14,6 +14,8 @@ promise.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-22
+
 ### Security
 - A scoped grant's create, update or action that would leave its row
   scopes is refused before the statement runs (ADR-040), so a write
@@ -766,7 +768,8 @@ The first release.
   `auto`. Anything else needs `--approve <digest>`.
 - `serve` refuses to start on schema drift or a partly applied migration.
 
-[Unreleased]: https://github.com/jasonduncan/trestle/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/jasonduncan/trestle/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/jasonduncan/trestle/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/jasonduncan/trestle/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/jasonduncan/trestle/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/jasonduncan/trestle/compare/v0.6.0...v0.7.0
