@@ -36,6 +36,16 @@ promise.
   503 `database_conflict` with `Retry-After: 1`, not a generic 500.
   PostgreSQL rolled the transaction back, so nothing was written and the
   request can be sent again.
+- `history = false` on a field of a model with `history = true` leaves it
+  out of the change log (ADR-041), for a value the log must not keep, such
+  as a token. Entries written before keep its old values in the table;
+  the page shows them without it, marked `incomplete`. `FieldSpec` has a
+  new `history` member, and `FieldDoc` a `history` field.
+
+### Changed
+- ADR-040 and ADR-041 now say that a row's change log follows the row as it
+  is now: whoever can read the row reads its whole log, including entries
+  from before it came into their scopes.
 
 ## [0.8.1] - 2026-10-22
 

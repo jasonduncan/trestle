@@ -223,6 +223,9 @@ struct FieldSection {
     /// actions (ADR-037).
     #[serde(default)]
     writable: Option<Spanned<String>>,
+    /// `false` leaves the field out of its model's change log (ADR-041).
+    #[serde(default)]
+    history: Option<Spanned<bool>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -452,6 +455,9 @@ pub struct FieldSpec {
     pub currencies: Vec<String>,
     /// Which writes may change the field (ADR-037).
     pub writable: Writable,
+    /// Whether the model's change log records the field: false for
+    /// `history = false` (ADR-041).
+    pub history: bool,
 }
 
 /// Which writes may change a model field (`writable = ...`, ADR-037).
@@ -1099,6 +1105,15 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
                 },
             );
         }
+        if !m.history.as_ref().is_some_and(|h| *h.get_ref()) {
+            for h in m.fields.iter().filter_map(|f| f.history.as_ref()) {
+                problems.push(format!(
+                    "{}: history = ... on a field chooses what the change log of {id} records, \
+                     and {id} keeps none; add history = true to the model",
+                    lines.at(h)
+                ));
+            }
+        }
         models.push(Arc::new(ModelSpec {
             id: id.clone(),
             app: app.to_owned(),
@@ -1367,6 +1382,12 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
                     problems.push(format!(
                         "{}: writable = ... is for model fields, not handler input",
                         lines.at(w)
+                    ));
+                }
+                if let Some(h) = &f.history {
+                    problems.push(format!(
+                        "{}: history = ... is for model fields, not handler input",
+                        lines.at(h)
                     ));
                 }
                 if let Some(spec) = field(&lines, f, &mut problems) {
@@ -2593,5 +2614,6 @@ fn field(lines: &Lines<'_>, f: &FieldSection, problems: &mut Vec<String>) -> Opt
         label: f.label.clone(),
         currencies: f.currencies.clone(),
         writable,
+        history: f.history.as_ref().is_none_or(|h| *h.get_ref()),
     })
 }

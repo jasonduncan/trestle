@@ -1152,6 +1152,71 @@ async fn a_rows_history_is_as_hidden_as_the_row() {
 }
 
 #[tokio::test]
+async fn a_field_with_history_false_is_never_logged() {
+    let text = CRM
+        .replace(
+            "table = \"opportunities\"\n",
+            "table = \"opportunities\"\nhistory = true\n",
+        )
+        .replace(
+            r#"{ id = "title", type = "text", max = 100 },"#,
+            r#"{ id = "title", type = "text", max = 100, history = false },"#,
+        )
+        .replace("idempotent = true\n", "idempotent = true\nhistory = true\n");
+    assert_eq!(text.matches("history = ").count(), 3);
+    let crm = Crm::start_with(&text).await;
+    let alpha = crm.opportunities[0].clone();
+    let (_, etag) = crm.row(&alpha).await;
+    let uri = format!("/api/v1/opportunities/{alpha}");
+    let patch = json!({ "title": "Alpha 2", "stage": "won" });
+    let (status, _, _) = crm.send("PATCH", &uri, S1, Some(patch), Some(&etag)).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, page, _) = crm
+        .send("GET", &format!("{uri}/history"), S1, None, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(
+        page["items"][0]["changes"],
+        json!([{ "change": { "field": "stage", "old": "open", "new": "won" } }])
+    );
+    let fields: Vec<String> = page["items"][1]["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["change"]["field"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(fields, ["owner", "stage", "team"], "the create's");
+    // Nor is it in the table.
+    let pool = crm.db.pool().await;
+    let logged: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM opportunities_history WHERE changes::jsonb ? 'title'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(logged, 0);
+    crm.db.drop().await;
+}
+
+#[test]
+fn history_false_needs_a_model_with_history() {
+    let text = CRM.replace(
+        r#"{ id = "title", type = "text", max = 100 },"#,
+        r#"{ id = "title", type = "text", max = 100, history = false },"#,
+    );
+    let problems = trestle::intent::parse("trestle.toml", &text)
+        .unwrap_err()
+        .problems;
+    assert!(
+        problems.iter().any(|p| p.contains(
+            "history = ... on a field chooses what the change log of crm.opportunity records, \
+             and crm.opportunity keeps none"
+        )),
+        "{problems:#?}"
+    );
+}
+
+#[tokio::test]
 async fn a_log_written_under_an_earlier_model_is_still_served() {
     // The log keeps what was written; the published page is typed by the
     // model as it is now. A field that is gone, an enum value renamed and

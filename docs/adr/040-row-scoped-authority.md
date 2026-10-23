@@ -224,6 +224,11 @@ Scopes add two checks:
   manager may set `stage = won`", and refuse with a problem.
 - **Admin and application views grant nothing.** Their data reads are the
   scoped operations themselves.
+- **A row's change log follows the row as it is now** (ADR-041). A caller
+  who can get the row reads all of its log, including entries from before
+  the row came into their scopes and the actor IDs of earlier writers. A
+  row whose past must not reach later viewers leaves those fields out of
+  the log with `history = false`.
 
 ### Idempotent replays
 
