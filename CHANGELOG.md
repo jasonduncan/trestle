@@ -20,6 +20,9 @@ promise.
   carries it as `completePointer` and requires `views.completeness@1`, and the
   collection renderer then says the list is incomplete (ADR-045). Views without
   one keep their bytes and revisions.
+- `AdminHost` takes `profile` (`"admin"`, the default, or `"product"`), so the
+  signed-in host can show an application's Product views (ADR-033). The built
+  `frontend/admin` reads it from `VITE_ADMIN_PROFILE`.
 
 ### Changed
 - **Breaking:** `ViewDefinition` and `trestle_protocol::view::SourceDoc` gain a

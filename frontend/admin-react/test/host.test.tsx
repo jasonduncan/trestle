@@ -37,6 +37,18 @@ describe("production host identity and workspace discovery", () => {
       expect(await screen.findByText("No views available")).toBeDefined();
     }
   });
+  it.each(["admin", "product"] as const)("shows the %s profile's views from its own metadata", async (which) => {
+    signedIn();
+    const entry = (audience: string, title: string) => ({ viewId: "notes." + audience, revision: "r-1", audience, kind: "collection", title, url: "/_meta/v1/ui/views/notes." + audience });
+    const fetch = vi.fn(async (path: string) => {
+      return Response.json(path === profile.path ? { items: [{ id: "tenant-0", name: "Workspace 0" }] }
+        : { ...manifest, views: [entry("admin", "Admin notes"), entry("product", "Product notes")] });
+    }); vi.stubGlobal("fetch", fetch);
+    render(<AdminHost tenantProfile={profile} profile={which} />);
+    const [shown, hidden] = which === "admin" ? ["Admin notes", "Product notes"] : ["Product notes", "Admin notes"];
+    expect(await screen.findByRole("button", { name: shown })).toBeDefined();
+    expect(screen.queryByRole("button", { name: hidden })).toBeNull();
+  });
   it("quarantines the workspace after authoritative access refusal", async () => {
     signedIn();
     vi.stubGlobal("fetch", vi.fn(async (path: string) => path === profile.path ? Response.json({ items: [{ id: "tenant", name: "Workspace" }] }) : Response.json({ code: "permission_denied" }, { status: 403 })));
