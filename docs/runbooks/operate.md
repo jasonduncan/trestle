@@ -17,7 +17,7 @@ IDs and problem codes. Actor, tenant and record IDs are never labels.
 |---|---|
 | `trestle_http_requests_total{method,route,status}` | 5xx share above 0.5% for 5 min |
 | `trestle_http_request_duration_seconds{method,route}` | p95 above 250 ms on list/retrieve for 10 min |
-| `trestle_operation_total{operation,outcome}` | `internal`, `outcome_unknown`, `database_timeout`, `database_unavailable`; `schema_fenced` outside a rollout (an old replica is still running) |
+| `trestle_operation_total{operation,outcome}` | `internal`, `outcome_unknown`, `database_timeout`, `database_unavailable`; a rising `database_conflict` (deadlocks: rows locked in different orders); `schema_fenced` outside a rollout (an old replica is still running) |
 | `trestle_operation_duration_seconds{operation}` | regressions after a deploy |
 | `trestle_db_acquire_seconds` | p95 above 50 ms: pool too small or a slow query holds connections |
 | `trestle_db_pool_connections{state}` | open equals pool size with idle at 0 persistently |

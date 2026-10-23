@@ -31,6 +31,11 @@ promise.
   versioned, and otherwise logged a stale `old` in the change log (ADR-041).
   That write, by the hook or by anything nested in it, is now a 500 that
   rolls back and names `Write::set`.
+### Fixed
+- A deadlock (SQLSTATE `40P01`) or serialization failure (`40001`) is now a
+  503 `database_conflict` with `Retry-After: 1`, not a generic 500.
+  PostgreSQL rolled the transaction back, so nothing was written and the
+  request can be sent again.
 
 ## [0.8.1] - 2026-10-22
 
