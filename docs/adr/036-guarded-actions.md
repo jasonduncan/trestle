@@ -44,10 +44,13 @@ exists = [{ model = "crm.affiliation",
 repeat = "unchanged"
 ```
 
-- **The row as written.** `require`, `check` and `exists` look at the
-  current row merged with the accepted inputs and the `set` values (`"now"`
-  included), so an action that accepts the missing field can satisfy its
-  own requirement.
+- **The row as the action writes it.** `require`, `check` and `exists`
+  look at the current row merged with the accepted inputs and the `set`
+  values (`"now"` included), so an action that accepts the missing field
+  can satisfy its own requirement. A model's `before_write` hook (ADR-039)
+  runs after the guards and may change the row further, and the guards
+  aren't evaluated again: hooks are trusted code, so the stored row is the
+  guarded row plus whatever the hook set.
 - **`require`:** these fields are non-null. Money is null when its amount
   is.
 - **`check`:** one comparison per entry, exactly one of `eq`, `ne`, `lt`,
@@ -90,7 +93,8 @@ repeat = "unchanged"
   action whose `set` is only `"now"` fields can't use it.
 - **Order, in the write transaction:** lock the row (`FOR UPDATE`) →
   `If-Match` (412) → `repeat` no-op → `when` (409 `invalid_state`) → the
-  row as written → `require` → `check` → `exists` → write.
+  row as the action writes it → `require` → `check` → `exists` → the
+  model's `before_write` (ADR-039) → write.
 - **One 409 for every unmet condition,** `requirement_unmet`, with nothing
   written:
 
