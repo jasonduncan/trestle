@@ -301,6 +301,52 @@ pub struct Intent {
 }
 
 impl Intent {
+    /// What parses but is likely a mistake. The project logs each one when
+    /// it loads the file.
+    ///
+    /// Today that is a scoped model's unique set without the field of a
+    /// scope that a grant uses. Within that scope the set is checked
+    /// against rows the caller can't see, so a write learns whether a
+    /// hidden row holds its value (ADR-040).
+    pub fn warnings(&self) -> Vec<String> {
+        let granted: BTreeSet<&str> = self
+            .scoped
+            .values()
+            .flat_map(|grants| grants.values().flatten())
+            .map(String::as_str)
+            .collect();
+        let mut warnings = Vec::new();
+        for model in &self.models {
+            for set in &model.unique {
+                let missing: Vec<String> = model
+                    .scopes
+                    .iter()
+                    .filter(|(name, scope)| {
+                        granted.contains(name.as_str()) && !set.fields.contains(&scope.field)
+                    })
+                    .map(|(name, scope)| format!("{name} ({})", scope.field))
+                    .collect();
+                if !missing.is_empty() {
+                    let scopes = if missing.len() == 1 {
+                        "scope"
+                    } else {
+                        "scopes"
+                    };
+                    warnings.push(format!(
+                        "unique set {:?} of {} leaves out the field of {scopes} {}, so a caller \
+                         granted one learns whether a row it can't see holds the value \
+                         (ADR-040). Add the field to the set if the values are private to the \
+                         scope",
+                        set.fields,
+                        model.id,
+                        missing.join(", ")
+                    ));
+                }
+            }
+        }
+        warnings
+    }
+
     /// Whether some endpoint accepts an `Idempotency-Key`. The project then
     /// installs `trestle_core::idempotency::IdempotencyApp` (ADR-038).
     pub fn idempotent(&self) -> bool {
@@ -2317,6 +2363,16 @@ fn exists_spec(
                 "{at}: action {id:?}: exists {} matches {theirs} = {ours}, which are not the same \
                  type (refs must point to the same model; money cannot be matched)",
                 related.id
+            ));
+        } else if t.0 != FieldType::Ref && !related.scopes.is_empty() {
+            // The guard checks tenancy, not scopes, so a value match would
+            // tell a scoped caller whether a hidden row holds the value
+            // (ADR-040). An ID match only links IDs the caller holds.
+            problems.push(format!(
+                "{at}: action {id:?}: exists {} matches {theirs} = {ours}, but {} has scopes, so \
+                 exists may match only id and ref fields of it: a value match would reveal \
+                 whether a row the caller can't see holds the value",
+                related.id, related.id
             ));
         }
     }
