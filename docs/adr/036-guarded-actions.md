@@ -66,7 +66,10 @@ repeat = "unchanged"
   value), and each `null` field null. Either side of `match` may be `id`.
   A null local value is unmet without a query.
   - **Tenant first,** in SQL, like every query; another tenant's row never
-    counts.
+    counts. The caller's row scopes (ADR-040) don't apply, so when `model`
+    has scopes, `match` may name only its `id` and ref fields: a match on
+    a value, such as a name, would tell a scoped caller whether a row it
+    can't see holds that value.
   - **Locked `FOR SHARE`** (one row, `LIMIT 1`) until the action commits.
     `FOR KEY SHARE`, which ref checks use (ADR-024), blocks only deletes
     and key changes, so a concurrent `UPDATE ... SET ended_at = now()` would
@@ -113,7 +116,8 @@ repeat = "unchanged"
   currency the field doesn't take, a malformed date or instant); ordering
   operators on bool, text or enum; checks on IDs; an `exists` model not in
   the file, an empty `match`, sides of different types (refs must point to
-  the same model; money can't be matched), `null` on a required field;
+  the same model; money can't be matched), a match on a scoped model's
+  field that isn't `id` or a ref, `null` on a required field;
   an unknown `repeat`, or `"unchanged"` with no constant to compare. Any of
   the four keys makes an endpoint an action, so they can't go on a handler.
 - **`IntentDoc`:** `EndpointDoc` has `require`, `check: Vec<CheckDoc>`,
