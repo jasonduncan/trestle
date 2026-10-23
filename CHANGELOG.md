@@ -25,6 +25,12 @@ promise.
   longer loads; match on `id` or a ref instead. The guard checks tenancy, not
   the caller's scopes, so a match on another field, such as a name, told a
   scoped caller whether a row it can't see held the value (ADR-040).
+### Fixed
+- A `before_write` hook (ADR-039) that wrote its own row through `Ctx` bumped
+  its version first, so the write the hook was part of returned 412 when
+  versioned, and otherwise logged a stale `old` in the change log (ADR-041).
+  That write, by the hook or by anything nested in it, is now a 500 that
+  rolls back and names `Write::set`.
 
 ## [0.8.1] - 2026-10-22
 
