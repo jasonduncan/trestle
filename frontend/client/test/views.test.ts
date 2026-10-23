@@ -34,6 +34,19 @@ describe("views from Rust registry assembly", () => {
       (d: any) => { d.actions[0].invocation.body = "raw"; },
     ]) { const changed = structuredClone(original); mutate(changed); expect(() => decodeView(changed)).toThrow(); }
   });
+  it("decodes a completeness flag only as a required boolean of a collection (ADR-045)", () => {
+    const recent = fixture("support").product.views.find((v: any) => v.viewId === "support_work.recent");
+    expect(decodeView(recent).source.completePointer).toBe("/complete");
+    expect(decodeView(recent).missingFeatures).toEqual([]);
+    for (const mutate of [
+      (d: any) => { d.source.completePointer = "/items"; },
+      (d: any) => { d.source.completePointer = "/hidden"; },
+      (d: any) => { d.source.invocation.output.schema.required = ["items"]; },
+    ]) { const changed = structuredClone(recent); mutate(changed); expect(() => decodeView(changed)).toThrow(); }
+    const record = structuredClone(fixture("support").product.views.find((v: any) => v.kind === "record"));
+    record.source.completePointer = "/id";
+    expect(() => decodeView(record)).toThrow();
+  });
   it("blocks new required features while retaining an inspectable view", () => {
     const doc = fixture("support").admin.views[0]; doc.requiredFeatures.push("views.future@9");
     expect(decodeView(doc).missingFeatures).toEqual(["views.future@9"]);

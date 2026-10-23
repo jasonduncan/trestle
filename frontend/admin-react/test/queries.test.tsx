@@ -34,3 +34,15 @@ it("reports an old backend's unsupported view surface without invocation", async
   expect(await screen.findByText(/This server does not publish application views/)).toBeDefined();
   expect(transport.submit).not.toHaveBeenCalled();
 });
+
+it("says a page is incomplete when its completeness flag is false (ADR-045)", async () => {
+  const view = decodeView(fixture.product.views.find((v: any) => v.viewId === "support_work.recent"));
+  const page = (complete: boolean): Reply => ({ kind: "response", status: 200, bytes: 0, body: { items: [{ id: row("First").id, subject: "First" }], complete } });
+  for (const complete of [false, true]) {
+    const transport = { list: vi.fn().mockResolvedValue(page(complete)) } as unknown as Transport;
+    render(<CollectionView view={view} transport={transport} navigate={() => {}} />);
+    await screen.findByText("First");
+    expect(screen.queryByText("Showing the first 1 rows. More exist that this list doesn't show.") !== null).toBe(!complete);
+    cleanup();
+  }
+});

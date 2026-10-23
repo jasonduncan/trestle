@@ -183,3 +183,62 @@ fn renderer_pairing_checks_features_required_components_and_input_contracts() {
             .any(|e| e.contains("requires"))
     );
 }
+
+#[test]
+fn a_completeness_flag_is_a_required_boolean_of_a_collection() {
+    let registry = views_app::project("support", SUPPORT).assemble().unwrap();
+    let recent = &registry
+        .views()
+        .iter()
+        .find(|v| v.document.view_id == "support_work.recent")
+        .unwrap()
+        .document;
+    assert_eq!(recent.source.complete_pointer.as_deref(), Some("/complete"));
+    assert!(
+        recent
+            .required_features
+            .contains(&"views.completeness@1".to_owned())
+    );
+    let queue = &registry
+        .views()
+        .iter()
+        .find(|v| v.document.view_id == "support_work.queue")
+        .unwrap()
+        .document;
+    assert_eq!(queue.source.complete_pointer, None);
+    assert!(
+        !serde_json::to_string(queue)
+            .unwrap()
+            .contains("completePointer"),
+        "a view without a flag keeps its bytes"
+    );
+
+    // Not a boolean of the page, or not a collection: refused at assembly.
+    use std::sync::Arc;
+    use trestle::core::registry::{App, AppBuilder, ViewDefinition};
+    use trestle::intent::{Permission, Resolved};
+    struct Flag(Arc<Resolved>, &'static str, bool);
+    impl App<trestle::State> for Flag {
+        fn id(&self) -> &str {
+            "flag"
+        }
+        fn register(&self, app: &mut AppBuilder<trestle::State>) {
+            app.requires("support_work");
+            let view = if self.2 {
+                ViewDefinition::collection("flag.recent", "support_work.recent")
+            } else {
+                ViewDefinition::record("flag.recent", "support_work.status").label("state")
+            };
+            let permission = Permission::new(&self.0, "support.read").unwrap();
+            app.view_dyn(view.complete(self.1), Arc::new(permission));
+        }
+    }
+    for (flag, collection) in [("items", true), ("missing", true), ("state", false)] {
+        let err = views_app::project("support", SUPPORT)
+            .intent_app(move |resolved| Flag(resolved.clone(), flag, collection))
+            .assemble()
+            .err()
+            .expect("assembly must fail");
+        assert!(err.to_string().contains("completeness flag"), "{err}");
+    }
+}

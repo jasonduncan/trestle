@@ -37,6 +37,8 @@ pub struct ViewDefinition {
     pub action_input: BTreeMap<String, BTreeMap<String, String>>,
     pub sections: Vec<SectionDefinition>,
     pub availability: Option<(String, BTreeMap<String, String>)>,
+    /// A collection's completeness flag (ADR-045); see [`ViewDefinition::complete`].
+    pub complete: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,6 +83,7 @@ impl ViewDefinition {
             action_input: BTreeMap::new(),
             sections: vec![],
             availability: None,
+            complete: None,
         }
     }
     pub fn record(id: &str, query: &str) -> Self {
@@ -142,6 +145,13 @@ impl ViewDefinition {
     }
     pub fn availability(mut self, query: &str, input: BTreeMap<String, String>) -> Self {
         self.availability = Some((query.into(), input));
+        self
+    }
+    /// The output field, beside `items`, that is `false` when the page
+    /// stopped before every row: the renderer then says the list is
+    /// incomplete (ADR-045). It must be a required boolean.
+    pub fn complete(mut self, field: &str) -> Self {
+        self.complete = Some(field.into());
         self
     }
 }
@@ -389,6 +399,16 @@ impl<S> Registry<S> {
         if def.action_input.keys().any(|id| !def.actions.contains(id)) {
             return Err("context mapping names an absent action".into());
         }
+        if let Some(field) = &def.complete
+            && (!collection
+                || !op.output.get(field).is_some_and(|f| {
+                    f.ty == trestle_protocol::FieldType::Boolean && f.required && !f.nullable
+                }))
+        {
+            return Err(format!(
+                "completeness flag {field:?} must be a required boolean of a collection's output"
+            ));
+        }
         let mut doc = ViewDoc {
             protocol: PROTOCOL.into(),
             protocol_version: VERSION.into(),
@@ -406,6 +426,7 @@ impl<S> Registry<S> {
                 items_pointer: collection.then(|| "/items".into()),
                 identity_pointer: pointer(&def.identity),
                 next_cursor_pointer: collection.then(|| "/next_cursor".into()),
+                complete_pointer: def.complete.as_deref().map(pointer),
             },
             columns: def
                 .columns
@@ -423,6 +444,9 @@ impl<S> Registry<S> {
             sections: vec![],
             availability: None,
         };
+        if def.complete.is_some() {
+            doc.required_features.push("views.completeness@1".into());
+        }
         for id in &def.actions {
             let form = self
                 .form(id)
