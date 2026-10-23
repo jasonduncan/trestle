@@ -48,7 +48,9 @@ An action with editable inputs must name a form; generated intent actions use
 without gaining permission to invoke its writes.
 
 Use `AdminHost` for sign-in and tenant discovery, or embed `AdminShell` with an
-application-owned transport. `AdminShell` accepts `profile="product"`, custom
+application-owned transport. `AdminHost profile="product"` shows the application's
+own (Product) views instead of the admin shell's; the built `frontend/admin` takes it
+from `VITE_ADMIN_PROFILE=product`. `AdminShell` accepts `profile="product"`, custom
 `widgets`, and build-time `components`/`sections`. These extension functions are
 compiled imports, never URLs supplied by metadata. `frontend/views-demo/main.tsx`
 contains a custom text widget and a custom export panel using public APIs.

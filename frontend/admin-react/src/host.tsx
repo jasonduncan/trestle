@@ -3,9 +3,10 @@ import { AdminShell } from "./index";
 import { operationRuntime, object, OperationRuntime, bindOperationRuntime } from "@trestle-framework/client";
 import { createTransport, useSession, loadMethods, sessionHeaders, SignIn, type SignInMethods } from "@trestle-framework/interaction-react";
 export interface TenantProfile { header: string; label: string; path: string; idField?: string; dev?: { id: string; name: string }[] }
-export interface AdminHostProps { title?: string; tenantProfile?: TenantProfile | null; developmentUsers?: Record<string, { token: string; note?: string }>; }
+/** `profile` picks the views shown: the admin shell's, or the application's own (ADR-033). */
+export interface AdminHostProps { title?: string; tenantProfile?: TenantProfile | null; developmentUsers?: Record<string, { token: string; note?: string }>; profile?: "admin" | "product"; }
 
-export function AdminHost({ title: TITLE = "Trestle", tenantProfile: TENANT = null, developmentUsers: USERS = {} }: AdminHostProps) {
+export function AdminHost({ title: TITLE = "Trestle", tenantProfile: TENANT = null, developmentUsers: USERS = {}, profile = "admin" }: AdminHostProps) {
   const session = useSession();
   const refreshSession = session.refresh;
   const signedIn = session.state.kind === "signed-in";
@@ -32,14 +33,14 @@ export function AdminHost({ title: TITLE = "Trestle", tenantProfile: TENANT = nu
   const transport = useMemo(
     () =>
       createTransport({
-        metaPrefix: "/_meta/v1/admin",
+        metaPrefix: profile === "admin" ? "/_meta/v1/admin" : "/_meta/v1",
         onAccessRefused: () => { operationRuntime(transport).refresh(); transport.invalidate?.(); setAccessRefused(true); },
         headers: () => ({
           ...(session.state.kind === "unavailable" && USERS[user] ? { Authorization: `Bearer ${USERS[user]!.token}` } : sessionHeaders(session.state)),
           ...(TENANT && tenant ? { [TENANT.header]: tenant } : {}),
         }),
       }),
-    [signedIn, session.state, user, tenant],
+    [signedIn, session.state, user, tenant, profile],
   );
 
   bindOperationRuntime(transport, runtime);
@@ -105,7 +106,7 @@ export function AdminHost({ title: TITLE = "Trestle", tenantProfile: TENANT = nu
   if (!signedIn && !Object.keys(USERS).length) return <p role="alert">Browser identity is unavailable. Configure sign-in before using this workspace.</p>;
   if (accessRefused) return <div className="app"><h1>Access needs refreshing</h1><p>Your protected workspace has been cleared.</p><button onClick={() => void refreshSession().then(() => setAccessRefused(false))}>Refresh access</button><button onClick={() => void session.signOut()}>Sign out</button></div>;
   if (TENANT && !tenant) return <div className="app"><h1>{TITLE}</h1><p>No eligible tenants are available.</p><button onClick={() => void session.signOut()}>Sign out</button></div>;
-  return <AdminShell transport={transport} title={TITLE} header={<div className="identity">
+  return <AdminShell transport={transport} title={TITLE} profile={profile} header={<div className="identity">
     {tenantPicker}
     {signedIn ? <button onClick={() => void session.signOut()}>Sign out</button> : <label>Development user<select value={user} onChange={(e) => setUser(e.target.value)}>{Object.keys(USERS).map((name) => <option key={name}>{name}</option>)}</select></label>}
   </div>} />;

@@ -14,6 +14,11 @@ promise.
 
 ## [Unreleased]
 
+### Added
+- `AdminHost` takes `profile` (`"admin"`, the default, or `"product"`), so the
+  signed-in host can show an application's Product views (ADR-033). The built
+  `frontend/admin` reads it from `VITE_ADMIN_PROFILE`.
+
 ## [0.9.1] - 2026-10-23
 
 ### Added
