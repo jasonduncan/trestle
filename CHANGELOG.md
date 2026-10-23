@@ -14,6 +14,12 @@ promise.
 
 ## [Unreleased]
 
+### Added
+- `Project::command_name`: the command users type to run the project, which
+  help and hints name (``run `<command> migrate` ``). It defaults to the
+  executable's name, as before. A program that runs a project under its own
+  command line sets it, so the hints name a command that exists.
+
 ## [0.9.0] - 2026-10-23
 
 ### Upgrading from 0.8
