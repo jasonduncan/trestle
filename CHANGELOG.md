@@ -15,9 +15,19 @@ promise.
 ## [Unreleased]
 
 ### Added
+- `ViewDefinition::complete`: a collection view names the boolean output field
+  that is `false` when its read stopped before every row. The view document
+  carries it as `completePointer` and requires `views.completeness@1`, and the
+  collection renderer then says the list is incomplete (ADR-045). Views without
+  one keep their bytes and revisions.
 - `AdminHost` takes `profile` (`"admin"`, the default, or `"product"`), so the
   signed-in host can show an application's Product views (ADR-033). The built
   `frontend/admin` reads it from `VITE_ADMIN_PROFILE`.
+
+### Changed
+- **Breaking:** `ViewDefinition` and `trestle_protocol::view::SourceDoc` gain a
+  public field (`complete`, `complete_pointer`), so struct literals must add it.
+  The builders are unchanged.
 
 ## [0.9.1] - 2026-10-23
 

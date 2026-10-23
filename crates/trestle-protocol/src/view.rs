@@ -80,6 +80,10 @@ pub struct SourceDoc {
     pub items_pointer: Option<String>,
     pub identity_pointer: String,
     pub next_cursor_pointer: Option<String>,
+    /// A collection's completeness flag: a required boolean of the output,
+    /// `false` when the page stopped before every row (ADR-045).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub complete_pointer: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -326,6 +330,22 @@ impl ViewDoc {
                     "view {}: absent output pointer {pointer}",
                     self.view_id
                 ));
+            }
+        }
+        if let Some(pointer) = &self.source.complete_pointer {
+            let name = pointer.strip_prefix('/').unwrap_or_default();
+            let output = &source.output.schema;
+            if self.kind != "collection"
+                || output["properties"][name]["type"] != "boolean"
+                || !output["required"]
+                    .as_array()
+                    .is_some_and(|r| r.iter().any(|f| f == name))
+                || !self
+                    .required_features
+                    .iter()
+                    .any(|f| f == "views.completeness@1")
+            {
+                return Err("invalid completeness flag".into());
             }
         }
         if self.sections.len() > 16 || (self.kind == "collection" && !self.sections.is_empty()) {

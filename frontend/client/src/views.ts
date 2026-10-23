@@ -1,6 +1,6 @@
 import { checkBindingPath, choiceLabel, decodeObjectSchema, type Descriptor, type FieldSchema, type ObjectSchema } from "./protocol";
 
-export interface ViewSource { invocation: Descriptor; item: ObjectSchema; identityPointer: string; itemsPointer: string | null; nextCursorPointer: string | null }
+export interface ViewSource { invocation: Descriptor; item: ObjectSchema; identityPointer: string; itemsPointer: string | null; nextCursorPointer: string | null; completePointer: string | null }
 export interface ViewAction {
   id: string; label: string; invocation: Descriptor; interactionId: string | null; interactionRevision: string | null;
   context: Record<string, string>; visibleWhen: { pointer: string; equals: unknown } | null;
@@ -16,7 +16,7 @@ export interface View {
 export interface ViewSection { id: string; title: string; source: ViewSource; input: Record<string, string>; columns: View["columns"]; component: string | null; requiredComponent: boolean }
 export interface ViewEntry { viewId: string; revision: string; audience: string; kind: string; title: string; url: string }
 type Json = Record<string, unknown>;
-export const VIEW_FEATURES = new Set(["views.collection@1", "views.record@1", "views.sections@1", "views.availability@1"]);
+export const VIEW_FEATURES = new Set(["views.collection@1", "views.record@1", "views.sections@1", "views.availability@1", "views.completeness@1"]);
 export function object(value: unknown, label = "value"): Json {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(label + " must be an object");
   return value as Json;
@@ -122,7 +122,7 @@ export function decodeView(value: unknown, options: { bytes?: number; apiPrefix?
   keys(raw, ["protocol", "protocolVersion", "viewId", "revision", "audience", "kind", "requiredFeatures", "title", "resource", "labelPointer", "source", "columns", "filters", "recordView", "recordInput", "actions", "sections", "availability"]);
   if (raw.kind !== "collection" && raw.kind !== "record") throw new Error("Unsupported view kind");
   if (raw.audience !== "product" && raw.audience !== "admin") throw new Error("Unsupported audience");
-  const source = object(raw.source); keys(source, ["invocation", "item", "itemsPointer", "identityPointer", "nextCursorPointer"]);
+  const source = object(raw.source); keys(source, ["invocation", "item", "itemsPointer", "identityPointer", "nextCursorPointer", "completePointer"]);
   const invocation = decodeInvocation(source.invocation, options.apiPrefix), item = contract(source.item).schema;
   if (invocation.operation.method !== "GET") throw new Error("View source is not read-only");
   const outputPointer = (value: unknown) => {
@@ -159,6 +159,10 @@ export function decodeView(value: unknown, options: { bytes?: number; apiPrefix?
   const itemsPointer = nullable(source.itemsPointer), nextCursorPointer = nullable(source.nextCursorPointer);
   if (raw.kind === "collection" && (itemsPointer !== "/items" || nextCursorPointer !== "/next_cursor")) throw new Error("Unsupported page shape");
   if (raw.kind === "record" && (itemsPointer !== null || nextCursorPointer !== null)) throw new Error("Record must not be a page");
+  // ADR-045: a required boolean of the page, false when rows were left out.
+  const completePointer = source.completePointer === undefined ? null : pointer(source.completePointer);
+  if (completePointer !== null && (raw.kind !== "collection" || !strings(raw.requiredFeatures).includes("views.completeness@1")
+    || !invocation.output.schema.fields.some((f) => f.name === completePointer.slice(1) && f.kind === "boolean" && f.required && !f.nullable))) throw new Error("Invalid completeness flag");
   const recordInput = mapped(raw.recordInput); Object.values(recordInput).forEach(outputPointer);
   if (!Array.isArray(raw.sections) || raw.sections.length > 16 || (raw.kind === "collection" && raw.sections.length)) throw new Error("Invalid record sections");
   const sections = raw.sections.map((value): ViewSection => {
@@ -185,7 +189,7 @@ export function decodeView(value: unknown, options: { bytes?: number; apiPrefix?
     availability = { invocation: read, input };
   }
   return { viewId: id(raw.viewId), revision: text(raw.revision), audience: raw.audience, kind: raw.kind, title: text(raw.title), resource: id(raw.resource),
-    source: { invocation, item, identityPointer, itemsPointer, nextCursorPointer }, columns, filters, actions, labelPointer: outputPointer(raw.labelPointer),
+    source: { invocation, item, identityPointer, itemsPointer, nextCursorPointer, completePointer }, columns, filters, actions, labelPointer: outputPointer(raw.labelPointer),
     recordView: nullable(raw.recordView), recordInput, sections, availability, missingFeatures: strings(raw.requiredFeatures).filter((f) => !VIEW_FEATURES.has(f)) };
 }
 

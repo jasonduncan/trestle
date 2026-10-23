@@ -5053,7 +5053,7 @@
           "views.availability@1"
         ],
         "resource": "support.case",
-        "revision": "sha256:9a1258deffc00ef78c7af3faeeaf704aa87ef7ce86b8d337f434702e389d9a6a",
+        "revision": "sha256:6f4812ec5d5dde2c045a315a40957666345cbe5c0542de896052398043624bef",
         "sections": [
           {
             "columns": [
@@ -5226,6 +5226,120 @@
               "nextCursorPointer": null
             },
             "title": "Export preview"
+          },
+          {
+            "columns": [
+              {
+                "id": "subject",
+                "label": "subject",
+                "pointer": "/subject"
+              }
+            ],
+            "component": null,
+            "id": "recent",
+            "input": {},
+            "requiredComponent": false,
+            "source": {
+              "identityPointer": "/id",
+              "invocation": {
+                "bindingRevision": "sha256:7055f67e4b43bd4d5d85b801307c1d844aaea63eb2ed111b6cb32d6ada858633",
+                "body": "none",
+                "errors": [
+                  400,
+                  401,
+                  403,
+                  404,
+                  500,
+                  503
+                ],
+                "idempotencyKey": false,
+                "input": {
+                  "id": "support_work.recent",
+                  "schema": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "additionalProperties": false,
+                    "properties": {},
+                    "required": [],
+                    "type": "object"
+                  },
+                  "version": "1"
+                },
+                "location": null,
+                "method": "GET",
+                "noContent": false,
+                "operationId": "support_work.recent",
+                "operationVersion": "1",
+                "operationVersionHeader": false,
+                "output": {
+                  "id": "support_work.recent.view",
+                  "schema": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "additionalProperties": false,
+                    "properties": {
+                      "complete": {
+                        "type": "boolean"
+                      },
+                      "items": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "id": {
+                              "format": "uuid",
+                              "type": "string"
+                            },
+                            "subject": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "subject"
+                          ],
+                          "type": "object"
+                        },
+                        "maxItems": 3,
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "complete",
+                      "items"
+                    ],
+                    "type": "object"
+                  },
+                  "version": "1"
+                },
+                "path": "/api/v1/recent-cases",
+                "pathParams": [],
+                "precondition": null,
+                "successStatus": 200
+              },
+              "item": {
+                "id": "support_work.recent.item",
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    "subject": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "subject"
+                  ],
+                  "type": "object"
+                },
+                "version": "1"
+              },
+              "itemsPointer": "/items",
+              "nextCursorPointer": "/next_cursor"
+            },
+            "title": "Recent cases"
           }
         ],
         "source": {
@@ -5613,6 +5727,136 @@
         },
         "title": "Support workspace",
         "viewId": "support_work.queue"
+      },
+      {
+        "actions": [],
+        "audience": "product",
+        "columns": [
+          {
+            "id": "subject",
+            "label": "subject",
+            "pointer": "/subject"
+          }
+        ],
+        "filters": [],
+        "kind": "collection",
+        "labelPointer": "/subject",
+        "protocol": "trestle.views",
+        "protocolVersion": "1.0",
+        "recordInput": {
+          "id": "/id"
+        },
+        "recordView": "support_work.case",
+        "requiredFeatures": [
+          "views.collection@1",
+          "views.completeness@1"
+        ],
+        "resource": "support.case",
+        "revision": "sha256:b9f6f037e5bb78a57fe3b5df7e7543244636b60da9e71277aebd957f68ab103b",
+        "sections": [],
+        "source": {
+          "completePointer": "/complete",
+          "identityPointer": "/id",
+          "invocation": {
+            "bindingRevision": "sha256:7055f67e4b43bd4d5d85b801307c1d844aaea63eb2ed111b6cb32d6ada858633",
+            "body": "none",
+            "errors": [
+              400,
+              401,
+              403,
+              404,
+              500,
+              503
+            ],
+            "idempotencyKey": false,
+            "input": {
+              "id": "support_work.recent",
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "additionalProperties": false,
+                "properties": {},
+                "required": [],
+                "type": "object"
+              },
+              "version": "1"
+            },
+            "location": null,
+            "method": "GET",
+            "noContent": false,
+            "operationId": "support_work.recent",
+            "operationVersion": "1",
+            "operationVersionHeader": false,
+            "output": {
+              "id": "support_work.recent.view",
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "additionalProperties": false,
+                "properties": {
+                  "complete": {
+                    "type": "boolean"
+                  },
+                  "items": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "id": {
+                          "format": "uuid",
+                          "type": "string"
+                        },
+                        "subject": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "subject"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 3,
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "complete",
+                  "items"
+                ],
+                "type": "object"
+              },
+              "version": "1"
+            },
+            "path": "/api/v1/recent-cases",
+            "pathParams": [],
+            "precondition": null,
+            "successStatus": 200
+          },
+          "item": {
+            "id": "support_work.recent.item",
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "subject": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "subject"
+              ],
+              "type": "object"
+            },
+            "version": "1"
+          },
+          "itemsPointer": "/items",
+          "nextCursorPointer": "/next_cursor"
+        },
+        "title": "Recent cases",
+        "viewId": "support_work.recent"
       },
       {
         "actions": [],

@@ -76,6 +76,13 @@ never replaces a full record. Inputs come from the operation contract; view
 columns cannot add writable fields. Related reads are independent snapshots.
 Supply one composite read operation when the application needs a common snapshot.
 
+A Rust collection over a read that caps its rows can name the output's
+completeness flag with `.complete("complete")` (ADR-045). The field must be a
+required boolean beside `items`. When a page returns `false`, the collection says
+"This list is incomplete: more rows exist that it doesn't show." The view then
+requires `views.completeness@1`, so an older renderer refuses it instead of showing
+a list that looks whole. A record view's related sections carry no flag yet.
+
 Rust views can call `.availability(query, input_mapping)` to attach an explicit
 authorized read using `trestle::protocol::view::availability_contract`. Its
 managed GET binding supplies bounded hints with the resource, record key and

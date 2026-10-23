@@ -143,7 +143,8 @@ export function CollectionView({ view, transport, navigate }: { view: View; tran
     if (!Array.isArray(rows) || rows.length > 100) throw new Error("Invalid page size");
     const identities = rows.map((row) => String(at(row, view.source.identityPointer)));
     if (new Set(identities).size !== identities.length) throw new Error("Duplicate record identity");
-    return { rows: rows as Record<string, unknown>[], next: at(page, view.source.nextCursorPointer!) };
+    const complete = view.source.completePointer ? at(page, view.source.completePointer) !== false : true;
+    return { rows: rows as Record<string, unknown>[], next: at(page, view.source.nextCursorPointer!), complete };
   }, [transport, view.revision, queryKey, cursor]);
   const newActions = view.actions.filter((a) => !Object.keys(a.context).length);
   return <section aria-label={view.title}>
@@ -157,6 +158,7 @@ export function CollectionView({ view, transport, navigate }: { view: View; tran
       </select> : <input type={field.kind === "integer" ? "number" : "search"} min={field.minimum} max={field.maximum} value={filters[name] ?? ""} onChange={(e) => change(e.target.value)} />}</label>;
     })}</div>
     {data.loading ? <p role="status">Loading records…</p> : data.error ? <p role="alert">{data.error}</p> : <>
+      {data.value?.complete === false && <p role="status" className="trestle-incomplete">This list is incomplete: more rows exist that it doesn't show.</p>}
       {!data.value?.rows.length ? <div className="trestle-empty"><h2>No records yet</h2><p>Records will appear here when they are available.</p></div> :
       <div className="trestle-table-wrap"><table><thead><tr>{view.columns.map((col) => <th scope="col" key={col.id}>{col.label}</th>)}{view.recordView && <th scope="col">Record</th>}</tr></thead>
         <tbody>{data.value.rows.map((row) => <tr key={String(at(row, view.source.identityPointer))}>
