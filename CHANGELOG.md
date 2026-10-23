@@ -36,6 +36,11 @@ promise.
   public field (`complete`, `complete_pointer`), so struct literals must add it.
   The builders are unchanged.
 
+### Security
+- `Cargo.lock` takes `tokio` 1.53.3 (RUSTSEC-2026-0386: `AsyncFd`
+  constructors violate I/O safety). Projects with their own lock file should
+  run `cargo update -p tokio`.
+
 ## [0.9.1] - 2026-10-23
 
 ### Added
