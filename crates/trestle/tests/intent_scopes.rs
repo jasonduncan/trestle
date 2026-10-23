@@ -457,6 +457,34 @@ odd = { field = "nothing" }"#,
 }
 
 #[test]
+fn exists_matches_only_ids_of_a_scoped_model() {
+    let guard = |matches: &str| {
+        format!(
+            r#"{CRM}
+[[endpoints]]
+id = "crm.check"
+model = "crm.member"
+path = "POST /api/v1/members/{{id}}/check"
+permission = "crm.sell"
+set = {{ name = "checked" }}
+exists = [{{ model = "crm.opportunity", match = {{ {matches} }} }}]
+"#
+        )
+    };
+    trestle::intent::parse("trestle.toml", &guard(r#"owner = "id""#))
+        .unwrap_or_else(|e| panic!("{e}"));
+    let problems = trestle::intent::parse("trestle.toml", &guard(r#"title = "name""#))
+        .unwrap_err()
+        .problems;
+    assert!(
+        problems.iter().any(|p| p.contains(
+            "exists crm.opportunity matches title = name, but crm.opportunity has scopes"
+        )),
+        "{problems:#?}"
+    );
+}
+
+#[test]
 fn a_scoped_models_tenant_wide_unique_set_is_a_warning() {
     let intent = trestle::intent::parse("trestle.toml", CRM).unwrap();
     assert!(intent.warnings().is_empty(), "{:#?}", intent.warnings());

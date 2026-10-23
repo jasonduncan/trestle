@@ -19,6 +19,12 @@ promise.
   each one when it loads `trestle.toml`. The first is a unique set that
   leaves out the field of a scope a grant uses: a caller granted that scope
   learns whether a row it can't see holds the value (ADR-040).
+### Security
+- **Breaking:** an `exists` guard (ADR-036) on a model with row scopes may
+  match only its `id` and ref fields, and a file with any other match no
+  longer loads; match on `id` or a ref instead. The guard checks tenancy, not
+  the caller's scopes, so a match on another field, such as a name, told a
+  scoped caller whether a row it can't see held the value (ADR-040).
 
 ## [0.8.1] - 2026-10-22
 

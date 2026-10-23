@@ -2343,6 +2343,16 @@ fn exists_spec(
                  type (refs must point to the same model; money cannot be matched)",
                 related.id
             ));
+        } else if t.0 != FieldType::Ref && !related.scopes.is_empty() {
+            // The guard checks tenancy, not scopes, so a value match would
+            // tell a scoped caller whether a hidden row holds the value
+            // (ADR-040). An ID match only links IDs the caller holds.
+            problems.push(format!(
+                "{at}: action {id:?}: exists {} matches {theirs} = {ours}, but {} has scopes, so \
+                 exists may match only id and ref fields of it: a value match would reveal \
+                 whether a row the caller can't see holds the value",
+                related.id, related.id
+            ));
         }
     }
     for name in &x.null {
