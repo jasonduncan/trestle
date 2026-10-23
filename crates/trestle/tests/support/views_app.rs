@@ -55,6 +55,10 @@ impl App<State> for Exports {
         );
         app.dyn_operation(Work::new(&self.0, Task::Finish), None);
         app.dyn_operation(
+            Work::new(&self.0, Task::Recent),
+            Some(Http::get("/api/v1/recent-cases")),
+        );
+        app.dyn_operation(
             Work::new(&self.0, Task::Availability),
             Some(Http::get("/api/v1/cases/{id}/availability")),
         );
@@ -96,7 +100,29 @@ impl App<State> for Exports {
                     input: [("id".into(), "/id".into())].into(),
                     component: Some("fixture.export_panel".into()),
                     required_component: true,
+                })
+                .section(SectionDefinition {
+                    id: "recent".into(),
+                    title: "Recent cases".into(),
+                    query: "support_work.recent".into(),
+                    collection: true,
+                    identity: "id".into(),
+                    label: "subject".into(),
+                    columns: vec!["subject".into()],
+                    input: [].into(),
+                    component: None,
+                    required_component: false,
                 }),
+            permission(),
+        );
+        app.view_dyn(
+            ViewDefinition::collection("support_work.recent", "support_work.recent")
+                .title("Recent cases")
+                .resource("support.case")
+                .label("subject")
+                .columns(&["subject"])
+                .complete("complete")
+                .record_view("support_work.case", "id"),
             permission(),
         );
         app.view_dyn(
@@ -115,7 +141,12 @@ enum Task {
     Status,
     Finish,
     Availability,
+    /// The newest cases, capped, with a completeness flag (ADR-045).
+    Recent,
 }
+
+/// Rows [`Task::Recent`] returns at most.
+const RECENT: usize = 3;
 struct Work {
     info: OperationDescriptor,
     permission: Permission,
@@ -131,15 +162,25 @@ impl Work {
             Task::Finish => ("support_work.finish", Mode::Write, "support.write"),
             Task::Status => ("support_work.status", Mode::Read, "support.read"),
             Task::Availability => ("support_work.availability", Mode::Read, "support.read"),
+            Task::Recent => ("support_work.recent", Mode::Read, "support.read"),
         };
-        let input = if matches!(task, Task::Start) {
+        let input = if matches!(task, Task::Recent) {
+            ContractDoc::input(id, "1")
+        } else if matches!(task, Task::Start) {
             ContractDoc::input(id, "1")
                 .field(Field::uuid("case_id"))
                 .field(Field::digits("expected_version"))
         } else {
             ContractDoc::input(id, "1").field(Field::uuid("id"))
         };
-        let output = if matches!(task, Task::Availability) {
+        let output = if matches!(task, Task::Recent) {
+            let item = ContractDoc::output("support_work.recent.item", "1")
+                .field(Field::uuid("id"))
+                .field(Field::text("subject"));
+            ContractDoc::output("support_work.recent.view", "1")
+                .field(Field::items("items", &item, RECENT as u32))
+                .field(Field::boolean("complete"))
+        } else if matches!(task, Task::Availability) {
             trestle::protocol::view::availability_contract("support_work.availability.view", "1")
         } else {
             ContractDoc::output("support_work.status.view", "1")
@@ -217,6 +258,14 @@ impl DynOperation<State> for Work {
             let (mut conn, result) = Ctx::run(&resolved, conn, &ctx, async |data| {
                 let mut invocation = Invocation::for_actor(data.actor());
                 if let Some(tenant) = data.tenant() { invocation = invocation.with_tenant(tenant); }
+                if matches!(self.task, Task::Recent) {
+                    let rows = data.list("support.case", json!({})).await?;
+                    let items = rows.iter().take(RECENT).map(|row| {
+                        let value = row.to_json();
+                        json!({ "id": value["id"], "subject": value["subject"] })
+                    }).collect::<Vec<_>>();
+                    return Ok((json!({ "items": items, "complete": rows.len() <= RECENT }), invocation));
+                }
                 if matches!(self.task, Task::Availability) {
                     let id = input["id"].as_str().and_then(|v| v.parse().ok()).ok_or_else(Problem::not_found)?;
                     let record = data.get("support.case", id).await?;

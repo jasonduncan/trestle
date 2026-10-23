@@ -25,6 +25,7 @@
 .trestle-admin .trestle-link { padding:0; border:0; text-decoration:underline; background:none; }
 .trestle-pagination { display:flex; justify-content:flex-end; align-items:center; gap:18px; margin:20px 0; }
 .trestle-empty { border:1px dashed var(--line); background:white; border-radius:8px; text-align:center; padding:64px 24px; margin:28px 0; }
+.trestle-incomplete { border-left:3px solid var(--line); padding:8px 12px; margin:12px 0; }
 .trestle-record { background:white; border:1px solid var(--line); border-radius:8px; padding:24px; }
 .trestle-record>div { display:grid; grid-template-columns:180px 1fr; padding:15px 0; border-bottom:1px solid var(--line); }
 .trestle-record>div:last-child { border:0; }.trestle-record dt { color:var(--muted); }.trestle-record dd { margin:0; overflow-wrap:anywhere; }
