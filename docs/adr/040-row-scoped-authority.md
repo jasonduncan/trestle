@@ -190,7 +190,15 @@ Scopes add two checks:
   scopes.** A ref names a row the record depends on, and the referenced
   row may be one the caller can't read, such as a manager as owner. This
   is the same reasoning as ADR-024: an existence check on an ID the
-  caller already holds reveals nothing more. A ref error says only
+  caller already holds reveals nothing more. An `exists` guard on a
+  scoped model may therefore match only its `id` and ref fields, which
+  link IDs the caller holds; a match on any other field is refused when
+  the file is read, since it would reveal whether a hidden row holds the
+  value. What a ref match still reveals is whether some row, hidden or
+  not, links those IDs: an `exists` of an opportunity with `owner = owner`
+  tells a scoped caller whether that member has any opportunity at all.
+  That residual is accepted, since guards such as "the contact is
+  affiliated with the organization" need ref matches. A ref error says only
   whether that ID exists in the tenant (`not_found`, like a missing one),
   and never returns a hidden row's fields. Lists, gets and their counts
   never include hidden rows, so scoped reads give no way to enumerate
@@ -202,8 +210,13 @@ Scopes add two checks:
   write, and a unique violation answered first). A write inside the
   scopes still gets the 422 `already_exists` when any row of the tenant,
   hidden or not, holds the value: that is what a tenant-wide unique set
-  means. A model whose unique values must stay private to a scope needs
-  the scope field in the set.
+  means. A model whose unique values must stay private to its scopes
+  needs the field of each scope a grant uses in the set: with `own` and
+  `team`, a set of `team` and `title` still lets an `@own` caller learn
+  whether a teammate's row holds a title. Loading a file logs a warning
+  for each unique set that leaves out such a field, naming the scopes
+  (`Intent::warnings`). It isn't refused, since a tenant-wide set can be
+  what the project wants.
 - **`Ctx` keeps full tenant access.** Handlers, endpoint hooks, model
   write hooks (ADR-039) and `Ctx::run` are trusted code. Their `get`,
   `list` and writes are tenant-scoped, not row-scoped. A hook can apply
