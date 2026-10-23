@@ -42,7 +42,7 @@ it("says a page is incomplete when its completeness flag is false (ADR-045)", as
     const transport = { list: vi.fn().mockResolvedValue(page(complete)) } as unknown as Transport;
     render(<CollectionView view={view} transport={transport} navigate={() => {}} />);
     await screen.findByText("First");
-    expect(screen.queryByText("Showing the first 1 rows. More exist that this list doesn't show.") !== null).toBe(!complete);
+    expect(screen.queryByText("This list is incomplete: more rows exist that it doesn't show.") !== null).toBe(!complete);
     cleanup();
   }
 });

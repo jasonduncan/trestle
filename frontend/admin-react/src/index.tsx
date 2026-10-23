@@ -158,7 +158,7 @@ export function CollectionView({ view, transport, navigate }: { view: View; tran
       </select> : <input type={field.kind === "integer" ? "number" : "search"} min={field.minimum} max={field.maximum} value={filters[name] ?? ""} onChange={(e) => change(e.target.value)} />}</label>;
     })}</div>
     {data.loading ? <p role="status">Loading records…</p> : data.error ? <p role="alert">{data.error}</p> : <>
-      {data.value?.complete === false && <p role="status" className="trestle-incomplete">Showing the first {data.value.rows.length} rows. More exist that this list doesn't show.</p>}
+      {data.value?.complete === false && <p role="status" className="trestle-incomplete">This list is incomplete: more rows exist that it doesn't show.</p>}
       {!data.value?.rows.length ? <div className="trestle-empty"><h2>No records yet</h2><p>Records will appear here when they are available.</p></div> :
       <div className="trestle-table-wrap"><table><thead><tr>{view.columns.map((col) => <th scope="col" key={col.id}>{col.label}</th>)}{view.recordView && <th scope="col">Record</th>}</tr></thead>
         <tbody>{data.value.rows.map((row) => <tr key={String(at(row, view.source.identityPointer))}>

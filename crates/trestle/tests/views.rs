@@ -213,6 +213,25 @@ fn a_completeness_flag_is_a_required_boolean_of_a_collection() {
         "a view without a flag keeps its bytes"
     );
 
+    // A related section over the flagged read carries no flag (ADR-045).
+    let case = &registry
+        .views()
+        .iter()
+        .find(|v| v.document.view_id == "support_work.case")
+        .unwrap()
+        .document;
+    let recent_section = case
+        .sections
+        .iter()
+        .find(|s| s.id == "recent")
+        .expect("support_work.case has a section over support_work.recent");
+    assert_eq!(recent_section.source.complete_pointer, None);
+    assert!(
+        !case
+            .required_features
+            .contains(&"views.completeness@1".to_owned())
+    );
+
     // Not a boolean of the page, or not a collection: refused at assembly.
     use std::sync::Arc;
     use trestle::core::registry::{App, AppBuilder, ViewDefinition};

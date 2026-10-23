@@ -42,6 +42,7 @@ describe("views from Rust registry assembly", () => {
       (d: any) => { d.source.completePointer = "/items"; },
       (d: any) => { d.source.completePointer = "/hidden"; },
       (d: any) => { d.source.invocation.output.schema.required = ["items"]; },
+      (d: any) => { d.requiredFeatures = d.requiredFeatures.filter((f: string) => f !== "views.completeness@1"); },
     ]) { const changed = structuredClone(recent); mutate(changed); expect(() => decodeView(changed)).toThrow(); }
     const record = structuredClone(fixture("support").product.views.find((v: any) => v.kind === "record"));
     record.source.completePointer = "/id";

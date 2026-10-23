@@ -100,6 +100,18 @@ impl App<State> for Exports {
                     input: [("id".into(), "/id".into())].into(),
                     component: Some("fixture.export_panel".into()),
                     required_component: true,
+                })
+                .section(SectionDefinition {
+                    id: "recent".into(),
+                    title: "Recent cases".into(),
+                    query: "support_work.recent".into(),
+                    collection: true,
+                    identity: "id".into(),
+                    label: "subject".into(),
+                    columns: vec!["subject".into()],
+                    input: [].into(),
+                    component: None,
+                    required_component: false,
                 }),
             permission(),
         );

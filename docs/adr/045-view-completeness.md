@@ -49,8 +49,12 @@ ViewDefinition::collection("reports.overdue", "reports.overdue.list")
 - `@trestle-framework/client` decodes `completePointer`. It must point at a
   required boolean of the output schema.
 - The collection view reads the flag on each page. When it is `false`, it
-  shows a status line above the table: "Showing the first N rows. More exist
-  that this list doesn't show." A `true` or absent flag shows nothing.
+  shows a status line above the table: "This list is incomplete: more rows
+  exist that it doesn't show." A `true` or absent flag shows nothing. The line
+  doesn't count rows, because a later page of a read that pages and caps
+  doesn't hold the first rows.
+- Both checks refuse the same documents: a pointer that isn't a required
+  boolean of a collection's output, or a pointer without the feature.
 - Paging is unchanged. A read may have both a cursor and a flag; the flag
   describes the page it returned.
 
@@ -65,6 +69,11 @@ ViewDefinition::collection("reports.overdue", "reports.overdue.list")
 - **`trestle.toml` `[[views]]` gets no `complete` key yet.** Generated intent
   lists page with cursors and have no such field. A key can be added when an
   intent read gains one.
+- **A record view's related sections carry no flag.** `SectionDefinition` has
+  no `complete`, so a section's source never has `completePointer`, and a
+  related list over a capped read shows no notice, as before. A section flag can
+  be added the same way when one is needed; until then, a capped read belongs
+  in its own collection view.
 - **Residual:** the flag says that rows are missing, not how many. A read that
   can count them can put the count in a column or title. The view doesn't
   carry one.

@@ -161,7 +161,7 @@ export function decodeView(value: unknown, options: { bytes?: number; apiPrefix?
   if (raw.kind === "record" && (itemsPointer !== null || nextCursorPointer !== null)) throw new Error("Record must not be a page");
   // ADR-045: a required boolean of the page, false when rows were left out.
   const completePointer = source.completePointer === undefined ? null : pointer(source.completePointer);
-  if (completePointer !== null && (raw.kind !== "collection"
+  if (completePointer !== null && (raw.kind !== "collection" || !strings(raw.requiredFeatures).includes("views.completeness@1")
     || !invocation.output.schema.fields.some((f) => f.name === completePointer.slice(1) && f.kind === "boolean" && f.required && !f.nullable))) throw new Error("Invalid completeness flag");
   const recordInput = mapped(raw.recordInput); Object.values(recordInput).forEach(outputPointer);
   if (!Array.isArray(raw.sections) || raw.sections.length > 16 || (raw.kind === "collection" && raw.sections.length)) throw new Error("Invalid record sections");
