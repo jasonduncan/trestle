@@ -2528,3 +2528,53 @@ async fn a_hook_writing_another_row_of_its_model_runs_that_rows_hooks() {
     assert_eq!(server.row("approvals", &approval).await["consumed"], true);
     server.db.drop().await;
 }
+
+/// `before_write` on deal, for [`a_before_write_hook_cannot_write_its_own_row_through_ctx`]:
+/// a deal noted `touch` updates itself through `Ctx`.
+async fn touch_self(ctx: Ctx, write: trestle::intent::Write) -> Result<trestle::intent::Write> {
+    let touch = match write.row() {
+        Some(new) => new.get::<Option<String>>("note")?.as_deref() == Some("touch"),
+        None => false,
+    };
+    if touch {
+        let id: uuid::Uuid = write.old().unwrap().get("id")?;
+        ctx.update("crm.deal", id, json!({ "title": "touched" }))
+            .await?;
+    }
+    Ok(write)
+}
+
+#[tokio::test]
+async fn a_before_write_hook_cannot_write_its_own_row_through_ctx() {
+    // That write would bump the version before the write the hook belongs
+    // to, which would then be a 412 (ADR-039). It is refused instead.
+    use std::collections::BTreeMap;
+    let mut doc = trestle::intent::IntentDoc::from_toml("trestle.toml", HOOKED).unwrap();
+    for model in &mut doc.models {
+        if model.id == "crm.deal" {
+            model.hooks = BTreeMap::from([("before_write".into(), "crm::touch_self".into())]);
+        }
+    }
+    let project = trestle::project()
+        .intent_doc("crm", doc)
+        .handler("crm::close", close)
+        .hook("crm::mark", mark)
+        .hook("crm::late", late)
+        .write_hook("crm::touch_self", touch_self);
+    let server = Server::start_with(project).await;
+    let acme = server.organization("Acme").await;
+    let (deal, etag) = server.hooked_deal(&acme, "A").await;
+    let (status, problem, _) = server
+        .send(
+            "PATCH",
+            &format!("/api/v1/deals/{deal}"),
+            MEMBER,
+            Some(json!({ "note": "touch" })),
+            Some(&etag),
+        )
+        .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{problem}");
+    let row = server.row("deals", &deal).await;
+    assert_eq!((&row["title"], &row["note"]), (&json!("A"), &Value::Null));
+    server.db.drop().await;
+}
