@@ -831,6 +831,19 @@ async fn a_replay_rechecks_the_rows_scope() {
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{updated}");
+    let alpha = crm.opportunities[0].clone();
+    let (_, alpha_etag) = crm.row(&alpha).await;
+    let alpha_url = format!("/api/v1/opportunities/{alpha}");
+    let delete = |key: &'static str| {
+        let (crm, uri, etag) = (&crm, alpha_url.clone(), alpha_etag.clone());
+        async move {
+            crm.keyed("DELETE", &uri, MANAGER, json!({}), Some(&etag), key)
+                .await
+        }
+    };
+    let (status, deleted, _) = delete("delete-1").await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{deleted}");
+    assert!(delete("delete-1").await.2, "a replay while in team A");
     // While the manager is in team A, a replay returns the stored answer.
     let (status, again, replayed) = crm
         .keyed(
@@ -871,6 +884,10 @@ async fn a_replay_rechecks_the_rows_scope() {
             "{method}: {body}"
         );
     }
+    // A replayed delete is checked on its stored row's scope fields, since
+    // the row is gone (ADR-040).
+    let (status, body, replayed) = delete("delete-1").await;
+    assert_eq!((status, replayed), (StatusCode::NOT_FOUND, false), "{body}");
     crm.db.drop().await;
 }
 
@@ -958,9 +975,37 @@ async fn a_scope_condition_admits_only_matching_through_rows() {
         )
         .await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
+    // A row of team A to delete with a key; Bravo stays, to be hidden.
+    let (status, golf, _) = crm
+        .send(
+            "POST",
+            "/api/v1/opportunities",
+            MANAGER,
+            Some(json!({ "title": "Golf", "owner": crm.members[1], "team": crm.team_a })),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{golf}");
+    let golf = golf["id"].as_str().unwrap().to_owned();
+    let golf_url = format!("/api/v1/opportunities/{golf}");
+    let (_, etag) = crm.row(&golf).await;
+    let delete = || {
+        crm.keyed(
+            "DELETE",
+            &golf_url,
+            MANAGER,
+            json!({}),
+            Some(&etag),
+            "delete-1",
+        )
+    };
+    let (status, deleted, _) = delete().await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{deleted}");
 
     // Inactive, the same membership grants nothing on any path.
     membership("active = false").await;
+    let (status, body, replayed) = delete().await;
+    assert_eq!((status, replayed), (StatusCode::NOT_FOUND, false), "{body}");
     assert!(crm.titles(MANAGER, "").await.is_empty());
     let (status, _, _) = crm.send("GET", &bravo_url, MANAGER, None, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);

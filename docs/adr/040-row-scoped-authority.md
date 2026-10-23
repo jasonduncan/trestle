@@ -301,11 +301,12 @@ The tests:
   Bravo stays open. This is deterministic: the action can't finish before
   the commit, and the test fails if it does.
 - `a_replay_rechecks_the_rows_scope`: the manager creates an
-  opportunity in team A and renames Bravo, each with an
-  `Idempotency-Key`. A replay then returns the stored 201 with
+  opportunity in team A, renames Bravo and deletes Alpha, each with an
+  `Idempotency-Key`. A replay then returns the stored answer with
   `Idempotency-Replayed`. After the manager's team membership is
-  removed, replaying either key is 404 `not_found`, not marked as a
-  replay, and without the row's fields. The test is deterministic: the
+  removed, replaying any of the keys is 404, not marked as a replay,
+  and without the row's fields. The delete's replay is checked on the
+  stored row's scope fields, since the row is gone. The test is deterministic: the
   removal commits before the replays.
 - `intent_doc.rs`: `every_key.toml` declares a direct scope, a `through`
   scope with `key`, and scoped grants. The document round-trips and
