@@ -457,6 +457,56 @@ odd = { field = "nothing" }"#,
 }
 
 #[test]
+fn exists_matches_only_ids_of_a_scoped_model() {
+    let guard = |matches: &str| {
+        format!(
+            r#"{CRM}
+[[endpoints]]
+id = "crm.check"
+model = "crm.member"
+path = "POST /api/v1/members/{{id}}/check"
+permission = "crm.sell"
+set = {{ name = "checked" }}
+exists = [{{ model = "crm.opportunity", match = {{ {matches} }} }}]
+"#
+        )
+    };
+    trestle::intent::parse("trestle.toml", &guard(r#"owner = "id""#))
+        .unwrap_or_else(|e| panic!("{e}"));
+    let problems = trestle::intent::parse("trestle.toml", &guard(r#"title = "name""#))
+        .unwrap_err()
+        .problems;
+    assert!(
+        problems.iter().any(|p| p.contains(
+            "exists crm.opportunity matches title = name, but crm.opportunity has scopes"
+        )),
+        "{problems:#?}"
+    );
+}
+
+#[test]
+fn a_scoped_models_tenant_wide_unique_set_is_a_warning() {
+    let intent = trestle::intent::parse("trestle.toml", CRM).unwrap();
+    assert!(intent.warnings().is_empty(), "{:#?}", intent.warnings());
+    let text = CRM.replace(
+        "table = \"opportunities\"\n",
+        "table = \"opportunities\"\nunique = [[\"title\"], [\"team\", \"title\"]]\n",
+    );
+    let warnings = trestle::intent::parse("trestle.toml", &text)
+        .unwrap()
+        .warnings();
+    // Each set is flagged for every granted scope whose field it lacks:
+    // with the team in it, an @own caller still meets teammates' rows.
+    assert_eq!(
+        warnings,
+        [
+            r#"unique set ["title"] of crm.opportunity leaves out the field of scopes own (owner), team (team), so a caller granted one learns whether a row it can't see holds the value (ADR-040). Add the field to the set if the values are private to the scope"#,
+            r#"unique set ["team", "title"] of crm.opportunity leaves out the field of scope own (owner), so a caller granted one learns whether a row it can't see holds the value (ADR-040). Add the field to the set if the values are private to the scope"#,
+        ]
+    );
+}
+
+#[test]
 fn scoped_operations_declare_the_models_their_scopes_read() {
     let registry = trestle::project()
         .intent_str("trestle.toml", CRM)
@@ -781,6 +831,19 @@ async fn a_replay_rechecks_the_rows_scope() {
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{updated}");
+    let alpha = crm.opportunities[0].clone();
+    let (_, alpha_etag) = crm.row(&alpha).await;
+    let alpha_url = format!("/api/v1/opportunities/{alpha}");
+    let delete = |key: &'static str| {
+        let (crm, uri, etag) = (&crm, alpha_url.clone(), alpha_etag.clone());
+        async move {
+            crm.keyed("DELETE", &uri, MANAGER, json!({}), Some(&etag), key)
+                .await
+        }
+    };
+    let (status, deleted, _) = delete("delete-1").await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{deleted}");
+    assert!(delete("delete-1").await.2, "a replay while in team A");
     // While the manager is in team A, a replay returns the stored answer.
     let (status, again, replayed) = crm
         .keyed(
@@ -821,6 +884,10 @@ async fn a_replay_rechecks_the_rows_scope() {
             "{method}: {body}"
         );
     }
+    // A replayed delete is checked on its stored row's scope fields, since
+    // the row is gone (ADR-040).
+    let (status, body, replayed) = delete("delete-1").await;
+    assert_eq!((status, replayed), (StatusCode::NOT_FOUND, false), "{body}");
     crm.db.drop().await;
 }
 
@@ -908,9 +975,37 @@ async fn a_scope_condition_admits_only_matching_through_rows() {
         )
         .await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
+    // A row of team A to delete with a key; Bravo stays, to be hidden.
+    let (status, golf, _) = crm
+        .send(
+            "POST",
+            "/api/v1/opportunities",
+            MANAGER,
+            Some(json!({ "title": "Golf", "owner": crm.members[1], "team": crm.team_a })),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{golf}");
+    let golf = golf["id"].as_str().unwrap().to_owned();
+    let golf_url = format!("/api/v1/opportunities/{golf}");
+    let (_, etag) = crm.row(&golf).await;
+    let delete = || {
+        crm.keyed(
+            "DELETE",
+            &golf_url,
+            MANAGER,
+            json!({}),
+            Some(&etag),
+            "delete-1",
+        )
+    };
+    let (status, deleted, _) = delete().await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{deleted}");
 
     // Inactive, the same membership grants nothing on any path.
     membership("active = false").await;
+    let (status, body, replayed) = delete().await;
+    assert_eq!((status, replayed), (StatusCode::NOT_FOUND, false), "{body}");
     assert!(crm.titles(MANAGER, "").await.is_empty());
     let (status, _, _) = crm.send("GET", &bravo_url, MANAGER, None, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -1054,6 +1149,71 @@ async fn a_rows_history_is_as_hidden_as_the_row() {
         ("delete", 1, json!({ "old": "Charlie", "new": null }))
     );
     server.db.drop().await;
+}
+
+#[tokio::test]
+async fn a_field_with_history_false_is_never_logged() {
+    let text = CRM
+        .replace(
+            "table = \"opportunities\"\n",
+            "table = \"opportunities\"\nhistory = true\n",
+        )
+        .replace(
+            r#"{ id = "title", type = "text", max = 100 },"#,
+            r#"{ id = "title", type = "text", max = 100, history = false },"#,
+        )
+        .replace("idempotent = true\n", "idempotent = true\nhistory = true\n");
+    assert_eq!(text.matches("history = ").count(), 3);
+    let crm = Crm::start_with(&text).await;
+    let alpha = crm.opportunities[0].clone();
+    let (_, etag) = crm.row(&alpha).await;
+    let uri = format!("/api/v1/opportunities/{alpha}");
+    let patch = json!({ "title": "Alpha 2", "stage": "won" });
+    let (status, _, _) = crm.send("PATCH", &uri, S1, Some(patch), Some(&etag)).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, page, _) = crm
+        .send("GET", &format!("{uri}/history"), S1, None, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(
+        page["items"][0]["changes"],
+        json!([{ "change": { "field": "stage", "old": "open", "new": "won" } }])
+    );
+    let fields: Vec<String> = page["items"][1]["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["change"]["field"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(fields, ["owner", "stage", "team"], "the create's");
+    // Nor is it in the table.
+    let pool = crm.db.pool().await;
+    let logged: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM opportunities_history WHERE changes::jsonb ? 'title'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(logged, 0);
+    crm.db.drop().await;
+}
+
+#[test]
+fn history_false_needs_a_model_with_history() {
+    let text = CRM.replace(
+        r#"{ id = "title", type = "text", max = 100 },"#,
+        r#"{ id = "title", type = "text", max = 100, history = false },"#,
+    );
+    let problems = trestle::intent::parse("trestle.toml", &text)
+        .unwrap_err()
+        .problems;
+    assert!(
+        problems.iter().any(|p| p.contains(
+            "history = ... on a field chooses what the change log of crm.opportunity records, \
+             and crm.opportunity keeps none"
+        )),
+        "{problems:#?}"
+    );
 }
 
 #[tokio::test]

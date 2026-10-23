@@ -53,8 +53,9 @@ waiting for:
 - row-level permissions: `scopes` on a model and `"<permission>@<scope>"`
   grants in `[roles]` (ADR-040), with `where` conditions on a scope's
   `through` row, such as active managers only (ADR-044);
-- change logs: `history = true` on a model logs every write, and on its CRUD
-  endpoint publishes the log (ADR-041);
+- change logs: `history = true` on a model logs every write, `history =
+  false` on one of its fields leaves that field out, and `history = true` on
+  its CRUD endpoint publishes the log (ADR-041);
 - generated forms: `forms = true` (ADR-026);
 - admin views: `[[admin]]` (ADR-029).
 

@@ -74,6 +74,20 @@ impl From<sqlx::Error> for Problem {
                 tracing::warn!("database statement timed out");
                 Problem::unavailable("database_timeout")
             }
+            // deadlock_detected or serialization_failure: PostgreSQL rolled
+            // the transaction back to let a concurrent one through, so
+            // nothing was written and the same request can be sent again.
+            sqlx::Error::Database(db)
+                if matches!(db.code().as_deref(), Some("40P01" | "40001")) =>
+            {
+                tracing::warn!(error = %db.message(), "transaction rolled back by a conflict");
+                Problem::unavailable("database_conflict")
+                    .with_detail("A concurrent change got in the way. Try again.")
+                    .with_header(
+                        http::header::RETRY_AFTER,
+                        http::HeaderValue::from_static("1"),
+                    )
+            }
             // read_only_sql_transaction: a `Mode::Read` operation wrote.
             sqlx::Error::Database(db) if db.code().as_deref() == Some("25006") => {
                 tracing::error!(error = %db.message(), "a read operation tried to write");

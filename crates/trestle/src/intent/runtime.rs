@@ -142,11 +142,13 @@ impl Input {
 #[derive(Clone)]
 pub struct Ctx {
     inner: Arc<CtxInner>,
-    /// The rows whose write hooks are running, as (model, row ID),
-    /// outermost first (ADR-039). A write to one of these rows from inside
-    /// the chain does not run its hooks again; another row of the same
-    /// model runs them.
-    hooking: Vec<(String, Uuid)>,
+    /// The rows whose write hooks are running, as (model, row ID, whether
+    /// it is `before_write`), outermost first (ADR-039). A write to one of
+    /// these rows from inside the chain does not run its hooks again;
+    /// another row of the same model runs them. A row in its
+    /// `before_write` can't be written at all: that write would come
+    /// before the one the hook is part of.
+    hooking: Vec<(String, Uuid, bool)>,
 }
 
 struct CtxInner {
@@ -399,7 +401,7 @@ impl Ctx {
     /// The model's write hooks for row `id`, unless it has none or they
     /// are already running for that row in this chain (ADR-039).
     fn write_hooks(&self, model: &ModelSpec, id: Uuid) -> Result<Option<WriteHooks>, Problem> {
-        let running = |(m, r): &(String, Uuid)| *m == model.id && *r == id;
+        let running = |(m, r, _): &(String, Uuid, bool)| *m == model.id && *r == id;
         if model.hooks.is_empty() || self.hooking.iter().any(running) {
             return Ok(None);
         }
@@ -407,7 +409,7 @@ impl Ctx {
             let chain: Vec<String> = self
                 .hooking
                 .iter()
-                .map(|(m, r)| format!("{m} {r}"))
+                .map(|(m, r, _)| format!("{m} {r}"))
                 .collect();
             return Err(internal(&format!(
                 "write hooks nested more than {MAX_HOOK_DEPTH} deep: {} -> {} {id}",
@@ -440,9 +442,9 @@ impl Ctx {
 
     /// The context a row's write hooks get: the same connection, actor
     /// and tenant, with the row added to the running chain.
-    fn nested(&self, model: &ModelSpec, id: Uuid) -> Ctx {
+    fn nested(&self, model: &ModelSpec, id: Uuid, before: bool) -> Ctx {
         let mut hooking = self.hooking.clone();
-        hooking.push((model.id.clone(), id));
+        hooking.push((model.id.clone(), id, before));
         Ctx {
             inner: self.inner.clone(),
             hooking,
@@ -470,6 +472,17 @@ impl Ctx {
             Change::Create => Uuid::now_v7(),
             Change::Update { id, .. } | Change::Delete { id, .. } => *id,
         };
+        let in_before =
+            |(m, r, before): &(String, Uuid, bool)| *before && *m == model.id && *r == id;
+        if self.hooking.iter().any(in_before) {
+            // It would bump the version first, so the write the hook is
+            // part of would be a 412 or log a stale `old` (ADR-039).
+            return Err(internal(&format!(
+                "the before_write hook of {} {id} wrote its own row through Ctx; change it \
+                 with Write::set instead",
+                model.id
+            )));
+        }
         let hooks = self.write_hooks(model, id)?;
         let kind = change.kind();
         if let (true, None, Change::Update { id, .. } | Change::Delete { id, .. }) = (
@@ -501,7 +514,7 @@ impl Ctx {
                 changes: Map::new(),
                 before: true,
             };
-            let write = before(self.nested(model, id), write).await?;
+            let write = before(self.nested(model, id, true), write).await?;
             values.extend(write.changes);
         }
         // A scoped grant's create or update must leave the row inside its
@@ -570,7 +583,7 @@ impl Ctx {
                 changes: Map::new(),
                 before: false,
             };
-            after(self.nested(model, id), write).await?;
+            after(self.nested(model, id, false), write).await?;
         }
         Ok(written)
     }
@@ -763,8 +776,9 @@ struct Logged<'a> {
 }
 
 /// The fields whose value differs between `old` and `new`, either of which
-/// may be missing (create, delete). Both are rendered by
-/// `representation_sql`, so equal values compare equal.
+/// may be missing (create, delete), leaving out `history = false` fields.
+/// Both are rendered by `representation_sql`, so equal values compare
+/// equal.
 fn changed(
     model: &ModelSpec,
     old: Option<&Row>,
@@ -778,6 +792,7 @@ fn changed(
     model
         .fields
         .iter()
+        .filter(|f| f.history)
         .filter_map(|f| {
             let (old, new) = (value(old, &f.id), value(new, &f.id));
             (old != new).then(|| (f.id.clone(), FieldChange { old, new }))
@@ -2111,12 +2126,14 @@ where
 
 /// A page of change log entries (ADR-041). Each change is a union tagged
 /// by `field`, whose `old` and `new` have that field's type:
-/// `{"change": {"field": "stage", "old": "open", "new": "won"}}`.
+/// `{"change": {"field": "stage", "old": "open", "new": "won"}}`. Fields
+/// the log leaves out (`history = false`) have no variant.
 fn history_contract(model: &ModelSpec) -> ContractDoc {
     let id = format!("{}.history", model.id);
     let variants: Vec<(String, ContractDoc)> = model
         .fields
         .iter()
+        .filter(|f| f.history)
         .map(|f| {
             let side = |name: &str| {
                 let mut field = field_contract(f, true).nullable();
@@ -2151,11 +2168,13 @@ fn history_contract(model: &ModelSpec) -> ContractDoc {
 }
 
 /// Each field's value as the published log types it now (ADR-041): a
-/// one-field contract, `value`, per model field.
+/// one-field contract, `value`, per model field the log records. An entry
+/// written before a field was left out is shown without it.
 fn history_values(model: &ModelSpec) -> BTreeMap<&str, ContractDoc> {
     model
         .fields
         .iter()
+        .filter(|f| f.history)
         .map(|f| {
             let mut value = field_contract(f, true).nullable();
             value.name = "value".to_owned();

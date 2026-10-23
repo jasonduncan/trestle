@@ -135,9 +135,10 @@ scope conditioned `where = { active = true, role = ["manager", "lead"] }`:
 - `a_scope_condition_admits_only_matching_through_rows`: while the
   manager's team-A membership has role `member`, the manager lists nothing
   and Bravo is 404. As `manager`, and as `lead`, the manager lists Alpha
-  and Bravo, and creates Echo with an `Idempotency-Key`. With the same
-  membership `active = false`: the list is empty, Bravo's get is 404, the
-  key's replay is 404 without the stored row and not marked as a replay,
+  and Bravo, creates Echo and deletes Golf, each with an
+  `Idempotency-Key`. With the same membership `active = false`: the list
+  is empty, Bravo's get is 404, both keys' replays are 404 without the
+  stored row and not marked as a replay,
   and a new create in team A is 403 `out_of_scope`. Salespeople's `own`
   scope, without conditions, is unaffected.
 - `a_scope_condition_is_rechecked_in_the_transaction`: a test transaction
