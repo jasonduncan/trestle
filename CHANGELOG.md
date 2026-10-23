@@ -14,7 +14,19 @@ promise.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-23
+
+### Upgrading from 0.8
+- **`exists` guards on a model with row scopes** must match on `id` or a
+  ref field; any other match is now a parse error (see Security).
+- **Code that builds `FieldSpec` or `FieldDoc` as a struct literal** needs
+  the new `history` member: `history: true` on `FieldSpec`, `history: None`
+  on `FieldDoc`, keep today's behaviour.
+
 ### Security
+- `Cargo.lock` takes `ctutils` 0.4.5 (RUSTSEC-2026-0385: branches on secret
+  values), used by Argon2 password hashing. Projects with their own lock
+  file should run `cargo update -p ctutils`.
 - **Breaking:** an `exists` guard (ADR-036) on a model with row scopes may
   match only its `id` and ref fields, and a file with any other match no
   longer loads; match on `id` or a ref instead. The guard checks tenancy, not
@@ -807,7 +819,8 @@ The first release.
   `auto`. Anything else needs `--approve <digest>`.
 - `serve` refuses to start on schema drift or a partly applied migration.
 
-[Unreleased]: https://github.com/jasonduncan/trestle/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/jasonduncan/trestle/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/jasonduncan/trestle/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/jasonduncan/trestle/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/jasonduncan/trestle/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/jasonduncan/trestle/compare/v0.7.0...v0.7.1
