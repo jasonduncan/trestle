@@ -14,6 +14,12 @@ promise.
 
 ## [Unreleased]
 
+### Added
+- `Intent::warnings`: what parses but is likely a mistake. The project logs
+  each one when it loads `trestle.toml`. The first is a unique set that
+  leaves out the field of a scope a grant uses: a caller granted that scope
+  learns whether a row it can't see holds the value (ADR-040).
+
 ## [0.8.1] - 2026-10-22
 
 ### Security

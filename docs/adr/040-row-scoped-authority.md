@@ -202,8 +202,13 @@ Scopes add two checks:
   write, and a unique violation answered first). A write inside the
   scopes still gets the 422 `already_exists` when any row of the tenant,
   hidden or not, holds the value: that is what a tenant-wide unique set
-  means. A model whose unique values must stay private to a scope needs
-  the scope field in the set.
+  means. A model whose unique values must stay private to its scopes
+  needs the field of each scope a grant uses in the set: with `own` and
+  `team`, a set of `team` and `title` still lets an `@own` caller learn
+  whether a teammate's row holds a title. Loading a file logs a warning
+  for each unique set that leaves out such a field, naming the scopes
+  (`Intent::warnings`). It isn't refused, since a tenant-wide set can be
+  what the project wants.
 - **`Ctx` keeps full tenant access.** Handlers, endpoint hooks, model
   write hooks (ADR-039) and `Ctx::run` are trusted code. Their `get`,
   `list` and writes are tenant-scoped, not row-scoped. A hook can apply
