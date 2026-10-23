@@ -71,6 +71,11 @@ lock, and `Ctx::update` doesn't check a version.
   | Action | lock, `If-Match`, `repeat`, `when`, `require`, `check`, `exists` (ADR-036) → `before_write` → the write → `after_write`. An `"unchanged"` no-op writes nothing and runs no hooks. |
   | `Ctx::create`, `update`, `update_versioned`, `delete` | contract validation and the managed-field refusal → `before_write` → the write → `after_write` |
 
+  These are the writes Trestle makes, all through `Ctx::write`. SQL that
+  doesn't go through it runs no hooks: a migration's data steps (ADR-020),
+  a hand-written operation's own queries, and anything run in `psql`. A
+  rule that must hold there too needs a database constraint.
+
   Endpoint hooks come first because they belong to that endpoint's input.
   The model's rule then sees the row exactly as it will be stored, so it
   holds whichever endpoint produced it. Action guards run before
@@ -97,6 +102,11 @@ lock, and `Ctx::update` doesn't check a version.
   another deal runs that deal's rules, and why an organization's
   `after_write` that writes its own row ends there. A chain deeper than 8
   (`MAX_HOOK_DEPTH`) is a 500 that rolls back.
+  - **A row in its `before_write` can't be written through `Ctx`,** by that
+    hook or by a write nested in it. That write would bump the version
+    before the write the hook is part of, which would then be a 412 for a
+    versioned write, or log a stale `old`. It is a 500 that rolls back and
+    names `Write::set`, the way to change the row itself.
   - Until 0.8.1 the chain held models, not rows: a hook writing another row
     of its own model skipped that row's hooks, so a rule such as "won
     needs an approval" could be bypassed from another deal's hook.
@@ -188,9 +198,10 @@ Mutation checks, both caught:
   was written. The operation's response, and its `ETag`, show the row as
   first written. Prefer `Write::set` in `before_write` for changes to the
   row itself.
-- **A row's hooks don't re-enter themselves.** A hook that writes its own
-  row through `Ctx` skips that row's hooks, `before_write` included, so
-  such a write is trusted to keep the row's rules. Hooks that write other
+- **A row's hooks don't re-enter themselves.** An `after_write` that
+  writes its own row through `Ctx` skips that row's hooks, `before_write`
+  included, so such a write is trusted to keep the row's rules. A
+  `before_write` can't write its own row through `Ctx` at all. Hooks that write other
   rows of their own model run those rows' hooks, up to the depth bound.
 - **Breaking for struct literals:** `ModelSpec` has a `hooks` member, and
   `ModelDoc` a `hooks` field, so literals need them or

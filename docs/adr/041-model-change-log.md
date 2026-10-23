@@ -60,7 +60,11 @@ which CRUD, actions, handlers, hooks and Rust operations all go through.
   outer intent operation. Logging does not depend on the hook chain: a
   row whose hooks are not re-run in a chain still logs the write. A
   write refused before the row write logs nothing, and one refused after
-  it rolls back with its entry, since both are in one transaction.
+  it rolls back with its entry, since both are in one transaction. SQL
+  that doesn't go through `Ctx::write` logs nothing: a migration's data
+  steps (ADR-020), a hand-written operation's own queries, and anything
+  run in `psql`. The log records the application's writes, not every
+  change to the table.
 - **Old values.** An update or delete of a history model without a row
   already locked by its caller is fetched `FOR UPDATE` first, as for
   hooked models. Old and new are both the row's representation
@@ -98,6 +102,32 @@ which CRUD, actions, handlers, hooks and Rust operations all go through.
   `incomplete: true`. Before 0.8.1 such an entry failed the page's
   output check, and that row's history was a 500 from then on.
   `Ctx::history` returns entries as stored.
+- **A field can be left out** with `history = false` on it, for a value
+  the log must not keep, such as a token:
+
+  ```toml
+  fields = [{ id = "api_token", type = "text", history = false }]
+  ```
+
+  Its changes are never written to `changes`, and the page's contract has
+  no variant for it. An update that changes only such fields is still
+  logged, with no changes, because it bumped the version. Entries written
+  before the field was left out still hold its values in the table: the
+  page shows them without it and with `incomplete: true`, and erasing them
+  is a data step. `history` on a field of a model without `history =
+  true`, or on a handler input, is a parse problem (`FieldDoc.history`,
+  `FieldSpec.history`).
+- **A row's whole past is shown to whoever can read the row now.** The
+  endpoint finds the row through the caller's scopes as they are now and
+  then returns all of its entries. A row moved into a caller's team, or
+  newly matching a scope's `where` (ADR-044), shows its earlier edits and
+  the actor IDs of who made them. That is intended: it is how audit
+  trails such as Salesforce's field history and django-simple-history
+  work, where access to the record governs its history. Limiting entries
+  to the time the caller could see the row would need the scopes as they
+  were at each entry, and the `through` rows that decide them keep no log.
+  A field whose past values must not reach later viewers takes
+  `history = false`.
 - **Declared effects (ADR-018).** A write that declares effects declares
   `writes` of the log model too, and the history read declares `reads` of
   the model, its log and its scopes' `through` models.
@@ -142,8 +172,14 @@ salesperson's own rename is logged with them as the actor. A deleted
 row's log is 404 through the endpoint and kept in the table, ending with a
 `delete` entry whose changes end in `null`.
 
-`intent_doc.rs`: `every_key.toml` sets `history` on a model and on its
-CRUD endpoint, and the document round-trips and assembles like its file.
+`a_field_with_history_false_is_never_logged`: with the opportunity's
+`title` left out, a salesperson's update of `title` and `stage` logs only
+`stage`, the create logs `owner`, `stage` and `team`, and no entry in the
+table holds `title`. `history_false_needs_a_model_with_history`: the key
+on a field of a model without history is a parse problem.
+
+`intent_doc.rs`: `every_key.toml` sets `history` on a model, on one of
+its fields and on its CRUD endpoint, and the document round-trips and assembles like its file.
 
 Mutation check, caught: **not fetching the old row for history** (only for
 hooks) makes the organization's own nested write, whose hooks don't run
@@ -165,7 +201,9 @@ again, log `old: null`, and the first log assertion fails.
   needs `changes::jsonb`.
 - **Breaking for struct literals:** `ModelSpec` has `history`,
   `EndpointSpec::Crud` has `history`, and `ModelDoc` and `EndpointDoc`
-  have `history` fields (`..Default::default()` covers the docs). New
+  have `history` fields (`..Default::default()` covers the docs). Since
+  field exclusion, `FieldSpec` has `history` and `FieldDoc` a `history`
+  field too. New
   public types `HistoryEntry` and `FieldChange`.
 
 ### Open questions
@@ -174,5 +212,4 @@ again, log `old: null`, and the first log assertion fails.
   know the operation that calls it, so its writes log
   `outer_operation = null`. A `Ctx::run` variant that names it can come
   when a project needs it.
-- **Field-level exclusion** (never log a secret-bearing field) and
-  **reverting** to an entry are left out until a project needs them.
+- **Reverting** to an entry is left out until a project needs it.

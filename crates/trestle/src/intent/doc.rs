@@ -206,6 +206,11 @@ pub struct FieldDoc {
     /// `"actions"`, written only by domain actions (ADR-037).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub writable: Option<String>,
+    /// Fields of a model with `history = true`: `false` leaves the field
+    /// out of the change log, for a value that must not be kept, such as a
+    /// token (ADR-041).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history: Option<bool>,
 }
 
 /// `[[endpoints]]`: CRUD on a model, a handler endpoint, or a declared

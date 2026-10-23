@@ -44,7 +44,7 @@ fields = [
   { id = "closed_at", type = "instant", optional = true },
   { id = "opened_at", type = "instant", default = "now" },
   { id = "effort", type = "duration", default = "PT1H" },
-  { id = "reason", type = "text", optional = true },
+  { id = "reason", type = "text", optional = true, history = false },
 ]
 
 [[endpoints]]

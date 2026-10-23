@@ -223,6 +223,9 @@ struct FieldSection {
     /// actions (ADR-037).
     #[serde(default)]
     writable: Option<Spanned<String>>,
+    /// `false` leaves the field out of its model's change log (ADR-041).
+    #[serde(default)]
+    history: Option<Spanned<bool>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -298,6 +301,52 @@ pub struct Intent {
 }
 
 impl Intent {
+    /// What parses but is likely a mistake. The project logs each one when
+    /// it loads the file.
+    ///
+    /// Today that is a scoped model's unique set without the field of a
+    /// scope that a grant uses. Within that scope the set is checked
+    /// against rows the caller can't see, so a write learns whether a
+    /// hidden row holds its value (ADR-040).
+    pub fn warnings(&self) -> Vec<String> {
+        let granted: BTreeSet<&str> = self
+            .scoped
+            .values()
+            .flat_map(|grants| grants.values().flatten())
+            .map(String::as_str)
+            .collect();
+        let mut warnings = Vec::new();
+        for model in &self.models {
+            for set in &model.unique {
+                let missing: Vec<String> = model
+                    .scopes
+                    .iter()
+                    .filter(|(name, scope)| {
+                        granted.contains(name.as_str()) && !set.fields.contains(&scope.field)
+                    })
+                    .map(|(name, scope)| format!("{name} ({})", scope.field))
+                    .collect();
+                if !missing.is_empty() {
+                    let scopes = if missing.len() == 1 {
+                        "scope"
+                    } else {
+                        "scopes"
+                    };
+                    warnings.push(format!(
+                        "unique set {:?} of {} leaves out the field of {scopes} {}, so a caller \
+                         granted one learns whether a row it can't see holds the value \
+                         (ADR-040). Add the field to the set if the values are private to the \
+                         scope",
+                        set.fields,
+                        model.id,
+                        missing.join(", ")
+                    ));
+                }
+            }
+        }
+        warnings
+    }
+
     /// Whether some endpoint accepts an `Idempotency-Key`. The project then
     /// installs `trestle_core::idempotency::IdempotencyApp` (ADR-038).
     pub fn idempotent(&self) -> bool {
@@ -406,6 +455,9 @@ pub struct FieldSpec {
     pub currencies: Vec<String>,
     /// Which writes may change the field (ADR-037).
     pub writable: Writable,
+    /// Whether the model's change log records the field: false for
+    /// `history = false` (ADR-041).
+    pub history: bool,
 }
 
 /// Which writes may change a model field (`writable = ...`, ADR-037).
@@ -1053,6 +1105,15 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
                 },
             );
         }
+        if !m.history.as_ref().is_some_and(|h| *h.get_ref()) {
+            for h in m.fields.iter().filter_map(|f| f.history.as_ref()) {
+                problems.push(format!(
+                    "{}: history = ... on a field chooses what the change log of {id} records, \
+                     and {id} keeps none; add history = true to the model",
+                    lines.at(h)
+                ));
+            }
+        }
         models.push(Arc::new(ModelSpec {
             id: id.clone(),
             app: app.to_owned(),
@@ -1321,6 +1382,12 @@ pub fn parse(file: &str, text: &str) -> Result<Intent, IntentError> {
                     problems.push(format!(
                         "{}: writable = ... is for model fields, not handler input",
                         lines.at(w)
+                    ));
+                }
+                if let Some(h) = &f.history {
+                    problems.push(format!(
+                        "{}: history = ... is for model fields, not handler input",
+                        lines.at(h)
                     ));
                 }
                 if let Some(spec) = field(&lines, f, &mut problems) {
@@ -2297,6 +2364,16 @@ fn exists_spec(
                  type (refs must point to the same model; money cannot be matched)",
                 related.id
             ));
+        } else if t.0 != FieldType::Ref && !related.scopes.is_empty() {
+            // The guard checks tenancy, not scopes, so a value match would
+            // tell a scoped caller whether a hidden row holds the value
+            // (ADR-040). An ID match only links IDs the caller holds.
+            problems.push(format!(
+                "{at}: action {id:?}: exists {} matches {theirs} = {ours}, but {} has scopes, so \
+                 exists may match only id and ref fields of it: a value match would reveal \
+                 whether a row the caller can't see holds the value",
+                related.id, related.id
+            ));
         }
     }
     for name in &x.null {
@@ -2537,5 +2614,6 @@ fn field(lines: &Lines<'_>, f: &FieldSection, problems: &mut Vec<String>) -> Opt
         label: f.label.clone(),
         currencies: f.currencies.clone(),
         writable,
+        history: f.history.as_ref().is_none_or(|h| *h.get_ref()),
     })
 }

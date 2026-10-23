@@ -44,10 +44,13 @@ exists = [{ model = "crm.affiliation",
 repeat = "unchanged"
 ```
 
-- **The row as written.** `require`, `check` and `exists` look at the
-  current row merged with the accepted inputs and the `set` values (`"now"`
-  included), so an action that accepts the missing field can satisfy its
-  own requirement.
+- **The row as the action writes it.** `require`, `check` and `exists`
+  look at the current row merged with the accepted inputs and the `set`
+  values (`"now"` included), so an action that accepts the missing field
+  can satisfy its own requirement. A model's `before_write` hook (ADR-039)
+  runs after the guards and may change the row further, and the guards
+  aren't evaluated again: hooks are trusted code, so the stored row is the
+  guarded row plus whatever the hook set.
 - **`require`:** these fields are non-null. Money is null when its amount
   is.
 - **`check`:** one comparison per entry, exactly one of `eq`, `ne`, `lt`,
@@ -66,7 +69,10 @@ repeat = "unchanged"
   value), and each `null` field null. Either side of `match` may be `id`.
   A null local value is unmet without a query.
   - **Tenant first,** in SQL, like every query; another tenant's row never
-    counts.
+    counts. The caller's row scopes (ADR-040) don't apply, so when `model`
+    has scopes, `match` may name only its `id` and ref fields: a match on
+    a value, such as a name, would tell a scoped caller whether a row it
+    can't see holds that value.
   - **Locked `FOR SHARE`** (one row, `LIMIT 1`) until the action commits.
     `FOR KEY SHARE`, which ref checks use (ADR-024), blocks only deletes
     and key changes, so a concurrent `UPDATE ... SET ended_at = now()` would
@@ -87,7 +93,8 @@ repeat = "unchanged"
   action whose `set` is only `"now"` fields can't use it.
 - **Order, in the write transaction:** lock the row (`FOR UPDATE`) →
   `If-Match` (412) → `repeat` no-op → `when` (409 `invalid_state`) → the
-  row as written → `require` → `check` → `exists` → write.
+  row as the action writes it → `require` → `check` → `exists` → the
+  model's `before_write` (ADR-039) → write.
 - **One 409 for every unmet condition,** `requirement_unmet`, with nothing
   written:
 
@@ -113,7 +120,8 @@ repeat = "unchanged"
   currency the field doesn't take, a malformed date or instant); ordering
   operators on bool, text or enum; checks on IDs; an `exists` model not in
   the file, an empty `match`, sides of different types (refs must point to
-  the same model; money can't be matched), `null` on a required field;
+  the same model; money can't be matched), a match on a scoped model's
+  field that isn't `id` or a ref, `null` on a required field;
   an unknown `repeat`, or `"unchanged"` with no constant to compare. Any of
   the four keys makes an endpoint an action, so they can't go on a handler.
 - **`IntentDoc`:** `EndpointDoc` has `require`, `check: Vec<CheckDoc>`,

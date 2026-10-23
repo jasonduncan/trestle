@@ -438,6 +438,9 @@ where
             Ok(Some((file, intent))) => match Resolved::link(intent, &file, self.handlers) {
                 Ok(r) => {
                     let r = Arc::new(r);
+                    for warning in r.intent.warnings() {
+                        tracing::warn!("{file}: {warning}");
+                    }
                     if !self.named {
                         name = Arc::from(r.intent.name.as_str());
                     }
