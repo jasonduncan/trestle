@@ -14,28 +14,18 @@ promise.
 
 ## [Unreleased]
 
-### Added
-- `Intent::warnings`: what parses but is likely a mistake. The project logs
-  each one when it loads `trestle.toml`. The first is a unique set that
-  leaves out the field of a scope a grant uses: a caller granted that scope
-  learns whether a row it can't see holds the value (ADR-040).
 ### Security
 - **Breaking:** an `exists` guard (ADR-036) on a model with row scopes may
   match only its `id` and ref fields, and a file with any other match no
   longer loads; match on `id` or a ref instead. The guard checks tenancy, not
   the caller's scopes, so a match on another field, such as a name, told a
   scoped caller whether a row it can't see held the value (ADR-040).
-### Fixed
-- A `before_write` hook (ADR-039) that wrote its own row through `Ctx` bumped
-  its version first, so the write the hook was part of returned 412 when
-  versioned, and otherwise logged a stale `old` in the change log (ADR-041).
-  That write, by the hook or by anything nested in it, is now a 500 that
-  rolls back and names `Write::set`.
-### Fixed
-- A deadlock (SQLSTATE `40P01`) or serialization failure (`40001`) is now a
-  503 `database_conflict` with `Retry-After: 1`, not a generic 500.
-  PostgreSQL rolled the transaction back, so nothing was written and the
-  request can be sent again.
+
+### Added
+- `Intent::warnings`: what parses but is likely a mistake. The project logs
+  each one when it loads `trestle.toml`. The first is a unique set that
+  leaves out the field of a scope a grant uses: a caller granted that scope
+  learns whether a row it can't see holds the value (ADR-040).
 - `history = false` on a field of a model with `history = true` leaves it
   out of the change log (ADR-041), for a value the log must not keep, such
   as a token. Entries written before keep its old values in the table;
@@ -46,6 +36,22 @@ promise.
 - ADR-040 and ADR-041 now say that a row's change log follows the row as it
   is now: whoever can read the row reads its whole log, including entries
   from before it came into their scopes.
+
+### Fixed
+- A `before_write` hook (ADR-039) that wrote its own row through `Ctx` bumped
+  its version first, so the write the hook was part of returned 412 when
+  versioned, and otherwise logged a stale `old` in the change log (ADR-041).
+  That write, by the hook or by anything nested in it, is now a 500 that
+  rolls back and names `Write::set`.
+- A deadlock (SQLSTATE `40P01`) or serialization failure (`40001`) is now a
+  503 `database_conflict` with `Retry-After: 1`, not a generic 500.
+  PostgreSQL rolled the transaction back, so nothing was written and the
+  request can be sent again.
+- `serve`'s check that browser sign-in has the identity tables (ADR-034)
+  passed for any model named `identity.session`, such as one of a project's
+  own `identity` app, and the server then failed at the first sign-in. It
+  now needs the identity app's own models, exactly as `trestle_identity`
+  declares them.
 
 ## [0.8.1] - 2026-10-22
 

@@ -337,6 +337,31 @@ async fn the_identity_app_is_installed_only_when_sign_in_needs_it() {
         refused.contains("browser sign-in needs the identity tables"),
         "{refused}"
     );
+    // A project's own app with a model of that name doesn't count.
+    let off = CRM.replace("[tenancy]", "[auth]\npasswords = false\n\n[tenancy]");
+    let lookalike = crm(&off, &dir).install_app(Lookalike).assemble().unwrap();
+    assert!(
+        lookalike
+            .desired_schema()
+            .model("identity.session")
+            .is_some()
+    );
+    let mut config = ServeConfig::for_tests();
+    config.password_login = true;
+    let refused = trestle::serve::serve(
+        Arc::new(lookalike),
+        Environment::Development,
+        "postgres://app@localhost/app".parse().unwrap(),
+        config,
+        trestle::NoExtension::default(),
+        "crm",
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        refused.contains("browser sign-in needs the identity tables"),
+        "{refused}"
+    );
 
     // A project that installs the identity app itself keeps its own.
     let own = crm(CRM, &dir)
@@ -352,4 +377,23 @@ async fn the_identity_app_is_installed_only_when_sign_in_needs_it() {
     };
     let err = err.to_string();
     assert!(err.contains("the app ID \"identity\" is taken"), "{err}");
+}
+
+/// An app of the project's own named `identity`, with a model named
+/// `identity.session` that isn't the identity app's.
+struct Lookalike;
+
+impl trestle::core::registry::App<State> for Lookalike {
+    fn id(&self) -> &'static str {
+        "identity"
+    }
+
+    fn register(&self, app: &mut trestle::core::registry::AppBuilder<State>) {
+        use trestle::historical::schema::{Column, Model};
+        app.model(
+            Model::new("identity.session")
+                .table("lookalike_sessions")
+                .field(Column::uuid("id").primary_key()),
+        );
+    }
 }

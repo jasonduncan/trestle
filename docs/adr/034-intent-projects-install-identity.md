@@ -46,8 +46,10 @@ So the sign-in routes answered 404, and `account invite` failed with
   references, and adds nothing. While sign-in is on, intent models may
   not use the app ID `identity`; `check` reports that as a problem.
 - **`serve` refuses a sign-in it cannot back.** If password sign-in or an
-  OIDC client is configured and the registry has no `identity.session`
-  model, `serve` refuses to start. This covers a Rust project without
+  OIDC client is configured and the registry lacks the identity app (the
+  app `identity` with each of `trestle_identity`'s models as it declares
+  them; through 0.8.1, any model named `identity.session` passed), `serve`
+  refuses to start. This covers a Rust project without
   `IdentityApp`, and `TRESTLE_OIDC_CLIENT_ID` set for a project whose
   `[auth]` is off. Before, such a server started and failed at the first
   sign-in.
