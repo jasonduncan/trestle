@@ -31,7 +31,7 @@ accounts (an OIDC provider is optional and only mock-tested). Gmail SMTP sent a 
 The 2026-10-20 review's findings (`docs/security-review.md`) are fixed in 0.7.x (SR-07
 mitigated); on 2026-10-21 the owner accepted that review as the §12.4 external review, closing
 the gate (the owner's decision alone), and plans a more comprehensive review later. The
-0.8.0 review's findings are fixed in 0.8.1 and 0.9.0 (one in-scope probe is documented, ADR-040); the latest release is 0.9.1 (2026-10-23).
+0.8.0 review's findings are fixed in 0.8.1 and 0.9.0 (one in-scope probe is documented, ADR-040); the latest release is 0.10.0 (2026-10-23).
 The CI workflow is disabled, so changes and releases are checked locally
 (`docs/guide/releasing.md`). Still open: re-enabling CI; the edge on a real host (ACME, DNS,
 firewall); publishing the npm packages (`@trestle-framework/*`). Do not claim general

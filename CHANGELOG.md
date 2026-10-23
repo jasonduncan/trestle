@@ -14,6 +14,13 @@ promise.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-23
+
+### Upgrading from 0.9
+- **Code that builds `ViewDefinition` or `trestle_protocol::view::SourceDoc`
+  with a struct literal** adds `complete: None` or `complete_pointer: None`.
+  Code that uses `ViewDefinition::collection` and its builders needs no change.
+
 ### Added
 - `ViewDefinition::complete`: a collection view names the boolean output field
   that is `false` when its read stopped before every row. The view document
@@ -842,7 +849,8 @@ The first release.
   `auto`. Anything else needs `--approve <digest>`.
 - `serve` refuses to start on schema drift or a partly applied migration.
 
-[Unreleased]: https://github.com/jasonduncan/trestle/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/jasonduncan/trestle/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/jasonduncan/trestle/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/jasonduncan/trestle/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/jasonduncan/trestle/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/jasonduncan/trestle/compare/v0.8.0...v0.8.1
