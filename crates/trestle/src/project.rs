@@ -96,7 +96,8 @@ pub struct CommandContext<S> {
     pub env: Environment,
     /// The project's display name (`Project::named`).
     pub name: Arc<str>,
-    /// How to refer to this binary in messages (`notes`, `myapp`, …).
+    /// How to refer to this binary in messages (`notes`, `myapp`, …):
+    /// [`Project::command_name`], or the executable's name.
     pub bin: String,
     database_url: Option<String>,
 }
@@ -144,6 +145,7 @@ pub struct Project<S = State, X = NoExtension, C = NoCommands> {
     migrations_dir: Option<PathBuf>,
     foreign: Vec<String>,
     excluded: BTreeSet<String>,
+    command_name: Option<String>,
     commands: Option<Handler<S, C>>,
     intent: IntentSource,
     handlers: Handlers,
@@ -178,6 +180,7 @@ impl<S: Clone + Send + Sync + 'static> Project<S, NoExtension, NoCommands> {
             migrations_dir: None,
             foreign: Vec::new(),
             excluded: BTreeSet::new(),
+            command_name: None,
             commands: None,
             intent: IntentSource::Default,
             handlers: Handlers::default(),
@@ -284,6 +287,15 @@ impl<S: 'static, X, C> Project<S, X, C> {
         self
     }
 
+    /// The command users type to run this project, which help and hints
+    /// name (``run `<command> migrate` ``). Default: the executable's name.
+    /// Set it when the project runs under another program's command line,
+    /// e.g. `.command_name("tool project --")`.
+    pub fn command_name(mut self, command: impl Into<String>) -> Self {
+        self.command_name = Some(command.into());
+        self
+    }
+
     /// Ignores any intent file: a project made only of Rust apps.
     pub fn without_intent(mut self) -> Self {
         self.intent = IntentSource::None;
@@ -338,6 +350,7 @@ impl<S: 'static, X, C> Project<S, X, C> {
             foreign: self.foreign,
             migrations_dir: self.migrations_dir,
             excluded: self.excluded,
+            command_name: self.command_name,
             commands: self.commands,
             intent: self.intent,
             handlers: self.handlers,
@@ -368,6 +381,7 @@ impl<S: 'static, X, C> Project<S, X, C> {
             foreign: self.foreign,
             migrations_dir: self.migrations_dir,
             excluded,
+            command_name: self.command_name,
             commands: Some(Box::new(move |c, ctx| Box::pin(handler(c, ctx)))),
             intent: self.intent,
             handlers: self.handlers,
@@ -509,7 +523,7 @@ where
 
     /// The command line for this project, for help output and tests.
     pub fn command(&self) -> Command {
-        cli::<X, C>(&self.excluded)
+        cli::<X, C>(&self.excluded, self.command_name.as_deref())
     }
 
     /// Parses `std::env::args`, runs the command and returns the exit code
@@ -548,13 +562,14 @@ where
     pub async fn run_matches(self, matches: &ArgMatches) -> Result<(), Failure> {
         let usage = |e: clap::Error| Failure::new(exit::USAGE, e.to_string());
         let globals = Globals::from_arg_matches(matches).map_err(usage)?;
+        let bin = command_name(self.command_name.as_deref());
         let (registry, runtime) = self.split();
         let registry = Arc::new(registry.map_err(|e| e.to_string())?);
         let ctx = CommandContext {
             registry,
             env: globals.env,
             name: runtime.name,
-            bin: bin_name().unwrap_or_else(|| "trestle".to_owned()),
+            bin,
             database_url: globals.database_url,
         };
         let name = matches.subcommand_name().unwrap_or_default();
@@ -592,17 +607,23 @@ fn bin_name() -> Option<String> {
     Some(Path::new(&arg).file_stem()?.to_string_lossy().into_owned())
 }
 
-fn cli<X: Args, C: Subcommand>(excluded: &BTreeSet<String>) -> Command {
+/// [`Project::command_name`], else the executable's name.
+fn command_name(set: Option<&str>) -> String {
+    set.map(str::to_owned)
+        .or_else(bin_name)
+        .unwrap_or_else(|| "trestle".to_owned())
+}
+
+fn cli<X: Args, C: Subcommand>(excluded: &BTreeSet<String>, set: Option<&str>) -> Command {
     let builtins = BuiltIn::<X>::augment_subcommands(Command::new("builtins"));
+    let mut cmd = Command::new(&*Box::leak(command_name(set).into_boxed_str()));
+    if let Some(command) = set {
+        cmd = cmd.bin_name(command);
+    }
     let mut cmd = Globals::augment_args(
-        Command::new(&*Box::leak(
-            bin_name()
-                .unwrap_or_else(|| "trestle".to_owned())
-                .into_boxed_str(),
-        ))
-        .about("Trestle project command line")
-        .subcommand_required(true)
-        .arg_required_else_help(true),
+        cmd.about("Trestle project command line")
+            .subcommand_required(true)
+            .arg_required_else_help(true),
     );
     for sub in builtins.get_subcommands() {
         if !excluded.contains(sub.get_name()) {

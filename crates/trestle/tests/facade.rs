@@ -243,3 +243,22 @@ async fn the_default_state_serves_the_registry() {
     pool.close().await;
     db.drop().await;
 }
+
+async fn named_bin(_: Extra, ctx: CommandContext<State>) -> trestle::Result<(), String> {
+    assert_eq!(ctx.bin, "tool notes --");
+    Ok(())
+}
+
+#[test]
+fn a_command_name_is_what_help_and_hints_call_the_project() {
+    let named = || notes().command_name("tool notes --").commands(named_bin);
+    let usage = named().command().render_usage().to_string();
+    assert!(usage.contains("tool notes -- "), "{usage}");
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let matches = named()
+        .command()
+        .try_get_matches_from(["tool", "hello", "--name", "x"])
+        .unwrap();
+    rt.block_on(named().run_matches(&matches)).unwrap();
+}
